@@ -9,32 +9,34 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import polars as pl
 
 from loom.core.config import ConfigContext
-from loom.etl.backends._predicate import predicate_to_sql
-from loom.etl.backends.polars._dtype import loom_type_to_polars
-from loom.etl.backends.polars._reader import (
-    _apply_source_schema,
-    _finalize_source_frame,
-    execute_sql,
-)
-from loom.etl.backends.polars._writer import _check_null_dtype_columns_lazy
+from loom.core.errors import InvalidUse, InvalidValue
 from loom.etl.checkpoint import CheckpointScope, CheckpointStore
-from loom.etl.checkpoint._backends._memory import _InMemoryCheckpointBackend
+from loom.etl.checkpoint._io._memory import _InMemoryCheckpointIO
 from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.source import FileSourceSpec, SourceSpec, TableSourceSpec
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._table import ReplaceWhereSpec
 from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
+from loom.etl.engines._predicate import predicate_to_sql
+from loom.etl.engines.polars._dtype import frame_type_to_polars
+from loom.etl.engines.polars._reader import (
+    _apply_source_schema,
+    _finalize_source_frame,
+    execute_sql,
+)
+from loom.etl.engines.polars._writer import _check_null_dtype_columns_lazy
 from loom.etl.executor import ETLExecutor
 from loom.etl.lineage._records import RunContext
-from loom.etl.runtime.contracts import SourceReader, TargetWriter
-from loom.etl.schema._schema import ColumnSchema, LoomType, SchemaError
+from loom.etl.ports.contracts import SourceReader, TargetWriter
+from loom.etl.schema._schema import ColumnSchema, FrameType, SchemaError
 from loom.etl.testing._delta import _DeltaRoot
+from loom.etl.testing._model_rows import ModelRows
 from loom.etl.testing._result import StepResult
 
 if TYPE_CHECKING:
     from loom.etl.testing._scenario import ETLScenario
 
-SeedSchema = Mapping[str, LoomType]
+SeedSchema = Mapping[str, FrameType]
 """Loom types of some or all seeded columns."""
 
 TempData: TypeAlias = "Sequence[tuple[Any, ...]] | pl.DataFrame | pl.LazyFrame"
@@ -114,7 +116,7 @@ def _build_lazy_frame(
     _require_known_columns(columns, schema)
     declared = schema or {}
     frame_schema = [
-        (name, loom_type_to_polars(declared[name]) if name in declared else None)
+        (name, frame_type_to_polars(declared[name]) if name in declared else None)
         for name in columns
     ]
     return pl.DataFrame(
@@ -125,7 +127,7 @@ def _build_lazy_frame(
 def _require_known_columns(columns: Sequence[str], schema: SeedSchema | None) -> None:
     unknown = sorted(set(schema or ()) - set(columns))
     if unknown:
-        raise ValueError(f"schema names columns that are not seeded: {unknown}")
+        raise InvalidValue(f"schema names columns that are not seeded: {unknown}")
 
 
 def _temp_frame(
@@ -138,7 +140,7 @@ def _temp_frame(
     if isinstance(data, pl.LazyFrame):
         return _cast(data, schema)
     if columns is None:
-        raise ValueError("seed_temp with row tuples needs columns=.")
+        raise InvalidValue("seed_temp with row tuples needs columns=.")
     return _build_lazy_frame(data, columns, schema=schema)
 
 
@@ -202,7 +204,7 @@ class PolarsStepRunner:
 
     def __init__(self, *scenarios: ETLScenario, delta_root: str | Path | None = None) -> None:
         self._tables: dict[str, pl.LazyFrame] = {}
-        self._temp_backend = _InMemoryCheckpointBackend()
+        self._temp_backend = _InMemoryCheckpointIO()
         self._temps = CheckpointStore(_TEMP_ROOT, backend=self._temp_backend)
         self._context = RunContext(run_id="step-runner-run", correlation_id="step-runner")
         self._writer = _CapturingWriter()
@@ -245,6 +247,32 @@ class PolarsStepRunner:
             self._tables[ref] = frame
         return self
 
+    def seed_rows(self, *instances: Any) -> PolarsStepRunner:
+        """Seed the table of each model with its instances, typed by the model.
+
+        Instances are grouped by model class and written under the model's
+        ``__tablename__`` with the model's lake types, never inferred ones, so
+        an empty or all-null column keeps its type.  A model seeded twice is
+        replaced, as :meth:`seed` replaces a table.
+
+        Args:
+            *instances: Model instances, usually built with ``loom.testing.make``.
+
+        Returns:
+            ``self`` for fluent chaining.
+
+        Raises:
+            InvalidValue: When two instances of a model share a conflict key.
+        """
+        for seed in ModelRows.seeds_of(instances):
+            self.seed(
+                seed.table.name,
+                seed.values,
+                seed.table.column_names,
+                schema=seed.table.column_types,
+            )
+        return self
+
     def seed_temp(
         self,
         name: str | StepResult,
@@ -278,18 +306,18 @@ class PolarsStepRunner:
             ``self`` for fluent chaining.
 
         Raises:
-            ValueError: When the result is not from an ``IntoTemp`` step, a
+            InvalidValue: When the result is not from an ``IntoTemp`` step, a
                 name comes without data, or row tuples come without *columns*.
         """
         if isinstance(name, StepResult):
             if name.temp_name is None:
-                raise ValueError(
+                raise InvalidValue(
                     "seed_temp needs a temp name: this StepResult is not from an IntoTemp step."
                 )
             data = name.to_polars()
             name = name.temp_name
         if data is None:
-            raise ValueError(f"seed_temp({name!r}) needs data.")
+            raise InvalidValue(f"seed_temp({name!r}) needs data.")
         self._temps.put(
             name,
             run_id=self._context.run_id,
@@ -331,7 +359,7 @@ class PolarsStepRunner:
             FileNotFoundError: When a ``FromTemp`` temp was neither seeded nor written.
             ETLCompilationError: When a ``FromConfig`` key is not in
                 :meth:`with_config`.
-            RuntimeError: When the step produced no output.
+            InvalidUse: When the step produced no output.
         """
         plan = ETLCompiler(config_context=self._config_context).compile_step(step_cls)
         reader, self._writer = self._io()
@@ -348,7 +376,7 @@ class PolarsStepRunner:
         written = self._temp_backend.probe_last()
         if isinstance(spec, (TempSpec, TempFanInSpec)) and written is not None:
             return StepResult(written.collect(), target=spec)
-        raise RuntimeError("Step produced no output — check that target is declared.")
+        raise InvalidUse("Step produced no output — check that target is declared.")
 
     def table(self, ref: str) -> StepResult:
         """Return the current content of the Delta table *ref*.
@@ -357,10 +385,10 @@ class PolarsStepRunner:
         upsert's ``delete_flag`` are gone and the flag column is not stored.
 
         Raises:
-            RuntimeError: When the runner was built without ``delta_root``.
+            InvalidUse: When the runner was built without ``delta_root``.
         """
         if self._delta is None:
-            raise RuntimeError("table() needs PolarsStepRunner(delta_root=...).")
+            raise InvalidUse("table() needs PolarsStepRunner(delta_root=...).")
         return StepResult(self._delta.read(ref))
 
     @property
@@ -368,10 +396,10 @@ class PolarsStepRunner:
         """Target spec from the last :meth:`run` call.
 
         Raises:
-            RuntimeError: When :meth:`run` has not been called yet.
+            InvalidUse: When :meth:`run` has not been called yet.
         """
         if self._writer.spec is None:
-            raise RuntimeError("No spec — call run() first.")
+            raise InvalidUse("No spec — call run() first.")
         return self._writer.spec
 
     @property

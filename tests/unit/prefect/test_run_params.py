@@ -23,9 +23,11 @@ from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, Int
 from loom.etl.maintenance._runner import MaintenanceReport
 from loom.etl.maintenance._step import MaintenanceStep
 from loom.prefect import backfill_flow, etl_flow
+from loom.prefect.event import PrefectEvent, PrefectKey
 from loom.prefect.flow import _backfill_body, _body, _maintenance, _params
 from loom.prefect.flow._common import prefect_run_anchor
 from loom.prefect.flow._run_name import make_run_name_callback
+from tests.helpers.loggers import logged_fields
 from tests.unit.prefect.doubles import (
     AcmeSampleParams,
     AcmeWindowPipeline,
@@ -120,8 +122,6 @@ def invoked(monkeypatch: pytest.MonkeyPatch, events: list[str]) -> list[tuple[An
         lambda _path, _pipeline, params, _pending, ctx, *_rest, **_kw: calls.append((params, ctx)),
     )
     monkeypatch.setattr(_body, "build_observers", lambda *a, **k: [])
-    monkeypatch.setattr(_body, "install_log_bridge", lambda *a, **k: events.append("bridge"))
-    monkeypatch.setattr(_body, "uninstall_log_bridge", lambda *a, **k: None)
     return calls
 
 
@@ -250,7 +250,7 @@ class TestEtlRunParams:
         )
 
     @pytest.mark.usefixtures("in_run")
-    def test_the_record_is_one_short_attempt_after_the_log_bridge(
+    def test_the_record_is_one_short_attempt(
         self,
         tmp_path: Path,
         stored: dict[str, Any],
@@ -259,7 +259,7 @@ class TestEtlRunParams:
         invoked: list[tuple[Any, Any]],
     ) -> None:
         _run(_etl(tmp_path), stored, run_date="${yesterday}", updated_at_to="${now}")
-        assert events == ["bridge", "record"]
+        assert events == ["record"]
         assert client.max_retries == 0
         assert client.httpx_settings == {"timeout": _params._RECORD_TIMEOUT_SECONDS}
         assert _params._RECORD_TIMEOUT_SECONDS <= 10
@@ -312,7 +312,8 @@ class TestEtlRunParams:
         assert len(invoked) == 1
         [record] = [r for r in caplog.records if r.name == _params.__name__]
         assert record.levelno == logging.ERROR
-        assert str(_RUN_ID) in record.getMessage()
+        assert record.getMessage() == PrefectEvent.PARAMETERS_RECORD_FAILED
+        assert logged_fields(record) == {PrefectKey.RUN: str(_RUN_ID)}
         assert record.exc_info is not None
         assert "api down" in str(record.exc_info[1])
 
@@ -372,13 +373,11 @@ class TestMaintenanceRunParams:
     ) -> None:
         runner = MagicMock()
         runner.run.return_value = MaintenanceReport()
-        monkeypatch.setattr(_maintenance, "install_log_bridge", MagicMock())
-        monkeypatch.setattr(_maintenance, "uninstall_log_bridge", MagicMock())
         monkeypatch.setattr(_maintenance, "_load_context", lambda path, **_kw: MagicMock())
         monkeypatch.setattr(
             _maintenance, "_parse_sections", lambda context: (MagicMock(), MagicMock())
         )
-        monkeypatch.setattr(_maintenance.ObservabilityRuntime, "from_config", MagicMock())
+        monkeypatch.setattr(_maintenance.Observability, "from_config", MagicMock())
         monkeypatch.setattr(_maintenance.MaintenanceRunner, "from_config", lambda config: runner)
         cfg = tmp_path / "maintenance.yaml"
         cfg.write_text("params: {}\n", encoding="utf-8")
@@ -410,8 +409,6 @@ class TestBackfillRunParams:
         runner = MagicMock()
         monkeypatch.setattr(_backfill_body.ETLRunner, "from_yaml", lambda *a, **k: runner)
         monkeypatch.setattr(_backfill_body, "build_observers", lambda *a, **k: [])
-        monkeypatch.setattr(_backfill_body, "install_log_bridge", lambda *a, **k: None)
-        monkeypatch.setattr(_backfill_body, "uninstall_log_bridge", lambda *a, **k: None)
         cfg = tmp_path / "backfill.yaml"
         cfg.write_text("params: {}\n", encoding="utf-8")
         flow = backfill_flow(

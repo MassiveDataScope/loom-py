@@ -16,7 +16,8 @@ from loom.core.di.container import LoomContainer
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.errors import UnsupportedQuery
 from loom.core.errors.codes import ErrorCode
-from loom.core.repository.abc import (
+from loom.core.stores.event import StoresEvent, StoresKey
+from loom.core.stores.repository import (
     CURSOR_SIGNING_CHECK,
     Cursor,
     CursorCodec,
@@ -27,13 +28,16 @@ from loom.core.repository.abc import (
     QuerySpec,
     SortSpec,
 )
-from loom.core.repository.abc.cursor import register_cursor_codec
+from loom.core.stores.repository.cursor import register_cursor_codec
+from loom.testing import make
+from tests.helpers.loggers import CapturedLog
 
 _BACKEND = "sqlalchemy"
 _MODEL = "billing.Invoice"
 _SCOPE = "tenant-a"
 _INVALID = "cursor token is not valid"
-_QUERY = QuerySpec(
+_QUERY = make(
+    QuerySpec,
     sort=(SortSpec(field="created_at", direction="DESC"),),
     pagination=PaginationMode.CURSOR,
 )
@@ -88,7 +92,8 @@ def _at(*keys: object, tie_breaker: object = 1, backend: str = _BACKEND) -> Curs
 
 
 def _filtered(value: object) -> QuerySpec:
-    return QuerySpec(
+    return make(
+        QuerySpec,
         filters=FilterGroup(filters=(FilterSpec("status", FilterOp.EQ, value),)),
         sort=_QUERY.sort,
         pagination=PaginationMode.CURSOR,
@@ -280,7 +285,7 @@ _TYPED: dict[str, Any] = {
 
 
 def _sorted_by(field: str) -> QuerySpec:
-    return QuerySpec(sort=(SortSpec(field),), pagination=PaginationMode.CURSOR)
+    return make(QuerySpec, sort=(SortSpec(field),), pagination=PaginationMode.CURSOR)
 
 
 class TestTypedValues:
@@ -501,7 +506,9 @@ class TestBinding:
     def test_a_cursor_issued_for_one_direction_is_refused_for_the_other(
         self, codec: CursorCodec
     ) -> None:
-        ascending = QuerySpec(sort=(SortSpec("created_at"),), pagination=PaginationMode.CURSOR)
+        ascending = make(
+            QuerySpec, sort=(SortSpec("created_at"),), pagination=PaginationMode.CURSOR
+        )
         token = _encode(codec, _at(1), query=ascending)
 
         with pytest.raises(UnsupportedQuery) as excinfo:
@@ -512,8 +519,8 @@ class TestBinding:
     def test_a_cursor_issued_for_one_sort_field_is_refused_for_another(
         self, codec: CursorCodec
     ) -> None:
-        by_update = QuerySpec(
-            sort=(SortSpec("updated_at", "DESC"),), pagination=PaginationMode.CURSOR
+        by_update = make(
+            QuerySpec, sort=(SortSpec("updated_at", "DESC"),), pagination=PaginationMode.CURSOR
         )
         token = _encode(codec, _at(1), query=by_update)
 
@@ -561,7 +568,8 @@ class TestBinding:
         second = FilterSpec("total", FilterOp.GT, 10)
 
         def query(*filters: FilterSpec) -> QuerySpec:
-            return QuerySpec(
+            return make(
+                QuerySpec,
                 filters=FilterGroup(filters=filters),
                 sort=_QUERY.sort,
                 pagination=PaginationMode.CURSOR,
@@ -573,7 +581,7 @@ class TestBinding:
 
     def test_page_size_is_not_part_of_the_binding(self, codec: CursorCodec) -> None:
         token = _encode(codec, _at(1))
-        larger = QuerySpec(sort=_QUERY.sort, pagination=PaginationMode.CURSOR, limit=200)
+        larger = make(QuerySpec, sort=_QUERY.sort, pagination=PaginationMode.CURSOR, limit=200)
 
         assert _decode(codec, token, query=larger) == _at(1)
 
@@ -654,7 +662,7 @@ class TestOptOutsInADeployedEnvironment:
         ctx = ConfigContext.from_dict(
             {
                 "checks": {"silenced": [CURSOR_SIGNING_CHECK]},
-                "persistence": {"cursors": {"signing": "ephemeral"}},
+                "stores": {"settings": {"cursors": {"signing": "ephemeral"}}},
             }
         )
         container = self._container(Environment.STAGING)
@@ -663,6 +671,13 @@ class TestOptOutsInADeployedEnvironment:
         register_cursor_codec(container, codec)
 
         assert container.resolve(CursorCodec) is codec
+
+    def test_the_disabled_codec_registers_in_a_deployed_environment(self) -> None:
+        container = self._container(Environment.PRODUCTION)
+
+        register_cursor_codec(container, CursorCodec.disabled())
+
+        assert container.resolve(CursorCodec) is CursorCodec.disabled()
 
     def test_an_opt_out_registers_outside_a_deployed_environment(self) -> None:
         container = self._container(Environment.DEVELOPMENT)
@@ -678,24 +693,20 @@ class TestModes:
 
         assert _decode(unsigned, token) == _at(3, tie_breaker=9)
 
-    def test_the_unsigned_mode_warns_when_built(self, caplog: pytest.LogCaptureFixture) -> None:
-        CursorCodec(signing="unsigned")
-
-        assert any(
-            record.levelname == "WARNING" and "unsigned" in record.getMessage()
-            for record in caplog.records
-        )
-
-    def test_the_ephemeral_mode_round_trips_and_warns(
-        self, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize("signing", ["unsigned", "ephemeral"])
+    def test_a_weakened_mode_warns_when_built(
+        self, caplog: pytest.LogCaptureFixture, signing: Literal["unsigned", "ephemeral"]
     ) -> None:
+        CursorCodec(signing=signing)
+
+        assert CapturedLog(caplog).named(StoresEvent.CURSOR_SIGNING_WEAKENED) == [
+            {StoresKey.CURSOR_SIGNING: signing}
+        ]
+
+    def test_the_ephemeral_mode_round_trips(self) -> None:
         ephemeral = CursorCodec(signing="ephemeral")
 
         assert _decode(ephemeral, _encode(ephemeral, _at(1))) == _at(1)
-        assert any(
-            record.levelname == "WARNING" and "restart" in record.getMessage()
-            for record in caplog.records
-        )
 
     def test_two_ephemeral_codecs_do_not_share_a_key(self) -> None:
         token = _encode(CursorCodec(signing="ephemeral"), _at(1))
@@ -712,5 +723,5 @@ class TestModes:
             CursorCodec(signing="signed", keys={"old": _key()}, current_key_id="new")
 
     def test_a_signed_codec_without_keys_is_refused(self) -> None:
-        with pytest.raises(ConfigError, match=r"persistence\.cursors\.signing: ephemeral"):
+        with pytest.raises(ConfigError, match=r"stores\.settings\.cursors\.signing: ephemeral"):
             CursorCodec(signing="signed")

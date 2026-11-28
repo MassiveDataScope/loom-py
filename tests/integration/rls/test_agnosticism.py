@@ -26,7 +26,7 @@ class TestAgnosticism:
     async def test_each_product_bootstraps_and_creates_its_schema_without_touching_loom(
         self, product: ModuleType, scoped_database: BootstrapFactory, tmp_path: Path
     ) -> None:
-        from loom.core.repository.sqlalchemy.rls import create_schema, verify
+        from loom.stores.sqlalchemy.rls import create_schema, verify
 
         database = await scoped_database(product.SCHEMA)
         application = application_for(product, database, tmp_path)

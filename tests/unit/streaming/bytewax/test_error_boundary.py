@@ -11,11 +11,13 @@ from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
 
-from loom.core.errors import BoundaryValidationError, RuleViolation  # noqa: E402
-from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
+from loom.core.errors import BoundaryValidationError, RuleViolationError  # noqa: E402
+from loom.core.observability.observability import Observability  # noqa: E402
 from loom.streaming.bytewax import _error_boundary  # noqa: E402
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind  # noqa: E402
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
+from loom.streaming.event import StreamingEvent  # noqa: E402
+from tests.helpers.loggers import CapturedLog  # noqa: E402
 from tests.unit.streaming.doubles import AcmePayload  # noqa: E402
 
 pytestmark = pytest.mark.bytewax
@@ -29,17 +31,6 @@ class _Context:
         self.calls.append((kind, step_id, stream))
 
 
-class _LoggerProbe:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str]] = []
-
-    def warning(self, event: str, **fields: object) -> None:
-        self.calls.append(("warning", event))
-
-    def exception(self, event: str, **fields: object) -> None:
-        self.calls.append(("exception", event))
-
-
 def _message(value: str = "v") -> Message[AcmePayload]:
     return Message(payload=AcmePayload(value=value), meta=MessageMeta(message_id="m-1"))
 
@@ -49,7 +40,7 @@ def _raise(exc: Exception) -> NoReturn:
 
 
 def _boundary() -> _error_boundary.ErrorBoundary:
-    return _error_boundary.ErrorBoundary(observer=ObservabilityRuntime.noop(), flow="orders")
+    return _error_boundary.ErrorBoundary(observer=Observability.noop(), flow="orders")
 
 
 class TestClassifyTask:
@@ -79,7 +70,7 @@ class TestExecuteInBoundary:
         result = _error_boundary._execute_in_boundary(
             _error_boundary._classify_task,
             _message(),
-            lambda: _raise(RuleViolation("field", "boom")),
+            lambda: _raise(RuleViolationError("field", "boom")),
             _boundary(),
         )
 
@@ -92,26 +83,36 @@ class TestExecuteInBoundary:
         payload = cast(AcmePayload, original.payload)
         assert payload.value == "v"
 
-    def test_execute_in_boundary_logs_managed_domain_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        logger = _LoggerProbe()
-        monkeypatch.setattr(_error_boundary, "logger", logger)
+    def test_a_foreign_failure_is_named_by_its_type_without_its_text(self) -> None:
+        canary = "order 42 for alice@example.com"
 
-        _error_boundary._execute_in_boundary(
+        result = _error_boundary._execute_in_boundary(
             _error_boundary._classify_task,
             _message(),
-            lambda: _raise(RuleViolation("field", "boom")),
+            lambda: _raise(ValueError(canary)),
             _boundary(),
         )
 
-        assert ("warning", "managed_boundary_error") in logger.calls
+        assert isinstance(result, ErrorEnvelope)
+        assert result.reason == "ValueError"
+
+    def test_execute_in_boundary_logs_managed_domain_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        _error_boundary._execute_in_boundary(
+            _error_boundary._classify_task,
+            _message(),
+            lambda: _raise(RuleViolationError("field", "boom")),
+            _boundary(),
+        )
+
+        assert CapturedLog(caplog).exception_types(StreamingEvent.BOUNDARY_ERROR_MANAGED) == [
+            RuleViolationError
+        ]
 
     def test_execute_in_boundary_logs_unhandled_runtime_error(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        logger = _LoggerProbe()
-        monkeypatch.setattr(_error_boundary, "logger", logger)
         _error_boundary._execute_in_boundary(
             _error_boundary._classify_task,
             _message(),
@@ -119,7 +120,9 @@ class TestExecuteInBoundary:
             _boundary(),
         )
 
-        assert ("exception", "unhandled_boundary_error") in logger.calls
+        assert CapturedLog(caplog).exception_types(StreamingEvent.BOUNDARY_ERROR_UNHANDLED) == [
+            RuntimeError
+        ]
 
 
 class TestExecuteBatchInBoundary:
@@ -144,6 +147,7 @@ class TestExecuteBatchInBoundary:
         ]
         assert original_payloads == [item.payload for item in originals]
         assert all(item.kind is ErrorKind.ROUTING for item in envelopes)
+        assert all(item.reason == "RuntimeError" for item in envelopes)
 
 
 class TestSplitNodeResult:

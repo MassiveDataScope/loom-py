@@ -6,15 +6,17 @@ import threading
 from collections.abc import Callable
 from typing import Literal
 
+from confluent_kafka import KafkaError
 from confluent_kafka import Message as _RawMessage
 from confluent_kafka import Producer as _Producer
 
 from loom.core.observability.event import LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.streaming.kafka._config import ProducerSettings
 from loom.streaming.kafka._errors import KafkaDeliveryError
 from loom.streaming.kafka._message import HEADER_CORRELATION_ID, HEADER_TRACE_ID
 from loom.streaming.kafka._record import KafkaRecord
+from loom.streaming.kafka.client._failure import failure_message
 from loom.streaming.kafka.client._protocol import DeliveryCallback
 
 
@@ -35,7 +37,7 @@ class KafkaProducerClient:
         self,
         settings: ProducerSettings,
         delivery_callback: DeliveryCallback | None = None,
-        obs: ObservabilityRuntime | None = None,
+        obs: Observability | None = None,
     ) -> None:
         self._producer = _Producer(settings.to_confluent_config())
         self._delivery_callback = delivery_callback
@@ -76,7 +78,7 @@ class KafkaProducerClient:
                 )
             self._producer.poll(0.0)
         except Exception as exc:
-            error = KafkaDeliveryError(str(exc))
+            error = KafkaDeliveryError(failure_message(exc))
             if self._obs is not None:
                 self._obs.emit(
                     LifecycleEvent.exception(
@@ -84,7 +86,7 @@ class KafkaProducerClient:
                         name="kafka_produce",
                         trace_id=_header_trace_id(record.headers),
                         correlation_id=_header_correlation_id(record.headers),
-                        error=str(exc),
+                        error=exc,
                         meta={"topic": record.topic},
                     )
                 )
@@ -108,7 +110,7 @@ class KafkaProducerClient:
             else:
                 self._producer.flush(timeout_ms / 1000)
         except Exception as exc:
-            raise KafkaDeliveryError(str(exc)) from exc
+            raise KafkaDeliveryError(failure_message(exc)) from exc
         self._raise_pending_delivery_error()
 
     def close(self) -> None:
@@ -135,9 +137,9 @@ class KafkaProducerClient:
     def _build_delivery_callback(
         self,
         record: KafkaRecord[bytes],
-    ) -> Callable[[object | None, _RawMessage | None], None]:
-        def _callback(error: object | None, _: _RawMessage | None) -> None:
-            delivery_error = None if error is None else KafkaDeliveryError(str(error))
+    ) -> Callable[[KafkaError | None, _RawMessage | None], None]:
+        def _callback(error: KafkaError | None, _: _RawMessage | None) -> None:
+            delivery_error = None if error is None else KafkaDeliveryError(failure_message(error))
             if delivery_error is not None:
                 with self._delivery_error_lock:
                     self._pending_delivery_error = delivery_error
@@ -159,7 +161,7 @@ class KafkaProducerClient:
                             name="kafka_produce",
                             trace_id=_header_trace_id(record.headers),
                             correlation_id=_header_correlation_id(record.headers),
-                            error=str(delivery_error),
+                            error=delivery_error,
                             meta={"topic": record.topic},
                         )
                     )

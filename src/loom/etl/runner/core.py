@@ -7,23 +7,32 @@ import uuid
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
+from loom.core.errors import InvalidUse
+
 if TYPE_CHECKING:
     from pyspark.sql import SparkSession
 
-from loom.core.checks import REST_CHECKS, enforce_deploy_checks
+from loom.core.checks import CheckScope, enforce_deploy_checks
 from loom.core.config import ConfigContext, ConfigResolver
 from loom.core.config.convert import convert_config
 from loom.core.environment import Environment, resolve_environment
+from loom.core.observability.observability import Observability
 from loom.core.observability.protocol import LifecycleObserver
-from loom.core.observability.runtime import ObservabilityRuntime
 from loom.core.runner import flush_runner
 from loom.etl.checkpoint import CheckpointStore, TempCleaner
 from loom.etl.compiler import ETLCompiler, filter_plan
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.executor import ETLExecutor, ParallelDispatcher
 from loom.etl.lineage._config import ETLObservabilityConfig
 from loom.etl.lineage._observer import LineageObserver
 from loom.etl.lineage._records import RunContext
 from loom.etl.pipeline._pipeline import ETLPipeline
+from loom.etl.ports.contracts import (
+    AgentBatchRunner,
+    ClientCommandExecutor,
+    SourceReader,
+    TargetWriter,
+)
 from loom.etl.runner._wiring import (
     agents_for_engine,
     make_agent_runner,
@@ -33,12 +42,6 @@ from loom.etl.runner._wiring import (
     make_lineage_store,
 )
 from loom.etl.runner.config_loader import _load_context, _parse_sections, config_dir
-from loom.etl.runtime.contracts import (
-    AgentBatchRunner,
-    ClientCommandExecutor,
-    SourceReader,
-    TargetWriter,
-)
 from loom.etl.storage._config import (
     StorageConfig,
     convert_storage_config,
@@ -68,7 +71,7 @@ class ETLRunner:
         self,
         reader: SourceReader,
         writer: TargetWriter,
-        observability: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
         dispatcher: ParallelDispatcher | None = None,
         checkpoint_store: CheckpointStore | None = None,
         client_executor: ClientCommandExecutor | None = None,
@@ -78,7 +81,7 @@ class ETLRunner:
         self._executor = ETLExecutor(
             reader,
             writer,
-            observability or ObservabilityRuntime.noop(),
+            observability or Observability.noop(),
             dispatcher,
             checkpoint_store,
             client_executor,
@@ -127,11 +130,13 @@ class ETLRunner:
         """
         resolved_environment = resolve_environment(environment)
         resolved_obs_config = obs_config or ETLObservabilityConfig()
-        observability = ObservabilityRuntime.from_config(
+        observability = Observability.from_config(
             resolved_obs_config, environment=resolved_environment
         )
         if config_context is not None:
-            enforce_deploy_checks(config_context, resolved_environment, skip=(REST_CHECKS,))
+            enforce_deploy_checks(
+                config_context, resolved_environment, scope=CheckScope.without_rest()
+            )
         return cls._assemble(
             config,
             resolved_obs_config,
@@ -149,7 +154,7 @@ class ETLRunner:
         cls,
         config: StorageConfig,
         obs_config: ETLObservabilityConfig,
-        observability: ObservabilityRuntime,
+        observability: Observability,
         *,
         spark: SparkSession | None = None,
         dispatcher: ParallelDispatcher | None = None,
@@ -163,11 +168,11 @@ class ETLRunner:
         if obs_config.lineage.enabled:
             lineage_store = make_lineage_store(config, obs_config.lineage, spark)
             if lineage_store is not None:
-                observability = ObservabilityRuntime(
+                observability = Observability(
                     [*observability.observers, LineageObserver(lineage_store)]
                 )
         if extra_observers:
-            observability = ObservabilityRuntime([*observability.observers, *extra_observers])
+            observability = Observability([*observability.observers, *extra_observers])
         checkpoint_store = make_checkpoint_store(config, spark, cleaner)
         client_executor = make_client_executor(config, spark)
         return cls(
@@ -223,15 +228,13 @@ class ETLRunner:
             environment: Environment of the run; overrides ``LOOM_ENV``. Picks
                 the overlay of a config directory.
         """
-        _log.debug("load yaml path=%s", path)
         resolved_environment = resolve_environment(environment)
         context = _load_context(path, resolvers=resolvers, environment=resolved_environment)
+        _log.debug(EtlEvent.YAML_LOADED, extra={EtlKey.URI: path})
         storage_config, obs_config = _parse_sections(context)
         storage_config.validate()
-        observability = ObservabilityRuntime.from_config(
-            obs_config, environment=resolved_environment
-        )
-        enforce_deploy_checks(context, resolved_environment, skip=(REST_CHECKS,))
+        observability = Observability.from_config(obs_config, environment=resolved_environment)
+        enforce_deploy_checks(context, resolved_environment, scope=CheckScope.without_rest())
         return cls._assemble(
             storage_config,
             obs_config,
@@ -290,7 +293,7 @@ class ETLRunner:
         not set itself.
 
         Raises:
-            ValueError: When a mapping entry carries a ``name`` different from
+            ConfigError: When a mapping entry carries a ``name`` different from
                 its key, a ``path.profile`` is not declared in
                 ``storage.profiles``, or a profile carries ``uri``.
             msgspec.ValidationError: When the storage shape is invalid,
@@ -340,10 +343,9 @@ class ETLRunner:
             attempt: Current attempt number (1-based).
             last_attempt: Whether this is the final allowed attempt.
         """
-        _log.info("compile pipeline=%s", pipeline.__name__)
         plan = self._compiler.compile(pipeline)
         if include is not None:
-            _log.debug("filter plan include=%s", sorted(include))
+            _log.debug(EtlEvent.PLAN_FILTERED, extra={EtlKey.PIPELINE: pipeline.__name__})
             plan = filter_plan(plan, include)
         ctx = RunContext(
             run_id=run_id if run_id is not None else str(uuid.uuid4()),
@@ -362,7 +364,9 @@ class ETLRunner:
                         self._checkpoint_store.cleanup_run(ctx.run_id)
                     except Exception:
                         _log.warning(
-                            "checkpoint cleanup failed run_id=%s", ctx.run_id, exc_info=True
+                            EtlEvent.CHECKPOINT_RUN_CLEANUP_FAILED,
+                            extra={EtlKey.RUN_ID: ctx.run_id},
+                            exc_info=True,
                         )
 
     def flush(self) -> None:
@@ -372,7 +376,7 @@ class ETLRunner:
     def cleanup_correlation(self, correlation_id: str) -> None:
         """Remove all CORRELATION-scope intermediates for *correlation_id*."""
         if self._checkpoint_store is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 "cleanup_correlation() requires checkpoint_root (storage.temp.root) "
                 "to be configured in storage YAML."
             )

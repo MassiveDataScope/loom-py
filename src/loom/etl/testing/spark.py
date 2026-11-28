@@ -30,11 +30,14 @@ fetching them from Maven.
 
 from __future__ import annotations
 
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
+from datetime import UTC
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
+
+from loom.core.errors import InternalError, InvalidUse, InvalidValue
 
 try:
     import pytest
@@ -49,6 +52,7 @@ from loom.etl.compiler import ETLCompiler
 from loom.etl.declarative.source import SourceSpec
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.executor import ETLExecutor
+from loom.etl.testing._model_rows import ModelRows
 from loom.etl.testing._result import StepResult
 from loom.etl.testing._runners import SeedSchema, TempData
 
@@ -184,7 +188,7 @@ class _SparkStubReader:
     def execute_sql(self, frames: dict[str, Any], query: str, /) -> Any:
         first = next(iter(frames.values()), None)
         if first is None:
-            raise ValueError("StepSQL requires at least one source frame.")
+            raise InvalidValue("StepSQL requires at least one source frame.")
         isolated = first.sparkSession.newSession()
         for name, frame in frames.items():
             isolated.createDataFrame(frame.rdd, frame.schema).createOrReplaceTempView(name)
@@ -211,7 +215,7 @@ class SparkStepRunner:
 
     def __init__(self, spark: SparkSession) -> None:
         self._spark = spark
-        self._seeds: dict[str, tuple[list[tuple[Any, ...]], list[str]]] = {}
+        self._seeds: dict[str, tuple[list[tuple[Any, ...]], Any]] = {}
         self._writer = _SparkCapturingWriter()
         self._config_context: ConfigContext | None = None
 
@@ -242,6 +246,30 @@ class SparkStepRunner:
                 "SparkStepRunner does not support typed seeds (schema=) yet; use PolarsStepRunner."
             )
         self._seeds[ref] = (list(data), list(columns))
+        return self
+
+    def seed_rows(self, *instances: Any) -> SparkStepRunner:
+        """Seed the table of each model with its instances, typed by the model.
+
+        Instances are grouped by model class and registered under the model's
+        ``__tablename__`` with the model's lake types as Spark types.
+
+        Args:
+            *instances: Model instances, usually built with ``loom.testing.make``.
+
+        Returns:
+            ``self`` for fluent chaining.
+
+        Raises:
+            InvalidValue: When two instances of a model share a conflict key.
+        """
+        from loom.etl.engines.spark._dtype import frame_type_to_spark
+
+        for seed in ModelRows.seeds_of(instances):
+            self._seeds[seed.table.name] = (
+                list(seed.values),
+                frame_type_to_spark(seed.table.struct_type),
+            )
         return self
 
     def seed_temp(
@@ -292,7 +320,7 @@ class SparkStepRunner:
             KeyError:     When a source table was not seeded.
             ETLCompilationError: When a ``FromConfig`` key is not in
                 :meth:`with_config`.
-            RuntimeError: When the step produced no output.
+            InternalError: When the step produced no output.
         """
         frames = {
             ref: self._spark.createDataFrame(data, columns)
@@ -305,7 +333,7 @@ class SparkStepRunner:
         ).run_step(plan, params)
         raw = self._writer.frame
         if raw is None:
-            raise RuntimeError("Step produced no output — check that target is declared.")
+            raise InternalError("Step produced no output — check that target is declared.")
         return StepResult(_spark_frame_to_polars(raw))
 
     @property
@@ -313,10 +341,10 @@ class SparkStepRunner:
         """Target spec from the last :meth:`run` call.
 
         Raises:
-            RuntimeError: When :meth:`run` has not been called yet.
+            InvalidUse: When :meth:`run` has not been called yet.
         """
         if self._writer.spec is None:
-            raise RuntimeError("No spec — call run() first.")
+            raise InvalidUse("No spec — call run() first.")
         return self._writer.spec
 
 
@@ -386,12 +414,78 @@ def _pick_jar(jar_dir: Path, prefix: str, expected_version: str | None) -> Path 
     return candidates[-1]
 
 
+class _UtcInstants:
+    """Reads the values of one Spark column with every ``TimestampType`` leaf as a UTC instant.
+
+    PySpark returns a ``TimestampType`` value as a naive datetime in the process
+    zone; ``TimestampNTZType`` values are wall-clock and stay naive. The Spark
+    schema tells the two apart at every depth of structs, lists and maps. A column
+    whose type holds no timestamp is read as it is, and ``None`` stays ``None``.
+    """
+
+    def __init__(self, spark_type: Any) -> None:
+        self._convert = self._converter(spark_type)
+
+    def __call__(self, value: Any) -> Any:
+        return value if self._convert is None else self._convert(value)
+
+    @classmethod
+    def _converter(cls, spark_type: Any) -> Callable[[Any], Any] | None:
+        match spark_type.typeName():
+            case "timestamp":
+                return cls._instant
+            case "struct":
+                return cls._struct(spark_type)
+            case "array":
+                return cls._array(spark_type)
+            case "map":
+                return cls._map(spark_type)
+            case _:
+                return None
+
+    @staticmethod
+    def _instant(value: Any) -> Any:
+        return None if value is None else value.astimezone(UTC)
+
+    @classmethod
+    def _struct(cls, spark_type: Any) -> Callable[[Any], Any] | None:
+        fields = {field.name: cls._converter(field.dataType) for field in spark_type.fields}
+        if not any(fields.values()):
+            return None
+        return lambda value: (
+            None
+            if value is None
+            else {
+                name: value[name] if convert is None else convert(value[name])
+                for name, convert in fields.items()
+            }
+        )
+
+    @classmethod
+    def _array(cls, spark_type: Any) -> Callable[[Any], Any] | None:
+        element = cls._converter(spark_type.elementType)
+        if element is None:
+            return None
+        return lambda value: None if value is None else [element(item) for item in value]
+
+    @classmethod
+    def _map(cls, spark_type: Any) -> Callable[[Any], Any] | None:
+        entry = cls._converter(spark_type.valueType)
+        if entry is None:
+            return None
+        return lambda value: (
+            None if value is None else {key: entry(item) for key, item in value.items()}
+        )
+
+
 def _spark_frame_to_polars(frame: Any) -> pl.DataFrame:
     import polars as pl
 
-    columns = list(frame.columns)
-    rows = frame.collect()
-    records = [{col: row[col] for col in columns} for row in rows]
+    readers = {field.name: _UtcInstants(field.dataType) for field in frame.schema.fields}
+    records = [
+        {name: readers[name](value) for name, value in row.asDict().items()}
+        for row in frame.collect()
+    ]
     if not records:
-        return pl.DataFrame({col: [] for col in columns})
+        return pl.DataFrame({column: [] for column in frame.columns})
     return pl.DataFrame(records)

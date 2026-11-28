@@ -13,6 +13,7 @@ framework overhead.
 ```python
 from loom.testing import UseCaseTest
 
+
 async def test_create_user():
     fake_repo = InMemoryRepository(User)
     result = await (
@@ -27,6 +28,46 @@ async def test_create_user():
 Builder methods: `with_params`, `with_input`, `with_command`, `with_loaded`,
 `with_deps`, `with_main_repo`. The `.plan` property returns the compiled
 `ExecutionPlan`.
+
+## Test data
+
+`make(Model, **fields)` builds a valid, real instance of any dataclass or
+msgspec Struct, with no declaration. It needs the `testing` extra
+(polyfactory). Values you pass are used as given; the rest is generated
+deterministically, so the same call builds the same instance.
+
+```python
+from loom.testing import make
+
+user = make(User, email="ada@example.com")
+```
+
+A rule on one field lives in the type, where `make` and `__post_init__` read
+the same constant:
+
+```python
+limit: Annotated[int, msgspec.Meta(ge=MIN_PAGE_LIMIT, le=MAX_PAGE_LIMIT)] = 50
+```
+
+A rule that spans fields (such as `first <= last`) or references another type
+gets a `SampleFactory` subclass next to the type. Registered with
+`__set_as_default_factory_for_type__`, it also builds that type wherever it is
+nested:
+
+```python
+from polyfactory.fields import Use
+from loom.testing import SampleFactory
+
+
+class BackoffFactory(SampleFactory[Backoff]):
+    __set_as_default_factory_for_type__ = True
+
+    first_s = Use(lambda: 1.0)
+    max_s = Use(lambda: 30.0)
+```
+
+A test passes explicitly every value it asserts on: generated values are valid,
+not stable, and must never decide the outcome.
 
 ## HTTP-level testing
 
@@ -44,12 +85,130 @@ resp = client.get("/products/")
 assert resp.status_code == 200
 ```
 
+`InMemoryRepository` keys rows by the primary key the model declares, single
+or composite; a type that declares none raises `ValueError` when the
+repository is built.
+
 Force errors on specific methods:
 
 ```python
 from loom.core.errors import NotFound
+
 harness.force_error(Product, "get_by_id", NotFound("not found"))
 ```
+
+### Recording what a caller sent
+
+`RecordingRepository(inner, fails_with=None)` wraps any repository, an
+`InMemoryRepository` or a real store, and records every call of the repository
+port as a `RepositoryCall(method, arguments)`, with the arguments by name and
+defaults included. With `fails_with`, every call raises that error after it is
+recorded and never reaches `inner`, so a test drives its caller's reject,
+retry and exit paths. Here a writer tries its batch twice and gives up:
+
+```python
+from loom.core.errors import Conflict
+from loom.core.stores.repository import OnConflict
+from loom.testing import InMemoryRepository, RecordingRepository, RepositoryCall
+
+readings = RecordingRepository(InMemoryRepository(Reading), fails_with=Conflict("taken"))
+
+await writer.write(readings, batch)
+
+sent = RepositoryCall("create_many", {"data": tuple(batch), "on_conflict": OnConflict.ERROR})
+assert readings.calls == [sent, sent]
+```
+
+`create_many` records its rows as a tuple copied at the call, so a batch the
+caller changes afterwards keeps the rows that were sent. The wrapper declares
+every capability of `RepoFor`; a method the wrapped repository lacks raises
+`AttributeError` when it is forwarded.
+
+### Substituting dependencies
+
+A harness composes the application once per fixture scope and a test swaps
+what it needs without composing again:
+
+```python
+import pytest
+from loom.testing import HttpTestHarness, InMemoryRepository, Override
+
+
+@pytest.fixture(scope="module")
+def harness():
+    baseline = InMemoryRepository(Product)
+    harness = HttpTestHarness(overrides=[Override.repository(Product, baseline)])
+    harness.client = harness.build_app(interfaces=[ProductRestInterface])
+    return harness
+
+
+@pytest.fixture
+def products(harness):
+    double = InMemoryRepository(Product)
+    double.seed(Product(id=1, name="kettle"))
+    with harness.overriding(Override.repository(Product, double)):
+        yield double
+
+
+def test_reads_the_double(harness, products):
+    assert harness.client.get("/products/1").json()["name"] == "kettle"
+```
+
+The model must be served when the harness is built, here by the baseline
+override: `overriding` swaps what is bound and binds nothing new.
+
+`Override.repository(Model, double)` replaces the model's one repository, so
+injection, `RepoFor[Model]` and every other capability key,
+`catalog[Model]` and `catalog.for_table(...)` all see the double.
+`Override.instance(Key, value)` replaces any `APPLICATION` binding.
+Both are accepted by `overrides=` at build time and by `harness.overriding(...)`
+(also `LambdaTestClient(..., overrides=[...])` and `client.overriding(...)`)
+at any later time. Swapping and restoring never compose the application
+again. Overrides of one key must exit in reverse order. On an exit out of
+order the exiting override is removed and a `ResolutionError` is raised; the
+overrides still open stay active, and the original comes back only when all
+of them have exited.
+
+A singleton the application already built from the real repository, such as
+a service that received it in its constructor, keeps the real one: override
+that service, or the repository at build time through `overrides=`.
+
+### Supplying the AWS clients
+
+`AwsClients` is not an override key: composition owns one object, and the
+stores, the job transports and the container's `AwsClients` binding all share
+it. A test that must see or fake the AWS calls supplies its own at build time:
+
+```python
+class RecordingAwsClients(AwsClients):
+    def __init__(self):
+        super().__init__()
+        self.requested = []
+
+    def client(self, service, config):
+        self.requested.append(service)
+        return FakeClient(service)
+
+
+aws = RecordingAwsClients()
+harness = HttpTestHarness(aws=aws)
+client = harness.build_app(interfaces=[ProductRestInterface])
+```
+
+`LambdaTestClient(..., aws=aws)` and `OverrideRuntime(runtime, overrides, aws=aws)`
+take it the same way. An installer or an override binding `AwsClients` fails
+the composition with `ReservedBindingError`.
+
+A unit test with no composed application builds a catalog directly:
+
+```python
+from loom.core.stores.repository import RepositoryCatalog
+
+catalog = RepositoryCatalog.from_repositories({Product: InMemoryRepository(Product)})
+```
+
+Every model needs its own `__tablename__`. It indexes tables and stores like a composed catalog and raises the same
+`for_table` errors.
 
 ## Golden harness
 
@@ -96,6 +255,7 @@ lambda:
 ```python
 from loom.testing import LambdaTestClient
 
+
 def test_get_order(token: str) -> None:
     with LambdaTestClient("config.yaml", function="orders", environment="test") as client:
         response = client.get("/orders/7", headers={"authorization": f"Bearer {token}"})
@@ -115,7 +275,7 @@ constructor per trigger source, so a test calls the real handler with it:
 | Constructor | Event |
 |---|---|
 | `LambdaEvent.http(method, path, query=, headers=, json_body=, body=)` | An API Gateway HTTP API request (`event_format="v1"` for REST) |
-| `LambdaEvent.jobs(Job, payload, params=, identity=)` | One SQS record of the `JobEnvelope` `SQSJobService` sends |
+| `LambdaEvent.jobs(Job, payload, params=, identity=)` | One SQS record of the `JobEnvelope` `SQSJobTransport` sends |
 | `LambdaEvent.sqs_record(body)` | One SQS record whose body is written by hand |
 | `LambdaEvent.eventbridge(detail, event_id=)` | An EventBridge event |
 | `LambdaEvent.s3(objects, bucket=)` | An S3 notification, one record per key or `key`/`size`/`version_id` mapping |
@@ -127,27 +287,136 @@ An EventBridge, S3, SNS or schedule event is a `QueueableEvent`: its
 `.via_sqs(message_id=, group_id=, queue_arn=)` is the one SQS record the queue
 in between delivers, `group_id` makes that queue FIFO, and an SNS message is
 queued as the SNS envelope the subscription stores. An HTTP request is never
-queued and a `jobs` event already is a record, so neither has `via_sqs`. Every SQS record also takes `message_id`,
-`group_id` and `queue_arn`. A handler fed SQS records returns the ones SQS
-should retry:
+queued and a `jobs` event already is a record, so neither has `via_sqs`. Every
+SQS record also takes `message_id`, `group_id` and `queue_arn`. A handler fed SQS
+records returns the ones SQS should retry. The sample below tests a `jobs`
+function end to end. The package `acme_mail` has an empty
+`src/acme_mail/__init__.py` and `src/acme_mail/jobs.py`:
 
 ```python
-from loom.composition import create_app
-from loom.testing import LambdaEvent
+from loom.core.job.job import Job
+from loom.core.job.policy import Backoff
 
-def test_a_poison_message_is_retried() -> None:
-    handler = create_app("config.yaml", environment="test")  # app.entry: worker
-    try:
-        records = [
-            *LambdaEvent.jobs(SendEmailJob, {"to": "ada@example.com"})["Records"],
-            *LambdaEvent.sqs_record("{", message_id="2")["Records"],
-        ]
-        result = handler({"Records": records}, None)
-    finally:
-        handler.close()
 
-    assert result == {"batchItemFailures": [{"itemIdentifier": "2"}]}
+class Smtp:
+    down = False
+
+
+smtp = Smtp()
+
+
+class SendEmailJob(Job[None]):
+    __queue__ = "jobs"
+    __retry__ = Backoff(first_s=0, factor=1, max_s=0, jitter=False)
+
+    def execute(self, to: str) -> None:
+        if smtp.down:
+            raise ConnectionError("smtp is down")
 ```
+
+For plain `pytest` to find the package, add to `pyproject.toml`:
+
+```toml
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+```
+
+`config.yaml`:
+
+```yaml
+app: {name: acme-mail, job_service: sqs, packages: [acme_mail]}
+sqs:
+  queues:
+    jobs: {url: "https://sqs.eu-west-1.amazonaws.com/111122223333/jobs", abandoned: discard}
+lambda:
+  functions:
+    worker: {trigger: {source: jobs, queue: {name: jobs}}}
+```
+
+`conftest.py`:
+
+```python
+import pytest
+from moto import mock_aws
+
+from acme_mail.jobs import smtp
+from loom.testing import LambdaWorker
+
+
+@pytest.fixture
+def aws(monkeypatch):
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "eu-west-1")
+    monkeypatch.setenv("MOTO_ACCOUNT_ID", "111122223333")
+    with mock_aws():
+        yield
+
+
+@pytest.fixture
+def worker(aws):
+    with LambdaWorker("config.yaml", function="worker", environment="test") as w:
+        yield w
+
+
+@pytest.fixture
+def mail():
+    smtp.down = False
+    return smtp
+```
+
+`test_mail.py`:
+
+```python
+from acme_mail.jobs import SendEmailJob
+
+
+def test_a_failed_email_is_reported_and_comes_back(worker, mail):
+    mail.down = True
+    first = worker.deliver(SendEmailJob, params={"to": "ada@example.com"})
+    assert len(first["batchItemFailures"]) == 1
+    mail.down = False
+    assert worker.redeliver() == {"batchItemFailures": []}  # the retry ran: Backoff(first_s=0)
+```
+
+A `jobs` function declares the queue it consumes (`trigger.queue`), and it
+settles each record by what its job came to. `LambdaWorker` needs the
+`testing-aws` extra (moto). It enters moto's `mock_aws()` itself, creates that
+queue and, for `abandoned: dead_letter`, its dead-letter queue with a real
+`RedrivePolicy`, through the application's own `sqs` client, and binds the
+function over it. It sets no environment: botocore resolves the region as it
+does for the application (`aws.region`, a profile of `~/.aws/config`,
+`AWS_DEFAULT_REGION`), and moto's account is `MOTO_ACCOUNT_ID`, or
+`123456789012`. The queue moto makes must be where the configuration says: when its region or
+account differs from the configured URL's, construction raises a `ConfigError`
+naming the URL it made, what differs and the way out. A URL that is not an AWS
+SQS one is refused the same way. Nothing the `sqs` client sends ever leaves the
+process: the application's `sqs` client carries a last `before-send` handler that refuses any
+request moto did not answer, so an endpoint override (`aws.url`, `sqs.url`,
+`AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_SQS`, a profile `endpoint_url`) or a
+dualstack endpoint fails with a `ConfigError` naming the endpoint; a FIPS
+endpoint gets moto's own 404. Clients of other services follow plain moto
+semantics: only the `sqs` client is guarded. A named profile (`aws.profile`)
+skips moto's fake environment credentials, so the profile must carry its own.
+With no region at all, botocore's own `NoRegionError` stands. With no fixture at all, `loom.testing.TEST_QUEUE` (the
+entry the default ARN of a `LambdaEvent` record names: `loom-jobs`; a record
+built with `group_id` names `loom-jobs.fifo`, so pass `queue_arn=` for it) plus
+`aws.region: us-east-1` in the configuration works as it is. A user's own
+`mock_aws()` outside is joined, and closing the worker leaves it running.
+
+`worker.deliver(job_type, payload, params=, identity=)` sends the job as
+`SQSJobTransport` does (its envelope, and the queue's own FIFO placement), receives
+it and invokes the function with a record that carries the real receipt handle
+and `ApproximateReceiveCount` of that delivery. It returns the handler's result
+and, as Lambda does, deletes the messages the result does not report.
+`worker.redeliver()` does the same with what the queue shows, up to the
+trigger's `batch_size` (10 at most), and invokes nothing when nothing is
+visible: a failed message comes back once its visibility timeout, set from the
+job's backoff, ends, counted as a new attempt. `worker(event, None)` passes a
+raw event, whose receipt handle is not in the queue: moto refuses the call that
+settles it, and loom logs that and reports the message. `worker.sqs` is a boto3
+`sqs` client of the mock, and `worker.queue_url` and `worker.dead_letter_url`
+name the queues, so a test reads what the function left in them. Workers on the
+same queue share it, so nested workers see each other's messages. A message that
+cannot be read is abandoned and is not in `batchItemFailures`.
 
 A direct trigger returns nothing and raises when a job fails:
 
@@ -158,19 +427,20 @@ def test_an_invoice_event_imports_it(handler) -> None:
 
 ### Dispatched jobs
 
-`RecordingJobService` sends nothing: it records each dispatch once the
+`RecordingJobTransport` sends nothing: it records each dispatch once the
 execution that made it commits, with its job, payload, params, effective queue
 and caller, and records nothing when it rolls back. Select it in the test
 configuration:
 
 ```yaml
 app:
-  job_service: loom.testing:RecordingJobService
+  job_service: loom.testing:RecordingJobTransport
 ```
 
 ```python
 from loom.core.job.service import JobService
-from loom.testing import LambdaTestClient, RecordingJobService
+from loom.testing import LambdaTestClient, RecordingJobTransport
+
 
 def test_placing_an_order_ships_it(token: str) -> None:
     with LambdaTestClient("config.yaml", function="orders", environment="test") as client:
@@ -178,17 +448,76 @@ def test_placing_an_order_ships_it(token: str) -> None:
         assert client.application is not None
         jobs = client.application.kernel.container.resolve(JobService)
 
-    assert isinstance(jobs, RecordingJobService)
-    assert [(job.job_type, job.queue) for job in jobs.dispatched] == [
+    transport = jobs.default_transport
+    assert isinstance(transport, RecordingJobTransport)
+    assert [(job.job_type, job.queue) for job in transport.dispatched] == [
         (ShipOrderJob, "shipping")
     ]
 ```
 
 `dispatched` lists every committed dispatch as a frozen `DispatchedJob`
-(`job_type`, `payload`, `params`, `queue`, `identity`), payload and params
-copied at dispatch. `run()` executes a job in process. It also works without
-configuration, as `RecordingJobService()`; it then records dispatches made
-outside an execution on `flush_pending_dispatches()` and cannot `run()`.
+(`job_type`, `payload`, `params`, `queue`, `countdown`, `identity`), payload
+and params copied at dispatch. The application's `JobService` still validates
+every dispatch and `run()` still executes a job in process. A unit test
+without composition builds `JobService(RecordingJobTransport())`; it then
+records dispatches made outside an execution on `flush_pending_dispatches()`
+and cannot `run()`.
+
+### Job test data
+
+`JobTestData` builds valid job envelopes, deliveries and dispatches for tests
+of a transport or a runner; `with_job_type`, `with_policy` and `with_trace_id`
+return copies, and `NoopJob` is its default job:
+
+```python
+from loom.testing import JobTestData
+
+data = JobTestData().with_job_type(ShipOrderJob)
+delivery = data.delivery(attempt=2)
+```
+
+### Inline jobs
+
+The inline job transport enqueues every job on a `JobTimer`, as a queue would: a job runs
+after the call that sent it returns. `HttpTestHarness` waits after each request, and a Lambda
+handler after each invocation, until no inline job is running or waiting, those the jobs send
+included, so a test asserts a job's effects right after the call. A test that sends through the
+`JobService` itself waits explicitly:
+
+```python
+await application.jobs.dispatch_now(SendEmailJob, payload={"to": "ada@example.com"})
+await application.jobs.wait_until_idle()
+```
+
+A job with a countdown is waited for too, in real time. A test replaces the timer with a
+`ManualTimer`, which never sleeps: `wait_until_idle()` runs the steps already due (the jobs sent
+with no countdown, and those they send) without moving its clock, and a delayed step runs only
+when the test moves the clock:
+
+```python
+from loom.core.job.timer import JobTimer
+from loom.testing import ManualTimer, Override
+
+timer = ManualTimer()
+harness = HttpTestHarness(overrides=[Override.instance(JobTimer, timer)])
+
+# a request's jobs with no countdown have run when the call returns;
+# a dispatch with countdown=60, a JobPostponement or a failure backoff waits
+await timer.advance(59)  # nothing runs
+await timer.advance(1)  # the job runs, then any step it scheduled within the move
+```
+
+Bind the timer at composition, as above: a later `overriding` does not reach a
+service that is already built.
+
+`advance(seconds)` runs, in order of time, every step whose time has come,
+including the steps those steps schedule inside the move; `pending` counts
+the steps still waiting.
+
+The application closes a bound timer when `running()` exits, as it closes the one it builds, so
+a test never calls `close()`. The policy is the timer's own: `ManualTimer(JobShutdown(mode=ShutdownMode.WAIT))`
+runs what is pending in fake time on exit, and the default drops it into `timer.lost`;
+`jobs.shutdown` configures only the timer composition builds.
 
 ### Beyond the process
 
@@ -197,4 +526,4 @@ only the image shows: packaging, the handler path, the runtime. For the AWS
 APIs themselves, loom's own integration tests run against LocalStack:
 `docker compose -f docker-compose.local.yaml up -d localstack`, then set
 `LOOM_AWS_IT_URL=http://localhost:4566` (see
-[persistence backends](persistence-backends.md)).
+[store backends](stores.md)).

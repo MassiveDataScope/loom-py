@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from typing import Literal
 
+from loom.core.errors import InvalidValue
 from loom.core.schema import SchemaMode
+from loom.etl.declarative._declared_table import DeclaredTable, TableDeclaration
+from loom.etl.declarative._history_date_type import HistoryDateType
 from loom.etl.declarative.expr._params import ParamExpr
-from loom.etl.declarative.expr._refs import TableRef
-from loom.etl.declarative.target._history._enums import (
-    DeletePolicy,
-    HistorifyInputMode,
-    HistoryDateType,
-)
+from loom.etl.declarative.target._history._enums import DeletePolicy, HistorifyInputMode
 from loom.etl.declarative.target._history._spec import HistorifySpec
 
 
@@ -89,7 +87,10 @@ class IntoHistory:
       state matters.
 
     Args:
-        ref: Logical table reference — ``str`` or :class:`~loom.etl.TableRef`.
+        ref: Logical table reference — ``str`` or :class:`~loom.etl.TableRef` — or a
+            model, which names its table with ``__tablename__`` and must declare the
+            ``valid_from`` and ``valid_to`` columns (and ``deleted_at`` under
+            ``delete_policy="soft_delete"``).
         keys: One or more column names that identify the entity.
             Must be non-empty and must not overlap with ``track``.
         effective_date: In ``\"log\"`` mode: name of the frame column carrying
@@ -118,7 +119,10 @@ class IntoHistory:
             Defaults to ``\"valid_from\"``.
         valid_to: Name of the period-end column in the Delta table.
             Defaults to ``\"valid_to\"``.
-        date_type: Precision for boundary columns. Defaults to ``\"date\"``.
+        date_type: Precision for boundary columns. Defaults to ``None``: ``\"date\"`` for a
+            string target, the type of the model's ``valid_from`` column for a model
+            (``Date`` gives ``\"date\"``, ``DateTime`` gives ``\"timestamp\"``). A value that
+            contradicts the model fails at compile time.
         schema: Schema evolution strategy.
             Defaults to :attr:`~SchemaMode.STRICT`.
         allow_temporal_rerun: Allow SNAPSHOT backfills with a past effective
@@ -131,11 +135,11 @@ class IntoHistory:
             :class:`~loom.etl.HistorifyTemporalConflictError`.
 
     Raises:
-        ValueError: If ``keys`` is empty.
-        ValueError: If ``track`` overlaps with ``keys``.
-        ValueError: If ``overwrite`` overlaps with ``keys``, ``track``, or boundary columns.
-        ValueError: If ``valid_from`` and ``valid_to`` share the same name.
-        ValueError: If ``delete_marker`` is set outside LOG mode or names a key,
+        InvalidValue: If ``keys`` is empty.
+        InvalidValue: If ``track`` overlaps with ``keys``.
+        InvalidValue: If ``overwrite`` overlaps with ``keys``, ``track``, or boundary columns.
+        InvalidValue: If ``valid_from`` and ``valid_to`` share the same name.
+        InvalidValue: If ``delete_marker`` is set outside LOG mode or names a key,
             ``track``, ``overwrite``, ``effective_date``, boundary or
             ``partition_scope`` column.
 
@@ -156,7 +160,7 @@ class IntoHistory:
 
     def __init__(
         self,
-        ref: str | TableRef,
+        ref: TableDeclaration,
         *,
         keys: tuple[str, ...] | list[str],
         effective_date: str | ParamExpr,
@@ -168,7 +172,7 @@ class IntoHistory:
         valid_from: str = "valid_from",
         valid_to: str = "valid_to",
         deleted_at: str = "deleted_at",
-        date_type: Literal["date", "timestamp"] = "date",
+        date_type: Literal["date", "timestamp"] | None = None,
         schema: SchemaMode = SchemaMode.STRICT,
         allow_temporal_rerun: bool = False,
         delete_marker: str | None = None,
@@ -194,9 +198,10 @@ class IntoHistory:
             ),
         )
 
-        table_ref = TableRef(ref) if isinstance(ref, str) else ref
+        table = DeclaredTable.from_declaration(ref)
         self._spec = HistorifySpec(
-            table_ref=table_ref,
+            table_ref=table.ref,
+            model=table.model,
             keys=keys_t,
             effective_date=effective_date,
             mode=HistorifyInputMode(mode),
@@ -207,7 +212,7 @@ class IntoHistory:
             valid_from=valid_from,
             valid_to=valid_to,
             deleted_at=deleted_at,
-            date_type=HistoryDateType(date_type),
+            declared_date_type=None if date_type is None else HistoryDateType(date_type),
             schema_mode=schema,
             allow_temporal_rerun=allow_temporal_rerun,
             delete_marker=delete_marker,
@@ -245,15 +250,15 @@ def _validate_history_args(
         deleted_at: Soft-delete audit column name.
 
     Raises:
-        ValueError: On any violated constraint.
+        InvalidValue: On any violated constraint.
     """
     if not keys:
-        raise ValueError("IntoHistory: 'keys' must contain at least one column name.")
+        raise InvalidValue("IntoHistory: 'keys' must contain at least one column name.")
 
     if track is not None:
         overlap = set(keys) & set(track)
         if overlap:
-            raise ValueError(
+            raise InvalidValue(
                 f"IntoHistory: columns cannot appear in both 'keys' and 'track'. "
                 f"Overlap: {sorted(overlap)}"
             )
@@ -261,27 +266,27 @@ def _validate_history_args(
     if overwrite is not None:
         overlap_keys = set(keys) & set(overwrite)
         if overlap_keys:
-            raise ValueError(
+            raise InvalidValue(
                 f"IntoHistory: 'overwrite' cannot overlap with 'keys'. "
                 f"Overlap: {sorted(overlap_keys)}"
             )
         if track is not None:
             overlap_track = set(track) & set(overwrite)
             if overlap_track:
-                raise ValueError(
+                raise InvalidValue(
                     f"IntoHistory: 'overwrite' cannot overlap with 'track'. "
                     f"Overlap: {sorted(overlap_track)}"
                 )
         boundary_overlap = {valid_from, valid_to, deleted_at} & set(overwrite)
         if boundary_overlap:
-            raise ValueError(
+            raise InvalidValue(
                 f"IntoHistory: 'overwrite' cannot contain boundary columns. "
                 f"Overlap: {sorted(boundary_overlap)}"
             )
 
     boundary_names = {valid_from, valid_to, deleted_at}
     if len(boundary_names) < 3:
-        raise ValueError(
+        raise InvalidValue(
             f"IntoHistory: 'valid_from', 'valid_to' and 'deleted_at' must be distinct. "
             f"Got valid_from={valid_from!r}, valid_to={valid_to!r}, deleted_at={deleted_at!r}."
         )
@@ -306,13 +311,13 @@ def _validate_log_effective_date(
         mode: ``\"log\"`` or ``\"snapshot\"``.
 
     Raises:
-        ValueError: When LOG mode effective_date conflicts with a boundary col.
+        InvalidValue: When LOG mode effective_date conflicts with a boundary col.
     """
     if mode != "log":
         return
     eff_col = str(effective_date)
     if eff_col in (valid_from, valid_to):
-        raise ValueError(
+        raise InvalidValue(
             f"IntoHistory (LOG mode): effective_date={eff_col!r} must not match "
             f"valid_from={valid_from!r} or valid_to={valid_to!r}. "
             "The engine drops the effective_date column after building history boundaries; "
@@ -334,17 +339,17 @@ def _validate_delete_marker(
             partition columns.
 
     Raises:
-        ValueError: On any violated constraint.
+        InvalidValue: On any violated constraint.
     """
     if delete_marker is None:
         return
     if mode != "log":
-        raise ValueError(
+        raise InvalidValue(
             "IntoHistory: 'delete_marker' requires mode='log'. "
             "SNAPSHOT deletions are governed by 'delete_policy'."
         )
     if delete_marker in declared_cols:
-        raise ValueError(
+        raise InvalidValue(
             f"IntoHistory: 'delete_marker'={delete_marker!r} must not name a key, track, "
             "overwrite, effective_date, boundary or partition_scope column."
         )

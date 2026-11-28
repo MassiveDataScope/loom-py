@@ -1,0 +1,718 @@
+"""Signed, strictly decoded cursor tokens for keyset pagination.
+
+A token carries a position — the sort key values of the last row on a page
+and its primary key — and is issued and verified by one :class:`CursorCodec`.
+
+Format (``signed`` and ``ephemeral`` modes)::
+
+    base64url(payload) "." base64url(version || len(key_id) || key_id || mac)
+
+``payload`` is the msgspec JSON record ``{"b": backend, "k": [keys...], "id":
+tie_breaker}``; the tie-breaker is a list when the primary key is composite.
+``mac`` is HMAC-SHA256 over a domain-separated input: a fixed context string,
+the version byte, the key id, the binding and the payload, each variable part
+length-prefixed. The binding is never carried in the token: it is recomputed
+from the request (model, normalised filters, sort and the caller's scope), so
+a cursor replayed under another binding fails verification. The signature is
+checked in constant time before the payload is parsed.
+
+The ``unsigned`` mode emits ``base64url(payload)`` alone, for tests and
+debugging. Strict decoding applies in every mode: a malformed token, a naive
+datetime, a key of an unknown type, a token of another backend or for another
+sort or primary key, or holding a value of another type than its column, is
+refused with :class:`~loom.core.errors.UnsupportedQuery`,
+whose message never echoes the token.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import logging
+import math
+import re
+import secrets
+from collections.abc import Mapping, Sequence
+from datetime import UTC, date, datetime, time
+from decimal import Decimal
+from enum import Enum
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, get_args, get_origin
+from uuid import UUID
+
+import msgspec
+
+from loom.core.checks import silenced_checks
+from loom.core.config.errors import ConfigError
+from loom.core.config.keys import ConfigSection
+from loom.core.environment import Environment, configured_variable, resolve_environment
+from loom.core.errors import InvalidType, InvalidValue, UnsupportedQuery
+from loom.core.model.struct import LoomFrozenStruct
+from loom.core.stores.event import StoresEvent, StoresKey
+from loom.core.stores.repository.query import FilterSpec, QuerySpec
+
+if TYPE_CHECKING:
+    from loom.core.config.context import ConfigContext
+    from loom.core.di.container import LoomContainer
+
+_logger = logging.getLogger(__name__)
+
+_Signing = Literal["signed", "ephemeral", "unsigned"]
+_Mode = Literal["signed", "ephemeral", "unsigned", "disabled"]
+_SIGNED: Final = "signed"
+_EPHEMERAL: Final = "ephemeral"
+_UNSIGNED: Final = "unsigned"
+_DISABLED: Final = "disabled"
+_SIGNING_MODES: Final = frozenset({_SIGNED, _EPHEMERAL, _UNSIGNED, _DISABLED})
+_WEAKENED_MODES: Final = frozenset({_EPHEMERAL, _UNSIGNED})
+
+CURSOR_SIGNING_CHECK: Final = "loom.cursors.E001"
+"""Id of the deploy check refusing cursors not signed with a configured key."""
+
+MIN_KEY_BYTES: Final = 32
+"""Shortest accepted HMAC-SHA256 key: the hash output length (NIST SP 800-107)."""
+
+_CONTEXT: Final = b"loom.cursor\x00"
+_VERSION: Final = 1
+_MAC_BYTES: Final = hashlib.sha256().digest_size
+_EPHEMERAL_KEY_ID: Final = b"ephemeral"
+_KEY_ID: Final = re.compile(r"[A-Za-z0-9._-]{1,64}")
+_BASE64URL: Final = re.compile(r"[A-Za-z0-9_-]*")
+_INVALID: Final = "cursor token is not valid"
+_NOT_ENABLED: Final = "cursor pagination is not enabled"
+CURSORS_SECTION: Final = f"{ConfigSection.STORES_SETTINGS}.cursors"
+"""Dotted path of the cursor signing section."""
+
+_OPT_OUT: Final = f"{CURSORS_SECTION}.signing: ephemeral in development.yaml"
+_CARRIED_TYPES: Final = (datetime, date, time, UUID, Decimal)
+_SORTABLE_TYPES: Final = (bool, int, float, str, datetime, date, time, UUID, Decimal, Enum)
+
+
+class Cursor(LoomFrozenStruct, frozen=True):
+    """Decoded cursor position.
+
+    Args:
+        backend: Name of the backend that issued the token.
+        keys: Sort key values of the last row on the previous page, in sort order.
+        tie_breaker: Primary key of that row; a tuple in key order when the
+            key is composite.
+    """
+
+    backend: str
+    keys: tuple[object, ...]
+    tie_breaker: object
+
+
+class CursorKeySource(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
+    """Where one cursor signing key is read from; exactly one source is set.
+
+    The key itself never appears in configuration, so a dump of the config
+    cannot leak it. The source holds the key in standard base64 (surrounding
+    whitespace ignored), and the decoded bytes must be at least
+    :data:`MIN_KEY_BYTES` long: ``openssl rand -base64 32`` makes one.
+
+    Args:
+        path: File holding the key (a mounted secret).
+        env: Environment variable holding the key (how ECS/Fargate inject secrets).
+
+    Raises:
+        InvalidValue: When neither or both sources are set.
+    """
+
+    path: str | None = None
+    env: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.path is None) == (self.env is None):
+            raise InvalidValue("a cursor key needs exactly one source: 'path' or 'env'")
+
+
+class CursorConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
+    """The ``stores.settings.cursors`` section.
+
+    Args:
+        signing: ``signed`` (the default when absent) signs with ``keys``;
+            ``ephemeral`` signs with a random per-process key; ``unsigned``
+            signs nothing. Both opt-outs are set explicitly per environment
+            file (``development.yaml``, ``test.yaml``) and warn at startup.
+        current_key_id: Key that signs new cursors; it must be in ``keys``.
+        keys: Every key that verifies cursors, by key id. Older ids stay
+            here during a rotation so cursors they signed keep verifying.
+
+    Example YAML::
+
+        stores:
+          settings:
+            cursors:
+              current_key_id: "2026-10"
+              keys:
+                "2026-10": {env: CURSOR_KEY_2026_10}
+                "2026-07": {path: /run/secrets/cursor-2026-07}
+    """
+
+    signing: _Signing = "signed"
+    current_key_id: str | None = None
+    keys: dict[str, CursorKeySource] = {}
+
+
+class _DateTimeKey(msgspec.Struct, tag="datetime", forbid_unknown_fields=True):
+    v: Annotated[datetime, msgspec.Meta(tz=True)]
+
+
+class _DateKey(msgspec.Struct, tag="date", forbid_unknown_fields=True):
+    v: date
+
+
+class _TimeKey(msgspec.Struct, tag="time", forbid_unknown_fields=True):
+    v: time
+
+
+class _UuidKey(msgspec.Struct, tag="uuid", forbid_unknown_fields=True):
+    v: UUID
+
+
+class _DecimalKey(msgspec.Struct, tag="decimal", forbid_unknown_fields=True):
+    v: Decimal
+
+
+_Key = int | float | str | bool | None | _DateTimeKey | _DateKey | _TimeKey | _UuidKey | _DecimalKey
+
+
+class _Token(msgspec.Struct, forbid_unknown_fields=True):
+    b: str
+    k: list[_Key]
+    id: _Key | list[_Key]
+
+
+class CursorCodec:
+    """Issues and verifies cursor tokens bound to the query that produced them.
+
+    Build it once at startup, from configuration with :meth:`from_config`,
+    and share it: the store backends register it in DI, so a service
+    paginating by hand resolves the same codec the repositories use.
+
+    Args:
+        signing: ``signed`` (``keys`` and ``current_key_id`` required),
+            ``ephemeral``, ``unsigned`` or ``disabled``. The two opt-outs
+            ignore ``keys`` and log a WARNING when built; ``disabled`` holds
+            no key and refuses every token.
+        keys: Signing keys by key id, each at least :data:`MIN_KEY_BYTES` long.
+        current_key_id: Key id that signs new tokens.
+
+    Raises:
+        ConfigError: When the mode is unknown, or a ``signed`` codec has no
+            key, a short key, a key id outside ``[A-Za-z0-9._-]{1,64}`` or a
+            ``current_key_id`` it does not hold.
+
+    Example::
+
+        codec = CursorCodec.from_context(ctx)
+        token = codec.encode(position, model="billing.Invoice", query=query, scope=tenant_id)
+        position = codec.decode(
+            token,
+            backend="sqlalchemy",
+            model="billing.Invoice",
+            query=query,
+            scope=tenant_id,
+            columns=scalar_column_annotations(Invoice),
+            primary_key=("id",),
+        )
+    """
+
+    __slots__ = ("_current", "_keys", "_opt_out_silenced", "_signing")
+
+    def __init__(
+        self,
+        *,
+        signing: _Mode,
+        keys: Mapping[str, bytes] | None = None,
+        current_key_id: str | None = None,
+    ) -> None:
+        if signing not in _SIGNING_MODES:
+            raise ConfigError(f"{CURSORS_SECTION}.signing {signing!r} is not a signing mode")
+        self._signing = signing
+        self._opt_out_silenced = False
+        if signing == _SIGNED:
+            self._keys, self._current = _keyring(keys or {}, current_key_id)
+        elif signing == _EPHEMERAL:
+            self._current = _EPHEMERAL_KEY_ID
+            self._keys = {_EPHEMERAL_KEY_ID: secrets.token_bytes(MIN_KEY_BYTES)}
+        else:
+            self._current = b""
+            self._keys = {}
+        if signing in _WEAKENED_MODES:
+            _logger.warning(
+                StoresEvent.CURSOR_SIGNING_WEAKENED, extra={StoresKey.CURSOR_SIGNING: signing}
+            )
+
+    @classmethod
+    def from_context(cls, ctx: ConfigContext) -> CursorCodec:
+        """Build the codec of the ``stores.settings.cursors`` section of ``ctx``.
+
+        Args:
+            ctx: Application configuration; the section may be absent.
+
+        Returns:
+            The codec, built as :meth:`from_config` builds it, or
+            :meth:`disabled` when the section is absent: configuring it turns
+            cursor paging on. An opt-out built from a configuration that lists
+            :data:`CURSOR_SIGNING_CHECK` under ``checks.silenced`` may be
+            registered in a deployed environment.
+
+        Raises:
+            ConfigError: As :meth:`from_config`, or when the section, or the
+                ``checks`` section, is invalid.
+        """
+        config = ctx.section_optional(CURSORS_SECTION, CursorConfig)
+        if config is None:
+            return cls.disabled()
+        codec = cls.from_config(config)
+        codec._opt_out_silenced = CURSOR_SIGNING_CHECK in silenced_checks(ctx)
+        return codec
+
+    @staticmethod
+    def disabled() -> CursorCodec:
+        """The codec of an application that does not page by cursor.
+
+        Every store shares the one instance. Its :meth:`encode` and
+        :meth:`decode` raise ``UnsupportedQuery``.
+        """
+        return _DISABLED_CODEC
+
+    @property
+    def is_enabled(self) -> bool:
+        """Whether this codec issues and verifies tokens."""
+        return self._signing != _DISABLED
+
+    @property
+    def signing(self) -> str:
+        """The signing mode: ``signed``, ``ephemeral``, ``unsigned`` or ``disabled``."""
+        return self._signing
+
+    def require_enabled(self) -> None:
+        """Refuse the call when this codec is the disabled one.
+
+        Raises:
+            UnsupportedQuery: If cursor pagination is not enabled.
+        """
+        if self._signing == _DISABLED:
+            raise UnsupportedQuery(_NOT_ENABLED)
+
+    @classmethod
+    def from_config(cls, config: CursorConfig) -> CursorCodec:
+        """Build the codec of a ``stores.settings.cursors`` section, reading its keys.
+
+        Args:
+            config: The section, or ``CursorConfig()`` when it is absent.
+
+        Returns:
+            The codec for the resolved signing mode.
+
+        Raises:
+            ConfigError: When a key cannot be read, is empty or too short, or
+                the keyring is invalid; messages never carry key material.
+        """
+        if config.signing != _SIGNED:
+            return cls(signing=config.signing)
+        keys = {key_id: _read_key(key_id, spec) for key_id, spec in config.keys.items()}
+        return cls(signing=_SIGNED, keys=keys, current_key_id=config.current_key_id)
+
+    def encode(self, cursor: Cursor, *, model: type | str, query: QuerySpec, scope: str) -> str:
+        """Issue the token for ``cursor``, bound to ``model``, ``query`` and ``scope``.
+
+        Args:
+            cursor: Position of the last row on the page. A naive datetime
+                key is taken as UTC and carried with an explicit offset.
+            model: Model being paginated. A class is bound by module and
+                qualified name and named in errors by its qualified name
+                alone; a string is both.
+            query: Query the page answers; its filters and sort are bound.
+            scope: Caller scope the cursor is valid in, such as the tenant id;
+                ``""`` binds the cursor to no scope, deliberately.
+
+        Returns:
+            URL-safe token.
+
+        Raises:
+            UnsupportedQuery: If a key has a type the token format cannot
+                carry, or is a non-finite number.
+        """
+        binding, label = _model_names(model)
+        tie_breaker = cursor.tie_breaker
+        try:
+            tie: _Key | list[_Key] = (
+                [_wrap(value) for value in tie_breaker]
+                if isinstance(tie_breaker, tuple)
+                else _wrap(tie_breaker)
+            )
+            keys = [_wrap(key) for key in cursor.keys]
+        except (TypeError, ValueError):
+            raise UnsupportedQuery(
+                "a cursor cannot carry the sort value of the page's last row",
+                backend=cursor.backend,
+                model=label,
+            ) from None
+        token = _Token(b=cursor.backend, k=keys, id=tie)
+        payload = msgspec.json.encode(token)
+        if not self._keys:
+            self.require_enabled()
+            return _b64encode(payload)
+        key_id = self._current
+        mac = _mac(self._keys[key_id], key_id, _binding(binding, query, scope), payload)
+        header = bytes((_VERSION, len(key_id))) + key_id
+        return f"{_b64encode(payload)}.{_b64encode(header + mac)}"
+
+    def decode(
+        self,
+        token: str,
+        *,
+        backend: str,
+        model: type | str,
+        query: QuerySpec,
+        scope: str,
+        columns: Mapping[str, Any],
+        primary_key: Sequence[str],
+    ) -> Cursor:
+        """Verify and decode a client-supplied ``token``.
+
+        Args:
+            token: Token as received from the client.
+            backend: Name of the backend serving the query.
+            model: Model being paginated, as :meth:`encode` takes it.
+            query: Query being served; its filters and sort must match the
+                ones the token was issued for, and it must sort by as many
+                keys as the token carries.
+            scope: Caller scope; must equal the scope the token was issued in.
+            columns: Annotation of each column a token may carry a value of,
+                by name; every sort field and primary-key column must be here.
+            primary_key: Primary-key column names in key order. A
+                single-column key is carried as a scalar, a composite key as
+                a list of one value per column.
+
+        Returns:
+            The decoded position; datetime keys are always aware.
+
+        Raises:
+            UnsupportedQuery: If the token is malformed, unsigned or forged,
+                signed by an unknown key, issued for another binding or
+                backend, or does not match the sort or the primary key in
+                number or type of values.
+        """
+        binding, label = _model_names(model)
+        payload = self._verified_payload(token, binding, query, scope)
+        if payload is None:
+            raise UnsupportedQuery(_INVALID, backend=backend, model=label)
+        try:
+            record = msgspec.json.decode(payload, type=_Token)
+        except msgspec.DecodeError:
+            raise UnsupportedQuery(_INVALID, backend=backend, model=label) from None
+        sort_types = tuple(columns.get(spec.field) for spec in query.sort)
+        id_types = tuple(columns.get(name) for name in primary_key)
+        return _position(record, backend, label, sort_types=sort_types, id_types=id_types)
+
+    def _verified_payload(
+        self, token: str, binding: str, query: QuerySpec, scope: str
+    ) -> bytes | None:
+        """The payload bytes once the signature checks out, or ``None``."""
+        if not self._keys:
+            self.require_enabled()
+            return None if "." in token else _b64decode(token)
+        body, separator, signature = token.partition(".")
+        payload = _b64decode(body)
+        tag = _b64decode(signature) if separator else None
+        if payload is None or tag is None or len(tag) < 2 or tag[0] != _VERSION:
+            return None
+        id_end = 2 + tag[1]
+        key = self._keys.get(tag[2:id_end])
+        if key is None or len(tag) != id_end + _MAC_BYTES:
+            return None
+        expected = _mac(key, tag[2:id_end], _binding(binding, query, scope), payload)
+        return payload if hmac.compare_digest(expected, tag[id_end:]) else None
+
+
+_DISABLED_CODEC: Final = CursorCodec(signing=_DISABLED)
+
+
+def _keyring(
+    keys: Mapping[str, bytes], current_key_id: str | None
+) -> tuple[dict[bytes, bytes], bytes]:
+    if not keys:
+        raise ConfigError(
+            f"cursor signing needs a key: set {CURSORS_SECTION}.current_key_id and "
+            f"{CURSORS_SECTION}.keys, or opt out for development with {_OPT_OUT}"
+        )
+    for key_id, key in keys.items():
+        if _KEY_ID.fullmatch(key_id) is None:
+            raise ConfigError(f"cursor key id {key_id!r} must match [A-Za-z0-9._-]{{1,64}}")
+        if len(key) < MIN_KEY_BYTES:
+            raise ConfigError(f"cursor key {key_id!r} is shorter than {MIN_KEY_BYTES} bytes")
+    if current_key_id is None or current_key_id not in keys:
+        raise ConfigError(f"{CURSORS_SECTION}.current_key_id must name a configured key")
+    return {key_id.encode(): key for key_id, key in keys.items()}, current_key_id.encode()
+
+
+def _read_key(key_id: str, spec: CursorKeySource) -> bytes:
+    """Read one key; errors name the key id and never the material or the path."""
+    if spec.env is not None:
+        text = configured_variable(spec.env)
+        if text is None:
+            raise ConfigError(f"cursor key {key_id!r}: environment variable {spec.env} is not set")
+    else:
+        try:
+            text = Path(str(spec.path)).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            raise ConfigError(f"cursor key {key_id!r}: its file could not be read") from None
+    try:
+        return base64.b64decode(text.strip(), validate=True)
+    except ValueError:
+        raise ConfigError(f"cursor key {key_id!r} is not standard base64") from None
+
+
+def _mac(key: bytes, key_id: bytes, binding: bytes, payload: bytes) -> bytes:
+    message = b"".join(
+        (
+            _CONTEXT,
+            bytes((_VERSION, len(key_id))),
+            key_id,
+            len(binding).to_bytes(4, "big"),
+            binding,
+            payload,
+        )
+    )
+    return hmac.new(key, message, hashlib.sha256).digest()
+
+
+def _binding(model: str, query: QuerySpec, scope: str) -> bytes:
+    """Canonical bytes of what a token is bound to; page size and page are not part of it."""
+    group = query.filters
+    filters = (
+        None
+        if group is None
+        else [group.op, [msgspec.Raw(item) for item in sorted(map(_filter_bytes, group.filters))]]
+    )
+    sort = [[spec.field, spec.direction] for spec in query.sort]
+    return msgspec.json.encode([model, scope, filters, sort])
+
+
+def _filter_bytes(spec: FilterSpec) -> bytes:
+    return msgspec.json.encode([spec.field, spec.op, _utc(spec.value)], order="deterministic")
+
+
+def _utc(value: object) -> object:
+    """``value`` with every datetime as aware UTC; a naive one is taken as UTC."""
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    if isinstance(value, list | tuple):
+        return [_utc(item) for item in value]
+    if isinstance(value, set | frozenset):
+        return frozenset(_utc(item) for item in value)
+    return value
+
+
+def _wrap(value: object) -> _Key:
+    if isinstance(value, Enum):
+        value = value.value
+    if isinstance(value, float | Decimal) and not math.isfinite(value):
+        raise InvalidValue("a non-finite number cannot position a page")
+    if value is None or isinstance(value, int | float | str):
+        return value
+    if isinstance(value, datetime):
+        return _DateTimeKey(value.replace(tzinfo=UTC) if value.tzinfo is None else value)
+    if isinstance(value, date):
+        return _DateKey(value)
+    if isinstance(value, time):
+        return _TimeKey(value)
+    if isinstance(value, UUID):
+        return _UuidKey(value)
+    if isinstance(value, Decimal):
+        return _DecimalKey(value)
+    raise InvalidType(f"Unsupported cursor key type: {type(value).__name__}")
+
+
+def _unwrap(key: _Key) -> object:
+    if isinstance(key, _DateTimeKey | _DateKey | _TimeKey | _UuidKey | _DecimalKey):
+        return key.v
+    return key
+
+
+def _position(
+    record: _Token,
+    backend: str,
+    model: str,
+    *,
+    sort_types: tuple[Any, ...],
+    id_types: tuple[Any, ...],
+) -> Cursor:
+    """The position ``record`` holds, once it matches the sort and the primary key.
+
+    A type of ``None`` stands for a column missing from ``columns``, which no
+    value matches.
+    """
+    if record.b != backend:
+        raise UnsupportedQuery(
+            "cursor token was issued by another backend", backend=backend, model=model
+        )
+    keys = _typed_as(tuple(_unwrap(key) for key in record.k), sort_types)
+    if keys is None:
+        raise UnsupportedQuery("cursor token does not match the sort", backend=backend, model=model)
+    composite = len(id_types) > 1
+    carried = record.id
+    ties = (
+        tuple(_unwrap(key) for key in carried) if isinstance(carried, list) else (_unwrap(carried),)
+    )
+    typed_ties = _typed_as(ties, id_types) if isinstance(carried, list) == composite else None
+    if typed_ties is None:
+        raise UnsupportedQuery(
+            "cursor token does not match the primary key", backend=backend, model=model
+        )
+    return Cursor(
+        backend=record.b, keys=keys, tie_breaker=typed_ties if composite else typed_ties[0]
+    )
+
+
+def _typed_as(values: tuple[object, ...], types: tuple[Any, ...]) -> tuple[object, ...] | None:
+    """``values`` as one value of each of ``types``, in order, or ``None`` when they are not.
+
+    msgspec converts each value strictly: an ``int`` is not a ``str``, a
+    ``bool`` is not an ``int``, ``None`` only matches an optional type, and a
+    string is never parsed into a datetime, date, time, UUID or decimal. An
+    enum column's value comes back as the member, an ``int`` for a ``float``
+    column as a ``float``.
+    """
+    if len(values) != len(types) or None in types:
+        return None
+    try:
+        typed: tuple[object, ...] = msgspec.convert(
+            values,
+            tuple[types],  # type: ignore[valid-type]
+            builtin_types=_CARRIED_TYPES,
+        )
+    except msgspec.ValidationError:
+        return None
+    return typed
+
+
+def require_cursor_sort(
+    query: QuerySpec,
+    *,
+    backend: str,
+    model: type | str,
+    columns: Mapping[str, Any],
+    primary_key: Sequence[str],
+) -> None:
+    """Refuse, before the query runs, a cursor page no token could position.
+
+    Every sort field and primary-key column must be a column in ``columns``
+    whose type a token carries and which holds no null: a dotted path, a JSON
+    column or an optional column is refused. A comparison with a null is never
+    true, so the keyset predicate would skip the rows holding one.
+
+    Args:
+        query: The cursor query about to run.
+        backend: Name of the backend serving it.
+        model: Model being paginated, as :meth:`CursorCodec.encode` takes it.
+        columns: Annotation of each column, by name.
+        primary_key: Primary-key column names in key order.
+
+    Raises:
+        UnsupportedQuery: Naming the first field that does not qualify.
+    """
+    for name in (*(spec.field for spec in query.sort), *primary_key):
+        if not cursor_carries(columns.get(name)):
+            raise UnsupportedQuery(
+                f"cursor pagination cannot order by {name!r}: it must be a non-null column "
+                "of a type a cursor carries",
+                backend=backend,
+                model=_model_names(model)[1],
+            )
+
+
+def register_cursor_codec(container: LoomContainer, codec: CursorCodec) -> None:
+    """Register ``codec`` as the container's one ``CursorCodec``, which every store shares.
+
+    A codec built in code never meets :data:`CURSOR_SIGNING_CHECK`, so the same
+    rule applies here: in the deployed environment the container resolves,
+    an ``ephemeral`` or ``unsigned`` codec is refused unless it was built by
+    :meth:`CursorCodec.from_context` from a configuration that silences the
+    check. Without a registered ``Environment`` the process environment
+    decides (``LOOM_ENV``, else production), as everywhere in loom.
+
+    Raises:
+        ConfigError: When another codec is already registered: two codecs
+            would sign with different keys, and each would refuse the other's
+            tokens; or when the deployed environment refuses an opt-out.
+    """
+    if codec.is_enabled and codec.signing != _SIGNED and not codec._opt_out_silenced:
+        environment = (
+            container.resolve(Environment)
+            if container.is_registered(Environment)
+            else resolve_environment()
+        )
+        if environment.is_deployed:
+            raise ConfigError(
+                f"{CURSOR_SIGNING_CHECK}: a CursorCodec in {codec.signing} mode cannot serve "
+                f"the {str(environment)!r} environment; configure {CURSORS_SECTION} keys, "
+                f"or list {CURSOR_SIGNING_CHECK} under checks.silenced and build the codec "
+                "with CursorCodec.from_context"
+            )
+    if not container.is_registered(CursorCodec):
+        container.register_instance(CursorCodec, codec)
+    elif container.resolve(CursorCodec) is not codec:
+        raise ConfigError(
+            "another CursorCodec is already registered; one codec per application issues "
+            "and verifies every cursor"
+        )
+
+
+def _model_names(model: type | str) -> tuple[str, str]:
+    """The name a token is bound to and the name an error shows.
+
+    A class is bound by module and qualified name, so two models of one name
+    in different modules do not share tokens, and named by its qualified name
+    alone, so an answer to a client does not reveal the module layout.
+    """
+    if isinstance(model, str):
+        return model, model
+    return f"{model.__module__}.{model.__qualname__}", model.__qualname__
+
+
+def cursor_carries(annotation: Any) -> bool:
+    """Whether a token can carry a value of a column annotated ``annotation``.
+
+    A non-optional ``bool``, ``int``, ``float``, ``str``, ``datetime``,
+    ``date``, ``time``, ``UUID``, ``Decimal`` or ``Enum``, or a ``Literal``
+    whose values are all ``int`` or ``str``; an optional annotation is
+    refused, since a null cannot position a page.
+    """
+    if get_origin(annotation) is Literal:
+        return all(isinstance(value, int | str) for value in get_args(annotation))
+    return isinstance(annotation, type) and issubclass(annotation, _SORTABLE_TYPES)
+
+
+def _b64encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _b64decode(text: str) -> bytes | None:
+    """Strict unpadded base64url (RFC 4648 §5), or ``None``."""
+    if _BASE64URL.fullmatch(text) is None or len(text) % 4 == 1:
+        return None
+    try:
+        data = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+    except ValueError:
+        return None
+    return data if _b64encode(data) == text else None
+
+
+__all__ = [
+    "CURSOR_SIGNING_CHECK",
+    "MIN_KEY_BYTES",
+    "Cursor",
+    "CursorCodec",
+    "CursorConfig",
+    "CursorKeySource",
+    "cursor_carries",
+    "register_cursor_codec",
+    "require_cursor_sort",
+]

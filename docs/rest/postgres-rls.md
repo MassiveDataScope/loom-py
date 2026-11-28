@@ -19,7 +19,7 @@ regions, accounts or owners is another. loom names none of them.
 
 ## The provider
 
-A {class}`~loom.core.repository.sqlalchemy.session_manager.SessionManager` can begin
+A {class}`~loom.stores.sqlalchemy.session_manager.SessionManager` can begin
 every transaction by setting transaction-local Postgres settings taken from a provider
 you inject. A provider is a callable that returns the settings for the transaction about
 to start, or `None` when there is no request context. This one comes from a product that
@@ -29,8 +29,8 @@ isolates tenants:
 from collections.abc import Mapping
 from contextvars import ContextVar
 
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.sqlalchemy import SessionManager
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.stores.sqlalchemy import SessionManager
 
 current_tenant: ContextVar[str | None] = ContextVar("current_tenant", default=None)
 current_subject: ContextVar[str | None] = ContextVar("current_subject", default=None)
@@ -83,7 +83,7 @@ What the manager guarantees:
 - A savepoint (`begin_nested()`) does not call the provider again.
 - Without a provider, the manager behaves exactly as it did before.
 - A provider on a database other than Postgres is rejected at construction.
-- {attr}`~loom.core.repository.sqlalchemy.session_manager.SessionManager.has_session_settings`
+- {attr}`~loom.stores.sqlalchemy.session_manager.SessionManager.has_session_settings`
   tells whether a manager has a provider.
 
 ### The policy recipe
@@ -178,8 +178,9 @@ platform_sessions = SessionManager(PLATFORM_URL, store=DEFAULT_STORE)
   `execution_options(isolation_level="AUTOCOMMIT")` is outside what it can check; do
   not use one on a protected table.
 - The values travel as statement parameters, so `echo=True` and the text of a
-  `DBAPIError` include them. Pass `hide_parameters=True` to the engine when the boundary
-  or subject identifiers are sensitive.
+  `DBAPIError` include them. Set `stores.<name>.hide_parameters: true` when the boundary
+  or subject identifiers are sensitive. Admin and migration engines (the migrator, a
+  superuser URL) do not take this key.
 - On this level loom sets values and nothing else; the policies, roles and grants are
   yours. Row-scoped tables, below, are the level where loom creates and checks them.
 
@@ -400,7 +401,7 @@ product's sources before startup; each application takes the sources registered 
 is composed, and keeps them whatever is registered afterwards:
 
 ```python
-from loom.core.repository.sqlalchemy.rls import register_scope_source
+from loom.stores.sqlalchemy.rls import register_scope_source
 
 register_scope_source("desk", current_desk)
 ```
@@ -409,16 +410,16 @@ The rest is wired by loom. With `stores.default.schema.mode: external` and a Pos
 standard SQLAlchemy backend:
 
 - installs the scoped session-settings provider on the application's session manager, and
-  {func}`~loom.core.repository.sqlalchemy.rls.install_pool_reset`, which runs `RESET ALL`
+  {func}`~loom.stores.sqlalchemy.rls.install_pool_reset`, which runs `RESET ALL`
   when a connection returns to the pool;
 - binds the provider at startup to the compiled scoped tables and validates the bindings
   of `stores.default.schema.scopes` against the scopes they declare;
-- exposes {class}`~loom.core.repository.sqlalchemy.rls.SQLAlchemyStoreElevation` as the
+- exposes {class}`~loom.stores.sqlalchemy.rls.SQLAlchemyStoreElevation` as the
   store's `elevation`, which sets and clears flags on that store's transaction only.
 
 The composition then validates the registered product's `elevations` against every such
-store with {func}`~loom.core.repository.sqlalchemy.rls.validate_elevations`, and registers
-one {class}`~loom.core.persistence.elevation.ScopedElevationSink` over them as the
+store with {func}`~loom.stores.sqlalchemy.rls.validate_elevations`, and registers
+one {class}`~loom.core.stores.elevation.ScopedElevationSink` over them as the
 `ElevationSink`, which the kernel hands to the executor.
 
 A kernel built by hand registers an `ElevationSink` through one of its `modules`, for
@@ -431,23 +432,23 @@ key: the value or `''` for each scope, `'on'` or `''` for each elevation flag. A
 a pooled connection is therefore always overwritten, and the pool reset clears it when
 the connection returns.
 
-{func}`~loom.core.repository.sqlalchemy.rls.rls_session_settings` builds the same
+{func}`~loom.stores.sqlalchemy.rls.rls_session_settings` builds the same
 provider for programmatic use, for a session manager a script builds itself:
 
 ```python
-from loom.core.locator import load_application
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.sqlalchemy import SessionManager
-from loom.core.repository.sqlalchemy.rls import install_pool_reset, rls_session_settings
+from loom.stores.sqlalchemy.alembic import load_store_schema
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.stores.sqlalchemy import SessionManager
+from loom.stores.sqlalchemy.rls import install_pool_reset, rls_session_settings
 
-application = load_application()
+schema = load_store_schema()
 sessions = SessionManager(
-    APP_URL, session_settings=rls_session_settings(application), store=DEFAULT_STORE
+    APP_URL, session_settings=rls_session_settings(schema), store=DEFAULT_STORE
 )
 install_pool_reset(sessions.engine)
 ```
 
-`rls_session_settings(application, product=None)` validates the bindings when it is
+`rls_session_settings(schema, product=None)` validates the bindings when it is
 called. A product provider passed as `product=` may add its own keys; a key under
 `loom.scope.`, in any letter case, raises `ValueError`. The automatic wiring merges no
 product provider.
@@ -455,7 +456,7 @@ product provider.
 Cursor tokens are bound to these values: a repository signs every `loom.scope.` key the
 provider returns for the caller into the token, so a cursor issued in one tenant, or
 under an elevation, is refused with `400 unsupported_query` anywhere else (see
-[Cursor tokens](persistence-backends.md#cursor-tokens)).
+[Cursor tokens](stores.md#cursor-tokens)).
 
 ### Configuration
 
@@ -518,11 +519,11 @@ compilation refuses it with `ValueError`. `ck` takes the rule of `__checks__` as
 `%(constraint_name)s`. The names loom builds for `__indexes__` and `__partial_unique__`
 are final and no convention renames them.
 
-{func}`~loom.core.locator.load_application` reads this file (the path given, or
-`LOOM_CONFIG`), adds `app.code_path` (default `src`, relative to the configuration file) to `sys.path` as the server does,
+{func}`~loom.stores.sqlalchemy.alembic.load_store_schema` reads this file (the path given, or
+the default config directory), adds `app.code_path` (default `src`, relative to the configuration file) to `sys.path` as the server does,
 discovers and compiles the models into a `MetaData` owned by the returned
-{class}`~loom.core.locator.Application` and builds the
-{class}`~loom.core.repository.sqlalchemy.rls.BootstrapConfig`. A missing key raises
+{class}`~loom.stores.sqlalchemy.alembic.StoreSchema` and builds the
+{class}`~loom.stores.sqlalchemy.rls.BootstrapConfig`. A missing key raises
 `ConfigError` naming it, and a missing name points at `loom schema init`; no name has a
 default. Two applications in one process share no table, listener or registry.
 
@@ -547,7 +548,7 @@ of loom shipped or is below the minimum compatible revision; see
 
 loom names nothing around the schema at run time. Besides the schema, the two roles and
 the database users, the product declares the names of
-{class}`~loom.core.repository.sqlalchemy.rls.SchemaNames`:
+{class}`~loom.stores.sqlalchemy.rls.SchemaNames`:
 
 | Key | Names | Derived proposal |
 |---|---|---|
@@ -590,16 +591,16 @@ Every name Postgres sees passes one validator,
 
 The roles, groups and users must have distinct names, and the two version tables must
 differ. A name Postgres would fold, truncate or resolve to something else never reaches
-the server: {meth}`~loom.core.repository.sqlalchemy.rls.BootstrapConfig.validated` and
-`SchemaNames.derived` raise `ValueError`, while `load_application`, `apply_bootstrap`
+the server: {meth}`~loom.stores.sqlalchemy.rls.BootstrapConfig.validated` and
+`SchemaNames.derived` raise `ValueError`, while `load_store_schema`, `apply_bootstrap`
 and the migration runners raise `ConfigError` naming `stores.default.schema`. A valid name
 still reaches Postgres only as a bound parameter, and the guard quotes it itself.
 
 ### Database users and groups
 
 These are database users, unrelated to RBAC roles. The bootstrap creates them from
-{class}`~loom.core.repository.sqlalchemy.rls.DatabaseRoles` and
-{class}`~loom.core.repository.sqlalchemy.rls.DatabaseUser`:
+{class}`~loom.stores.sqlalchemy.rls.DatabaseRoles` and
+{class}`~loom.stores.sqlalchemy.rls.DatabaseUser`:
 
 | User | Attributes | What it holds |
 |---|---|---|
@@ -622,7 +623,7 @@ It refuses a role name with a `pg_` or `rds_` prefix.
 
 ### The bootstrap
 
-{func}`~loom.core.repository.sqlalchemy.rls.apply_bootstrap` prepares one application
+{func}`~loom.stores.sqlalchemy.rls.apply_bootstrap` prepares one application
 schema in one transaction, with a superuser URL: the guard, the users and groups, the
 schema, its grants and the guard's event triggers. The role that runs the first bootstrap
 of a schema becomes its installer: it owns the guard, and every later bootstrap of that
@@ -632,12 +633,12 @@ schema must run as the same role.
 import asyncio
 import os
 
-from loom.core.locator import load_application
-from loom.core.repository.sqlalchemy.rls import apply_bootstrap
+from loom.stores.sqlalchemy.alembic import load_store_schema
+from loom.stores.sqlalchemy.rls import apply_bootstrap
 
 
 async def main() -> None:
-    bootstrap = load_application().bootstrap
+    bootstrap = load_store_schema().bootstrap
     if bootstrap is None:
         raise SystemExit("no RowScoped model in this application")
     passwords = {
@@ -663,7 +664,7 @@ Inside that transaction it runs, in order:
    migration of the same schema and waits at most `lock_timeout` (`apply_bootstrap(...,
    lock_timeout="5s")`, the default) before failing;
 3. the static preflight, which checks `server_version_num` against
-   {data}`~loom.core.repository.sqlalchemy.rls.MIN_SERVER_VERSION_NUM` (`140000`) and
+   {data}`~loom.stores.sqlalchemy.rls.MIN_SERVER_VERSION_NUM` (`140000`) and
    that the caller is a superuser or a member of `rds_superuser`, then creates the guard
    schema with its `revision` table, or checks that the existing one belongs to the
    calling role and holds loom's revisions;
@@ -716,8 +717,8 @@ What it guarantees:
 - When the structural version table already exists, each bypass user is left with
   exactly `SELECT` on it.
 
-`load_application` builds the
-{class}`~loom.core.repository.sqlalchemy.rls.BootstrapConfig` with both defaults; set them
+`load_store_schema` builds the
+{class}`~loom.stores.sqlalchemy.rls.BootstrapConfig` with both defaults; set them
 on the returned value before applying it:
 
 ```python
@@ -776,13 +777,13 @@ that may create event triggers.
 import asyncio
 import os
 
-from loom.core.locator import load_application
-from loom.core.repository.sqlalchemy.rls import create_schema
+from loom.stores.sqlalchemy.alembic import load_store_schema
+from loom.stores.sqlalchemy.rls import create_schema
 
-asyncio.run(create_schema(os.environ["MIGRATOR_URL"], load_application()))
+asyncio.run(create_schema(os.environ["MIGRATOR_URL"], load_store_schema()))
 ```
 
-{func}`~loom.core.repository.sqlalchemy.rls.create_schema` always takes the migrator
+{func}`~loom.stores.sqlalchemy.rls.create_schema` always takes the migrator
 URL and uses a session manager without session settings. It checks the dialect, sets
 `lock_timeout` (`create_schema(..., lock_timeout="5s")`, the default) and takes the
 schema's advisory lock, the one the bootstrap and the runners take. It then checks that
@@ -797,13 +798,13 @@ the application with `mode: external` and the URL of a `read` or `write` user.
 
 ### Several Postgres stores
 
-`load_application()` loads the `default` store. Each other Postgres store whose models
-are row-scoped is prepared and checked on its own: `load_application(store=...)` loads
+`load_store_schema()` loads the `default` store. Each other Postgres store whose models
+are row-scoped is prepared and checked on its own: `load_store_schema(store=...)` loads
 that store's models and its `stores.<store>.schema` section, and the bootstrap,
 `create_schema` and `verify` take that `Application` with that store's URLs.
 
 ```python
-audit = load_application(store="audit")
+audit = load_store_schema(store="audit")
 if audit.bootstrap is None:
     raise SystemExit("no RowScoped model in the audit store")
 await apply_bootstrap(os.environ["AUDIT_SUPERUSER_URL"], audit.bootstrap, audit_passwords)
@@ -833,32 +834,48 @@ alembic/
 ```python
 import shutil
 
-from loom.core.repository.sqlalchemy.migrations import ENV_TEMPLATE_PATH
+from loom.stores.sqlalchemy.migrations import ENV_TEMPLATE_PATH
 
 shutil.copy(ENV_TEMPLATE_PATH, "alembic/env.py")
 shutil.copy(ENV_TEMPLATE_PATH, "alembic/data/env.py")
 ```
 
 The environment loads the application from `config.attributes["application"]` or, when
-that is absent, from `LOOM_CONFIG`. It refuses offline mode, because the guard needs a
-live connection. Generate and apply structural revisions with the migrator URL:
+that is absent, from the default config directory (`LOOM_CONFIG_DIR`, else `./config`). It refuses offline mode, because the guard needs a
+live connection.
+
+An application that writes its own `env.py` gets one store's metadata from the same
+package scan composition uses, with one import and one call:
+
+```python
+from loom.stores.sqlalchemy.alembic import load_store_schema
+
+target_metadata = load_store_schema(store="default").metadata
+```
+
+{func}`~loom.stores.sqlalchemy.alembic.load_store_schema` takes an optional configuration
+file or directory, else the default config directory, and holds the models of the store
+named: those `app.packages` scans and the store serves. A store that is not declared
+with the SQLAlchemy backend is a `ConfigError` naming its section.
+
+Generate and apply structural revisions with the migrator URL:
 
 ```python
 from alembic import command
 
-from loom.core.locator import load_application
-from loom.core.repository.sqlalchemy.migrations import alembic_config
+from loom.stores.sqlalchemy.alembic import load_store_schema
+from loom.stores.sqlalchemy.migrations import alembic_config
 
 config = alembic_config("alembic", MIGRATOR_URL)
-config.attributes["application"] = load_application()
+config.attributes["application"] = load_store_schema()
 command.revision(config, message="add entries", autogenerate=True)
 command.upgrade(config, "head")
 ```
 
-{func}`~loom.core.repository.sqlalchemy.migrations.alembic_config` accepts a
+{func}`~loom.stores.sqlalchemy.migrations.alembic_config` accepts a
 `postgresql+asyncpg` URL; a script location whose last element is `data` is the data
 tree. The environment calls
-{func}`~loom.core.repository.sqlalchemy.migrations.run_migrations`, which:
+{func}`~loom.stores.sqlalchemy.migrations.run_migrations`, which:
 
 - validates every name (see [Names](#names));
 - never switches role: it fails unless `current_user` is the owner and
@@ -879,7 +896,7 @@ tree. The environment calls
 - rejects a revision that sets `data_migration = True`.
 
 The revision hook,
-{func}`~loom.core.repository.sqlalchemy.migrations.scope_protection_hook`, is installed
+{func}`~loom.stores.sqlalchemy.migrations.scope_protection_hook`, is installed
 automatically. It reads the compiled metadata and rewrites each autogenerated revision,
 one sequence per table, under the guard's hatch and in the revision's transaction. The
 revision carries loom's Alembic operations, never SQL text:
@@ -901,7 +918,7 @@ target revision. The same holds for a scoped table that the `downgrade` recreate
 A new scoped table, as generated:
 
 ```python
-import loom.core.repository.sqlalchemy.migrations.operations
+import loom.stores.sqlalchemy.migrations.operations
 
 
 def upgrade() -> None:
@@ -915,7 +932,7 @@ def upgrade() -> None:
 ```
 
 The import registers the operations, which live in
-{mod}`~loom.core.repository.sqlalchemy.migrations.operations`. Each one executes a constant
+{mod}`~loom.stores.sqlalchemy.migrations.operations`. Each one executes a constant
 statement with bound parameters against the guard named by the runner, resolving the
 guard first, and resolves the table in the application schema the runner configured, so
 it runs only through `run_migrations`; anywhere else it raises `ConfigError` (`guard
@@ -937,11 +954,11 @@ revision, call `op.open_hatch()` and `op.unprotect_scoped_table("table")` before
 table or unmarking a scoped one is out of scope: no revision is generated for it, and
 `check`, `verify` and startup in `external` mode report the mismatch.
 
-{func}`~loom.core.repository.sqlalchemy.migrations.check` is read-only: it takes no
+{func}`~loom.stores.sqlalchemy.migrations.check` is read-only: it takes no
 lock, creates no version table and writes nothing.
 
 The migration package, the environment and
-{func}`~loom.core.locator.load_application` work without the `rest` extra: they import
+{func}`~loom.stores.sqlalchemy.alembic.load_store_schema` work without the `rest` extra: they import
 nothing from FastAPI.
 
 ### Data migrations
@@ -970,12 +987,12 @@ Apply them with the URL of a user declared with `access="bypass"`:
 ```python
 from alembic import command
 
-from loom.core.repository.sqlalchemy.migrations import alembic_config
+from loom.stores.sqlalchemy.migrations import alembic_config
 
 command.upgrade(alembic_config("alembic/data", LEDGER_OPS_URL), "head")
 ```
 
-{func}`~loom.core.repository.sqlalchemy.migrations.run_data_migrations` never switches
+{func}`~loom.stores.sqlalchemy.migrations.run_data_migrations` never switches
 role. It requires `rolbypassrls` for `current_user` and that user declared with
 `access="bypass"`, takes the same advisory lock, requires the structural tree at head
 while it holds the lock, and runs one transaction per revision. It rejects a revision without
@@ -1000,7 +1017,7 @@ re-apply the bootstrap of each schema with it. The bootstrap applies only the gu
 revisions that schema lacks, each checked against its released digest, and never touches
 the guard of another schema, so two products on different loom versions can share a
 database. A release of loom accepts every released guard revision at or above its
-{data}`~loom.core.repository.sqlalchemy.rls.guard_manifest.MIN_COMPATIBLE_GUARD_REVISION`;
+{data}`~loom.stores.sqlalchemy.rls.guard_manifest.MIN_COMPATIBLE_GUARD_REVISION`;
 below it, the runners and `create_schema` raise `ConfigError` (`guard revision pending`)
 and startup refuses to serve until the bootstrap has run. A guard holding a revision the
 release does not know is refused everywhere. A released revision is never edited; a
@@ -1128,7 +1145,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.detach_range_partitions("note_events", "2026-01-01", "2027-01-01", interval="month", drop=True)
+    op.detach_range_partitions(
+        "note_events", "2026-01-01", "2027-01-01", interval="month", drop=True
+    )
 ```
 
 The downgrade is written by hand: `ensure_range_partitions` leaves existing partitions
@@ -1141,10 +1160,10 @@ From Python, for instance a scheduled job that keeps the next months ready, with
 migrator's URL or an open connection of the migrator:
 
 ```python
-from loom.core.repository.sqlalchemy.rls import ensure_range_partitions
+from loom.stores.sqlalchemy.rls import ensure_range_partitions
 
 created = await ensure_range_partitions(
-    MIGRATOR_URL, application, NoteEvent, date(2026, 1, 1), date(2026, 7, 1), interval="month"
+    MIGRATOR_URL, schema, NoteEvent, date(2026, 1, 1), date(2026, 7, 1), interval="month"
 )
 # ("note_events_p202601", ..., "note_events_p202606"); () when they all exist
 ```
@@ -1162,10 +1181,10 @@ a read straight from a partition by the partition's own.
 Retention detaches, and with `drop=True` drops, the partitions covering a period:
 
 ```python
-from loom.core.repository.sqlalchemy.rls import detach_range_partitions
+from loom.stores.sqlalchemy.rls import detach_range_partitions
 
 await detach_range_partitions(
-    MIGRATOR_URL, application, NoteEvent, date(2025, 1, 1), date(2025, 2, 1), drop=True
+    MIGRATOR_URL, schema, NoteEvent, date(2025, 1, 1), date(2025, 2, 1), drop=True
 )
 ```
 
@@ -1257,7 +1276,7 @@ it static is the product's responsibility. The lint exempts exactly the two call
 compile them and fails on any other.
 
 - **What runs is what was reviewed and released.** Each file is pinned by its SHA-256 in
-  {mod}`~loom.core.repository.sqlalchemy.rls.guard_manifest`. The bootstrap refuses a
+  {mod}`~loom.stores.sqlalchemy.rls.guard_manifest`. The bootstrap refuses a
   packaged file whose digest differs and records the digest of every revision it
   applies, so the text reviewed in a pull request is the text that runs, with no
   template in between.
@@ -1276,7 +1295,7 @@ compile them and fails on any other.
   `objects`. The functions identify the revision; the other categories must match that
   revision's digests, and `objects` must be empty, so an operator, type, collation,
   operator class, text search object or statistics object added to the guard is refused.
-  {func}`~loom.core.repository.sqlalchemy.rls.integrity.guard_problems` also requires
+  {func}`~loom.stores.sqlalchemy.rls.integrity.guard_problems` also requires
   every object of the guard to belong to the guard schema's owner, the grants to be
   exactly the owner's (`USAGE` on the schema, `SELECT` on the configuration and registry,
   `EXECUTE` on the functions above) and nothing to anyone else, every function's settings
@@ -1296,13 +1315,13 @@ compile them and fails on any other.
 
 ### `check` versus `verify`
 
-| | {func}`~loom.core.repository.sqlalchemy.migrations.check` | {func}`~loom.core.repository.sqlalchemy.rls.verify` |
+| | {func}`~loom.stores.sqlalchemy.migrations.check` | {func}`~loom.stores.sqlalchemy.rls.verify` |
 |---|---|---|
 | Question | do the models, the migrations and the registry agree? | does the database hold what the declaration says? |
 | Compares | tables and columns (Alembic autogenerate), registered tables against the model | the installed guard against the released one (`guard.*`: the six catalogue digests, owners against the recorded installer, grants, function settings, the two event triggers, the configuration row including the installer), the registry and each scoped table's protection, the assertion, then what the assertion cannot require: presence of group and bypass privileges, exactly `SELECT` for bypass users on the structural version table, sequence `USAGE`, `__privileges__` on global tables, C9 actions and group privileges, memberships against `access`, undeclared members of the groups (`membership.undeclared`), the migrator's no-inherit membership, owner and migrator outside bypass roles |
 | Credential | migrator | migrator |
 | Writes | none; no lock, no version table | none |
-| Result | `ConfigError` naming the first drift | {class}`~loom.core.repository.sqlalchemy.rls.Report` with `ok` and `findings` |
+| Result | `ConfigError` naming the first drift | {class}`~loom.stores.sqlalchemy.rls.Report` with `ok` and `findings` |
 | Where | the pull request gate | after each deployment, and on demand |
 
 The assertion forbids excess at every DDL; `verify` also requires presence. Policy and
@@ -1310,7 +1329,7 @@ The assertion forbids excess at every DDL; `verify` also requires presence. Poli
 from a thread without a running loop.
 
 ```python
-report = await verify(MIGRATOR_URL, application)
+report = await verify(MIGRATOR_URL, schema)
 for finding in report.findings:
     print(finding.table, finding.check, finding.expected, finding.actual)
 ```
@@ -1325,7 +1344,7 @@ Every `LG001` and `LG002` message starts with `loom_guard[<schema>]:`.
 | `LG002` | the assertion, `ddl_command_end`, `sql_drop`, `COMMIT` of a transaction that opened the hatch, C5 in `protect_scoped_table`, `unprotect_scoped_table` | a guard invariant is broken, the message naming the object to repair; DDL on the guard schema outside the bootstrap; or an unprotect without the hatch |
 | `22023` | `protect_scoped_table`, the bootstrap | an invalid declaration, a `char(n)` scope column or one with a nondeterministic collation, or a server below Postgres 14 |
 | `42501` | `open_hatch`, `protect_scoped_table`, `unprotect_scoped_table`, the bootstrap | wrong schema, wrong owner, a caller that is not a member of the owner, prior policies, a table not registered, a role that exists and this guard did not create, a recorded role that differs from the declaration, a reserved role prefix, an unexpected or `ADMIN` membership, a guard or application schema the bootstrap does not own, or a bootstrap by another installer |
-| `ConfigError` | startup, `load_application`, `apply_bootstrap`, `create_schema`, the runners, the guard operations, `check` | a missing key or name, an invalid name or lock timeout, a missing or malformed scope binding, a missing guard or guard event trigger, a guard that differs from the released one, a guard revision this release does not know or below the minimum compatible one (`guard revision pending`), a guard operation outside `run_migrations`, a bootstrap without superuser, a wrong credential, a superuser or bypass application connection, a dialect that cannot protect, or drift; messages that call for a bootstrap point at `apply_bootstrap` |
+| `ConfigError` | startup, `load_store_schema`, `apply_bootstrap`, `create_schema`, the runners, the guard operations, `check` | a missing key or name, an invalid name or lock timeout, a missing or malformed scope binding, a missing guard or guard event trigger, a guard that differs from the released one, a guard revision this release does not know or below the minimum compatible one (`guard revision pending`), a guard operation outside `run_migrations`, a bootstrap without superuser, a wrong credential, a superuser or bypass application connection, a dialect that cannot protect, or drift; messages that call for a bootstrap point at `apply_bootstrap` |
 | `ValueError` | `compile_all`, the revision hook, `BootstrapConfig.validated`, `SchemaNames.derived` | a compile rule, an FK whose target is not compiled with it, a revision that would leave a table unprotected, or an invalid name |
 
 ### Other dialects
@@ -1348,7 +1367,7 @@ superuser or `BYPASSRLS` role and `create_all` over scoped tables, and its
 unbound session settings fail closed.
 
 A job that must read or write every boundary uses a second
-{class}`~loom.core.repository.sqlalchemy.session_manager.SessionManager` on the URL of
+{class}`~loom.stores.sqlalchemy.session_manager.SessionManager` on the URL of
 the declared bypass user, without a provider:
 
 ```python
@@ -1588,7 +1607,7 @@ unmarked table pays nothing.
 - **`database.schema` as a string.** loom 2.11 ignored a scalar `database.schema`;
   from 2.12 the key is a section, so a string value fails at startup with a
   `ConfigError`. Move a schema name to `database.schema.name`.
-- **Discovery imports.** `load_application` reuses the server's discovery, which
+- **Discovery imports.** `load_store_schema` reuses the server's discovery, which
   recognises REST interfaces only when the product's modules have already imported
   `loom.rest.model`; it never imports it itself.
 

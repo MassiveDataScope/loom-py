@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from sqlalchemy import Index, MetaData, UniqueConstraint
 
-from loom.core.backend.sqlalchemy import compile_all, scoped_tables
 from loom.core.model import BaseModel, ColumnField, Privilege, RowScoped, ScopeColumn, ScopedField
 from loom.core.model.types import Integer, String, Text
+from loom.stores.sqlalchemy.schema import compile_all, scoped_tables
 
 
 class AcmeTableLedger(BaseModel, RowScoped):

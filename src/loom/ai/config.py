@@ -1,6 +1,6 @@
 """Typed configuration for the ``ai:`` deployment section.
 
-Parsed via ``ctx.section(ConfigKey.AI, AiConfig)`` through the existing
+Parsed via ``ctx.section(ConfigSection.AI, AiConfig)`` through the existing
 :mod:`loom.core.config` loader, so ``${oc.env:...}`` interpolations and the
 secret resolver apply before the decode, unchanged.  Validation is fail-fast
 per struct and every issue carries a stable
@@ -21,6 +21,7 @@ from urllib.parse import SplitResult, urlsplit
 from msgspec import field
 
 from loom.ai.errors import AgentCompilationError, AgentCompilationIssue, AgentErrorCode
+from loom.ai.event import AiEvent, AiKey, PlaintextHost
 from loom.ai.inference import OUTPUT_MODES, InferenceTarget
 from loom.ai.pricing import ModelPrice
 from loom.ai.remote_auth import is_strategy_registered, registered_strategy_names
@@ -101,14 +102,13 @@ class _RemoteUrl:
     announces them at start-up. Whatever the scheme, the URL must declare a host and carry
     no userinfo and no query string.
 
-    The URL is judged once, when built: ``fault`` is the verdict, ``warn_plaintext`` reads
+    The URL is judged once, when built: ``fault`` is the verdict, ``warn_plaintext`` names
     why a plaintext URL was let through.
     """
 
     def __init__(self, url: str, *, private_plaintext: bool = False) -> None:
         """Judge *url*; *private_plaintext* is the server's ``allow_private_plaintext``."""
-        self._host: str | None = None
-        self._plaintext_reason: str | None = None
+        self._plaintext_host: PlaintextHost | None = None
         self.fault: str | None = self._judge(url, private_plaintext)
         """Why the URL is unsafe, or ``None`` when it is acceptable."""
 
@@ -118,9 +118,10 @@ class _RemoteUrl:
         Args:
             component: Configuration path the URL came from.
         """
-        if self._plaintext_reason is not None:
+        if self._plaintext_host is not None:
             _logger.warning(
-                "%s uses plaintext http at %s. %s", component, self._host, self._plaintext_reason
+                AiEvent.REMOTE_PLAINTEXT_ACCEPTED,
+                extra={AiKey.CONFIG_PATH: component, AiKey.PLAINTEXT_HOST: self._plaintext_host},
             )
 
     def _judge(self, url: str, private_plaintext: bool) -> str | None:
@@ -128,14 +129,13 @@ class _RemoteUrl:
             parts: SplitResult = urlsplit(url)
         except ValueError:
             return "the URL is malformed"
-        self._host = parts.hostname
         if parts.scheme == "http":
             if _is_loopback(parts.hostname):
-                self._plaintext_reason = _LOOPBACK_PLAINTEXT
+                self._plaintext_host = PlaintextHost.LOOPBACK
             elif not private_plaintext:
                 return "the scheme must be https"
             elif _is_private(parts.hostname):
-                self._plaintext_reason = _PRIVATE_PLAINTEXT
+                self._plaintext_host = PlaintextHost.PRIVATE
             else:
                 return "allow_private_plaintext admits only a private host"
         elif parts.scheme != "https":
@@ -147,16 +147,6 @@ class _RemoteUrl:
         if parts.query:
             return "the URL carries a query string, which may embed credentials"
         return None
-
-
-_LOOPBACK_PLAINTEXT = (
-    "Allowed because the traffic cannot leave this machine; the same URL on any other "
-    "host is refused, so this configuration is local-only."
-)
-_PRIVATE_PLAINTEXT = (
-    "Allowed by allow_private_plaintext: the host is only reachable inside a private "
-    "network, which must be trusted."
-)
 
 
 def _is_loopback(hostname: str | None) -> bool:
@@ -350,7 +340,7 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
     Attributes:
         engine: Entry-point name in group ``loom.ai.engines``.
         specs: Glob patterns of agent artifacts, relative to the app root.
-            Mutually exclusive with the manifest ``AGENTS`` attribute: exactly
+            Mutually exclusive with ``app.agents``: exactly
             one of the two declares the artifacts of an application, and
             declaring both is a compilation error.
         models: Model-role bindings; must contain every role an agent declares.
@@ -451,11 +441,11 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
             raise AgentCompilationError(issues)
         _warn_unused_prices(self.prices, self.models)
 
-    def artifact_specs(self, manifest: tuple[str, ...], *, mcp_declared: bool) -> tuple[str, ...]:
-        """The one artifact source of the application: :attr:`specs` or the manifest ``AGENTS``.
+    def artifact_specs(self, agents: tuple[str, ...], *, mcp_declared: bool) -> tuple[str, ...]:
+        """Return artifact patterns from ``ai.specs`` or ``app.agents``.
 
         Args:
-            manifest: Glob patterns of the manifest ``AGENTS`` attribute.
+            agents: Glob patterns from ``app.agents``.
             mcp_declared: Whether a root reaches an ``Mcp()`` declaration; then
                 no artifact at all is accepted.
 
@@ -466,11 +456,11 @@ class AiConfig(LoomFrozenStruct, frozen=True, kw_only=True):
             AgentCompilationError: When both sources declare artifacts, or
                 neither does and no ``Mcp()`` declaration is reached.
         """
-        if self.specs and manifest:
+        if self.specs and agents:
             raise AgentCompilationError([AgentErrorCode.AGENT_SPECS_CONFLICT.issue()])
-        if not self.specs and not manifest and not mcp_declared:
+        if not self.specs and not agents and not mcp_declared:
             raise AgentCompilationError([AgentErrorCode.AGENT_SPECS_MISSING.issue()])
-        return self.specs or manifest
+        return self.specs or agents
 
     def active_endpoint(self, name: str) -> AgentEndpointConfig | None:
         """Return the HTTP opt-in of agent *name* only when it is in force.
@@ -490,9 +480,7 @@ def _warn_unused_prices(
 ) -> None:
     bound = {target.model for target in models.values()}
     for model in sorted(prices.keys() - bound):
-        _logger.warning(
-            "ai.prices[%r] names no model of ai.models; no run is priced with it", model
-        )
+        _logger.warning(AiEvent.PRICE_MODEL_UNUSED, extra={AiKey.MODEL: model})
 
 
 def _validate_remote_url(

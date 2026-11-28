@@ -3,7 +3,7 @@
 ``loom.core.engine.boundaries``: a top-level writer opens and commits an
 invocation scope, a nested one joins it, one with no coordinator runs with no
 unit of work, a read-only one enlists no store.
-Every scenario runs through ``RuntimeExecutor.execute`` over recording phased
+Every scenario runs through ``UseCaseExecutor.execute`` over recording phased
 stores, so what is asserted is what a use case gets: atomicity, the nested
 rules, ownership, the error each outcome raises, cancellation at every point
 and no leak across invocations (ADR 0008, T045a).
@@ -21,25 +21,25 @@ import pytest
 from loom.core.authz.elevation import elevated_scopes
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import EventKind
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import active_channel
 from loom.core.errors import (
     PostCommitError,
     ScopeOwnershipError,
-    StoresNotCommitted,
+    StoresNotCommittedError,
     UndeclaredStoreWrite,
 )
 from loom.core.job.context import add_pending_dispatch
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import RepoFor
-from loom.core.uow.coordinator import (
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.repository import RepoFor
+from loom.core.stores.uow.coordinator import (
     Committed,
     InvocationOutcome,
     OrderedCommits,
     RolledBack,
     Uncertain,
 )
-from loom.core.uow.scope import InvocationScope, current_scope
+from loom.core.stores.uow.scope import InvocationScope, current_scope
 from loom.core.use_case import Joined, UseCase
 from loom.core.use_case.errors import JoinedAutocommitStore
 
@@ -56,7 +56,7 @@ from ...uow._coordinator_fakes import (
 from .._lifecycle_doubles import (
     BusinessError,
     Log,
-    Metrics,
+    RecordingExecutionObserver,
     Run,
     StubUnitOfWorkFactory,
     context_is_clean,
@@ -79,16 +79,15 @@ from .doubles import (
 
 
 @pytest.fixture
-def executor(transactional_executor: RuntimeExecutor) -> RuntimeExecutor:
+def executor(transactional_executor: UseCaseExecutor) -> UseCaseExecutor:
     """In this module the executor opens an invocation scope over the phased stores."""
     return transactional_executor
 
 
 class TestAtomicity:
     async def test_a_clean_execution_persists_its_write(
-        self, ledger: Ledger, stores: AcmeStores, executor: RuntimeExecutor
+        self, ledger: Ledger, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
-
         async def body() -> None:
             write(stores, "row")
 
@@ -97,9 +96,8 @@ class TestAtomicity:
         assert ledger.persisted[DEFAULT_STORE] == ["row"]
 
     async def test_a_failure_after_writing_rolls_back_closes_and_persists_nothing(
-        self, ledger: Ledger, stores: AcmeStores, executor: RuntimeExecutor
+        self, ledger: Ledger, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
-
         async def body() -> None:
             write(stores, "row")
             raise BusinessError
@@ -115,9 +113,8 @@ class TestAtomicity:
         )
 
     async def test_a_failure_after_a_nested_write_persists_nothing(
-        self, ledger: Ledger, stores: AcmeStores, executor: RuntimeExecutor
+        self, ledger: Ledger, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
-
         async def nested() -> None:
             write(stores, "nested-row")
 
@@ -133,7 +130,7 @@ class TestAtomicity:
         assert ledger.persisted[DEFAULT_STORE] == []
 
     async def test_a_nested_execution_pushes_its_frame_on_the_same_scope(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
         seen: list[tuple[InvocationScope, int]] = []
 
@@ -151,7 +148,7 @@ class TestAtomicity:
     async def test_a_read_only_execution_opens_a_read_only_scope_it_closes_unsettled(
         self,
         stores: AcmeStores,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
     ) -> None:
         """It enlists no store, so ending it settles and logs no outcome."""
         seen: list[tuple[InvocationScope, tuple[StoreKey, ...]]] = []
@@ -166,7 +163,7 @@ class TestAtomicity:
         assert (scope.closed, scope.outcome) == (True, None)
 
     async def test_a_read_only_nested_execution_pushes_a_frame_writing_to_no_store(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
         depths: list[tuple[int, tuple[object, ...]]] = []
 
@@ -182,9 +179,8 @@ class TestAtomicity:
         assert depths == [(2, ())]
 
     async def test_a_writer_under_a_read_only_nested_execution_is_refused(
-        self, ledger: Ledger, stores: AcmeStores, executor: RuntimeExecutor
+        self, ledger: Ledger, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
-
         async def read() -> None:
             await executor.execute(Run(done()))
 
@@ -202,9 +198,8 @@ class TestAtomicity:
 
 class TestOwnership:
     async def test_a_gather_child_running_a_nested_execution_is_refused(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
-
         async def outer() -> None:
             await asyncio.gather(executor.execute(Run(done())))
 
@@ -214,9 +209,8 @@ class TestOwnership:
             await executor.execute(use_case)
 
     async def test_a_refused_gather_child_rolls_the_invocation_back(
-        self, ledger: Ledger, stores: AcmeStores, executor: RuntimeExecutor
+        self, ledger: Ledger, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
-
         async def outer() -> None:
             write(stores, "row")
             await asyncio.gather(executor.execute(Run(done())))
@@ -229,7 +223,7 @@ class TestOwnership:
         assert ledger.persisted[DEFAULT_STORE] == []
 
     async def test_a_gather_child_running_a_read_only_execution_is_not_refused(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
         """A read-only execution joins no scope, so no ownership check refuses it."""
 
@@ -240,13 +234,13 @@ class TestOwnership:
 
     async def test_a_gather_child_running_a_read_only_execution_owns_a_scope_of_its_own(
         self,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
     ) -> None:
         """Its repositories read per call instead of meeting a scope they may not touch."""
         seen: list[tuple[bool, int]] = []
 
         async def read() -> None:
-            seen.append((scope_now().owned_here(), len(scope_now().participants)))
+            seen.append((scope_now().is_owned_here(), len(scope_now().participants)))
 
         async def outer() -> None:
             await asyncio.gather(executor.execute(Run(read), read_only=True))
@@ -257,9 +251,9 @@ class TestOwnership:
 
     @pytest.mark.parametrize("coordinated", [True, False], ids=["coordinator", "none"])
     async def test_a_gather_child_of_a_read_only_execution_may_not_run_a_writer(
-        self, stores: AcmeStores, executor: RuntimeExecutor, coordinated: bool
+        self, stores: AcmeStores, executor: UseCaseExecutor, coordinated: bool
     ) -> None:
-        executor = executor if coordinated else RuntimeExecutor(UseCaseCompiler())
+        executor = executor if coordinated else UseCaseExecutor(UseCaseCompiler())
 
         async def outer() -> None:
             await asyncio.gather(executor.execute(Run(done())))
@@ -272,7 +266,7 @@ class TestOwnership:
         assert stores.created == []
 
     async def test_a_read_only_execution_in_the_owner_task_still_sees_the_scope(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
         """Its reads join the invocation's sessions and see its uncommitted writes."""
         seen: list[bool] = []
@@ -288,9 +282,8 @@ class TestOwnership:
         assert seen == [True]
 
     async def test_a_gather_child_touching_the_participant_is_refused(
-        self, stores: AcmeStores, executor: RuntimeExecutor
+        self, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
-
         async def touch() -> None:
             scope_now().participant_for(DEFAULT_STORE, stores.last.owner, write=False)
 
@@ -303,9 +296,8 @@ class TestOwnership:
             await executor.execute(use_case)
 
     async def test_a_thread_touching_the_participant_is_refused(
-        self, stores: AcmeStores, executor: RuntimeExecutor
+        self, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
-
         async def outer() -> None:
             scope = scope_now()
             await asyncio.to_thread(
@@ -318,7 +310,7 @@ class TestOwnership:
             await executor.execute(use_case)
 
     async def test_a_task_that_outlives_its_use_case_cannot_join_its_closed_scope(
-        self, stores: AcmeStores, executor: RuntimeExecutor
+        self, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
         go = asyncio.Event()
         survivors: list[asyncio.Task[Any]] = []
@@ -339,7 +331,7 @@ class TestOwnership:
 
 class TestOneStoreRaisesAsToday:
     async def test_the_business_error_propagates_as_the_same_object(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
         error = BusinessError()
 
@@ -373,30 +365,30 @@ class TestOneStoreRaisesAsToday:
         executor = make_executor(coordinator=OrderedCommits({DEFAULT_STORE: stores}))
         use_case = Run(done())
 
-        with pytest.raises(StoresNotCommitted) as raised:
+        with pytest.raises(StoresNotCommittedError) as raised:
             await executor.execute(use_case)
 
         assert isinstance(raised.value.__cause__, ConnectionError)
 
     async def test_a_failed_flush_is_reported_as_the_commit(
-        self, metrics: Metrics, make_executor: MakeExecutor
+        self, observer: RecordingExecutionObserver, make_executor: MakeExecutor
     ) -> None:
         stores = AcmeStores(Ledger(), Fault("flush", Effect.RAISE))
 
         executor = make_executor(
-            coordinator=OrderedCommits({DEFAULT_STORE: stores}), metrics=metrics
+            coordinator=OrderedCommits({DEFAULT_STORE: stores}), execution_observer=observer
         )
         use_case = Run(done())
 
         with pytest.raises(Boom):
             await executor.execute(use_case)
 
-        assert metrics.only(EventKind.EXEC_ERROR).error_kind == "commit"
+        assert observer.only(EventKind.EXEC_ERROR).error_kind == "commit"
 
 
-class TestStoresNotCommitted:
+class TestStoresNotCommittedError:
     async def test_a_store_that_committed_beside_one_that_failed_raises_it(
-        self, ledger: Ledger, stores: AcmeStores, executor: RuntimeExecutor
+        self, ledger: Ledger, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
         """Caused by the failed commit, naming both stores; the committed one keeps its write."""
         audit = PhasedStore(AUDIT, ledger, Fault("commit", Effect.RAISE))
@@ -407,7 +399,7 @@ class TestStoresNotCommitted:
 
         use_case = Run(body)
 
-        with pytest.raises(StoresNotCommitted) as raised:
+        with pytest.raises(StoresNotCommittedError) as raised:
             await executor.execute(use_case)
 
         cause = _cause(raised.value)
@@ -418,7 +410,7 @@ class TestStoresNotCommitted:
         )
 
     async def test_a_business_error_after_a_non_transactional_write_raises_it(
-        self, ledger: Ledger, executor: RuntimeExecutor
+        self, ledger: Ledger, executor: UseCaseExecutor
     ) -> None:
         audit = NonTransactionalStore(AUDIT, ledger)
         error = BusinessError()
@@ -430,7 +422,7 @@ class TestStoresNotCommitted:
 
         use_case = Run(body)
 
-        with pytest.raises(StoresNotCommitted) as raised:
+        with pytest.raises(StoresNotCommittedError) as raised:
             await executor.execute(use_case)
 
         assert raised.value.__cause__ is error
@@ -447,14 +439,14 @@ class TestStoresNotCommitted:
         executor = make_executor(coordinator=OrderedCommits({DEFAULT_STORE: stores}))
         use_case = Run(body)
 
-        with pytest.raises(StoresNotCommitted) as raised:
+        with pytest.raises(StoresNotCommittedError) as raised:
             await executor.execute(use_case)
 
         assert raised.value.outcome is not None
         assert any(isinstance(store, Uncertain) for store in raised.value.outcome.stores)
 
     async def test_a_business_error_with_two_stores_rolled_back_is_re_raised(
-        self, ledger: Ledger, executor: RuntimeExecutor
+        self, ledger: Ledger, executor: UseCaseExecutor
     ) -> None:
         audit = PhasedStore(AUDIT, ledger)
         error = BusinessError()
@@ -471,7 +463,7 @@ class TestStoresNotCommitted:
         assert raised.value is error
 
     async def test_a_clean_non_transactional_write_beside_a_commit_succeeds(
-        self, ledger: Ledger, executor: RuntimeExecutor
+        self, ledger: Ledger, executor: UseCaseExecutor
     ) -> None:
         audit = NonTransactionalStore(AUDIT, ledger)
 
@@ -483,7 +475,7 @@ class TestStoresNotCommitted:
         assert await executor.execute(Run(body)) == "ok"
 
     async def test_a_stores_not_committed_failure_discards_the_channel(
-        self, ledger: Ledger, executor: RuntimeExecutor
+        self, ledger: Ledger, executor: UseCaseExecutor
     ) -> None:
         audit = PhasedStore(AUDIT, ledger, Fault("commit", Effect.RAISE))
         ran: list[str] = []
@@ -496,7 +488,7 @@ class TestStoresNotCommitted:
 
         use_case = Run(body)
 
-        with pytest.raises(StoresNotCommitted):
+        with pytest.raises(StoresNotCommittedError):
             await executor.execute(use_case)
 
         assert ran == []
@@ -527,7 +519,7 @@ class TestChannel:
         assert ran == []
 
     async def test_a_clean_execution_drains_after_the_scope_is_unpublished(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
         seen: list[InvocationScope | None] = []
 
@@ -599,7 +591,7 @@ class TestCancellation:
         assert run.ledger.calls_of(DEFAULT_STORE) == ["begin", "close"]
 
     async def test_a_cancelled_body_rolls_back(
-        self, ledger: Ledger, stores: AcmeStores, executor: RuntimeExecutor
+        self, ledger: Ledger, stores: AcmeStores, executor: UseCaseExecutor
     ) -> None:
         started = asyncio.Event()
 
@@ -666,7 +658,7 @@ class _Cancelled:
 
         async def run() -> None:
             try:
-                await RuntimeExecutor(
+                await UseCaseExecutor(
                     UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: stores})
                 ).execute(Run(body))
             finally:
@@ -710,7 +702,7 @@ async def _hundred_invocations() -> tuple[list[InvocationScope], Ledger, list[bo
     """Run 100 invocations: clean, failing and cancelled in turn, each in its own task."""
     ledger = Ledger()
     stores = AcmeStores(ledger)
-    executor = RuntimeExecutor(
+    executor = UseCaseExecutor(
         UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: stores})
     )
     scopes: list[InvocationScope] = []
@@ -749,7 +741,7 @@ class TestJoinedStoreThatCannotRollBack:
         ran: list[str] = []
         audit = Factory(NonTransactionalStore(AUDIT, ledger))
         coordinator = OrderedCommits({DEFAULT_STORE: AcmeStores(ledger), AUDIT: audit})
-        executor = RuntimeExecutor(UseCaseCompiler(), coordinator=coordinator)
+        executor = UseCaseExecutor(UseCaseCompiler(), coordinator=coordinator)
 
         async def body() -> None:
             ran.append("ran")
@@ -776,13 +768,13 @@ class TestWithoutAUnitOfWork:
         async def body() -> None:
             seen.append(current_scope())
 
-        await RuntimeExecutor(UseCaseCompiler()).execute(Run(body))
+        await UseCaseExecutor(UseCaseCompiler()).execute(Run(body))
 
         assert seen == [None]
 
     async def test_dispatch_runs_at_the_end_without_uow_factory(self) -> None:
         """FR-003: with no factory configured the dispatches still run, once, at the end."""
-        executor = RuntimeExecutor(UseCaseCompiler())
+        executor = UseCaseExecutor(UseCaseCompiler())
         ran: list[str] = []
 
         class _DispatchNoUoW(UseCase[Any, str]):
@@ -806,7 +798,7 @@ class TestWithoutAUnitOfWork:
 
         log = Log()
         factory = StubUnitOfWorkFactory(log)
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
         )
 
@@ -818,7 +810,7 @@ class TestWithoutAUnitOfWork:
         self,
     ) -> None:
         """The drain tells the caller no transaction committed, so it may retry."""
-        executor = RuntimeExecutor(UseCaseCompiler())
+        executor = UseCaseExecutor(UseCaseCompiler())
 
         def fail() -> None:
             raise ConnectionError("acme broker down")
@@ -837,7 +829,7 @@ class TestElevationFrame:
 
     async def test_an_execution_runs_inside_a_frame_that_closes_with_it(self) -> None:
         sink = FakeSink(open=True)
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(),
             coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(Log())}),
             elevation_sink=sink,
@@ -852,7 +844,7 @@ class TestElevationFrame:
     async def test_without_a_sink_the_frame_still_exists_and_elevation_waits_for_the_provider(
         self,
     ) -> None:
-        executor = RuntimeExecutor(UseCaseCompiler())
+        executor = UseCaseExecutor(UseCaseCompiler())
 
         result = await executor.execute(AcmeElevating(), params={"value": "x"})  # type: ignore[arg-type]
 
@@ -874,7 +866,7 @@ class TestElevationFrame:
         self, phase: str
     ) -> None:
         store = AcmeSeesElevation()
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: Factory(store)})
         )
 

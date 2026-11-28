@@ -23,15 +23,15 @@ from sqlalchemy import event, inspect, make_url, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.celery.adapter import CeleryAdapter
-from loom.composition import AppConfig, compose_application
-from loom.core.backend.sqlalchemy import compile_all, reset_registry
+from loom.celery.runtime import CeleryRuntime
+from loom.composition import AppConfig
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
 from loom.core.model.types import Integer
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from tests.helpers.composition import composition_source
+from loom.stores.sqlalchemy.schema import compile_all, reset_registry
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from tests.helpers.composition import composition_project
 
 URI_ENV = "LOOM_PG_IT_URI"
 _TABLE = "connection_only_unserved"
@@ -94,7 +94,7 @@ async def worker_url() -> AsyncIterator[str]:
 
 
 def _worker(tmp_path: Path, url: str) -> Any:
-    source = composition_source(
+    project = composition_project(
         ConfigContext.from_dict(
             {
                 "stores": {"default": {"backend": "sqlalchemy", "url": url}},
@@ -105,7 +105,7 @@ def _worker(tmp_path: Path, url: str) -> Any:
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    return compose_application(source, CeleryAdapter(jobs=[_RawSqlJob]))
+    return project.compose(CeleryRuntime(jobs=[_RawSqlJob]))
 
 
 async def _connections(database: str, name: str) -> int:
@@ -165,7 +165,7 @@ class TestConnectionOnlyWorker:
             assert await _settled_connections(database, name) == 0
             assert not await _has_table(database)
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_a_superuser_fails_the_check_and_leaves_no_connection(
         self, tmp_path: Path
@@ -182,4 +182,4 @@ class TestConnectionOnlyWorker:
             pool: Any = manager.engine.sync_engine.pool
             assert (pool.checkedout(), pool.checkedin()) == (0, 0)
         finally:
-            await manager.dispose()
+            await manager.close()

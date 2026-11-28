@@ -1,0 +1,341 @@
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import Any, Protocol, cast, get_origin
+
+from loom.core.config import ConfigError
+from loom.core.di.container import LoomContainer
+from loom.core.di.introspection import KeyDependency, RepoDependency
+from loom.core.di.scope import Scope
+from loom.core.errors import InvalidType
+from loom.core.model import BaseModel, LoomStruct
+from loom.core.model.introspection import generic_type_arg
+from loom.core.stores.catalog import StoreKey, store_binding
+from loom.core.stores.repository.capabilities import (
+    BulkCreatable,
+    Countable,
+    Creatable,
+    Deletable,
+    FieldReadable,
+    Listable,
+    Readable,
+    RepoFor,
+    Updatable,
+)
+from loom.core.stores.repository.registry import (
+    DefaultRepositoryBuilder,
+    RepositoryBuildContext,
+    RepositoryRegistration,
+    RepositoryToken,
+    get_repository_registration,
+)
+
+_STANDARD_PROTOCOLS: tuple[Any, ...] = (
+    Readable,
+    FieldReadable,
+    Creatable,
+    BulkCreatable,
+    Updatable,
+    Deletable,
+    Listable,
+    Countable,
+)
+
+
+class RepositoryDecorator(Protocol):
+    """Binding key for the hook applied to every repository this module builds.
+
+    A single slot: registering a second decorator replaces the first, it
+    does not compose.  The provider looks it up when it runs, so the order
+    in which the decorator and the repository module reach the container
+    does not matter.
+    """
+
+    def __call__(self, repository: Any) -> Any: ...
+
+
+def is_standard_capability(annotation: object) -> bool:
+    """Return whether *annotation* is a parametrised standard capability.
+
+    Args:
+        annotation: A type annotation such as ``Listable[Order]``.
+
+    Returns:
+        ``True`` for ``Protocol[Model]`` whose origin is one of the standard
+        ``-able`` capability protocols; ``False`` for anything else, including
+        the bare protocol and ``RepoFor[Model]``.
+    """
+    return get_origin(annotation) in _STANDARD_PROTOCOLS
+
+
+def capabilities_of(repository_type: type) -> tuple[type, ...]:
+    """Return the standard capability protocols *repository_type* implements.
+
+    The single capability source: the auto-CRUD gate mounts the operations
+    these protocols cover, and the registration module binds the matching DI
+    keys.
+
+    Args:
+        repository_type: The concrete repository class to inspect.
+
+    Returns:
+        The protocols found in the class MRO, in the stable order of the
+        standard capability list, which the auto-CRUD gate relies on.
+    """
+    mro = set(repository_type.__mro__)
+    return tuple(proto for proto in _STANDARD_PROTOCOLS if proto in mro)
+
+
+def is_direct_protocol(cls: type) -> bool:
+    """True when *cls* explicitly declares ``Protocol`` as a base.
+
+    Uses the Python internal ``_is_protocol`` marker written on the class's
+    own ``__dict__`` — not inherited — so concrete implementations of a
+    Protocol are not mistaken for protocol declarations.
+    """
+    return bool(cls.__dict__.get("_is_protocol"))
+
+
+def classify_key(annotation: object) -> KeyDependency | RepoDependency | None:
+    """``RepoFor[Model]`` is the repository of ``Model``; a class or protocol, a key.
+
+    A parametrised standard capability (``Listable[Order]``) or a protocol
+    alias (``Port[Order]``) is a key as written. Any other generic, such as
+    ``tuple[str, ...]``, is a value, not a dependency: ``None``.
+    """
+    model = generic_type_arg(annotation, RepoFor)
+    if model is not None:
+        return RepoDependency(model)
+    origin = get_origin(annotation)
+    if (
+        isinstance(annotation, type)
+        or origin in _STANDARD_PROTOCOLS
+        or (isinstance(origin, type) and is_direct_protocol(origin))
+    ):
+        return KeyDependency(annotation)
+    return None
+
+
+def capability_keys(
+    repository_type: type[Any],
+    model: type[LoomStruct],
+) -> tuple[Any, ...]:
+    """Return the DI keys a repository of *repository_type* for *model* is bound under.
+
+    * ``Protocol[model]`` for every standard ``-able`` capability in the
+      repository's MRO.
+    * Every other protocol among ``repository_type.__orig_bases__``.
+
+    Args:
+        repository_type: The concrete repository class to inspect.
+        model: The Loom struct model the repository is bound to.
+
+    Returns:
+        Tuple of DI keys in stable order, with no duplicates.
+    """
+    keys: list[Any] = [cast(Any, proto)[model] for proto in capabilities_of(repository_type)]
+
+    for base in getattr(repository_type, "__orig_bases__", ()):
+        origin: Any = getattr(base, "__origin__", base)
+        if (
+            isinstance(origin, type)
+            and is_direct_protocol(origin)
+            and origin not in _STANDARD_PROTOCOLS
+        ):
+            keys.append(origin)
+
+    return tuple(dict.fromkeys(keys))
+
+
+def _default_capability_keys(
+    model: type[LoomStruct],
+    default_repository_type: type | None,
+) -> tuple[Any, ...]:
+    """Return the capability keys of a default-built repository for *model*.
+
+    Called only for ``BaseModel`` types that have no explicit registration.
+    Without a default repository type (a backend serving no repositories)
+    no capability is bound.
+    """
+    if default_repository_type is None:
+        return ()
+    return tuple(cast(Any, proto)[model] for proto in capabilities_of(default_repository_type))
+
+
+@dataclass(frozen=True)
+class _RepositoryBindingSpec:
+    registration: RepositoryRegistration | None
+    capability_keys: tuple[Any, ...]
+    binding_key: object
+
+
+def _build_repository_specs(
+    *,
+    models: Sequence[type[BaseModel]],
+    explicit_models: Sequence[type[LoomStruct]],
+    default_repository_type: type | None,
+) -> dict[type[LoomStruct], _RepositoryBindingSpec]:
+    repository_specs: dict[type[LoomStruct], _RepositoryBindingSpec] = {}
+
+    for model in set(explicit_models) | set(models):
+        registration = get_repository_registration(model)
+        if registration is not None:
+            repository_specs[registration.model] = _registered_repository_spec(registration)
+
+    for model in models:
+        if model not in repository_specs:
+            repository_specs[model] = _default_repository_spec(model, default_repository_type)
+
+    return repository_specs
+
+
+def _registered_repository_spec(
+    registration: RepositoryRegistration,
+) -> _RepositoryBindingSpec:
+    keys = capability_keys(registration.repository_type, registration.model)
+    binding_key = RepositoryToken(registration.model)
+    return _RepositoryBindingSpec(
+        registration=registration,
+        capability_keys=keys,
+        binding_key=binding_key,
+    )
+
+
+def _default_repository_spec(
+    model: type[LoomStruct],
+    default_repository_type: type | None,
+) -> _RepositoryBindingSpec:
+    return _RepositoryBindingSpec(
+        registration=None,
+        capability_keys=_default_capability_keys(model, default_repository_type),
+        binding_key=RepositoryToken(model),
+    )
+
+
+def _build_repository_provider(
+    *,
+    container: LoomContainer,
+    model: type[LoomStruct],
+    registration: RepositoryRegistration | None,
+    build_registered_repository: Callable[[RepositoryBuildContext, RepositoryRegistration], Any],
+    builder_key: object,
+) -> Callable[[], Any]:
+    """Return the provider that builds the repository of *model*.
+
+    The provider applies the bound :class:`RepositoryDecorator` when there is
+    one. It raises ``RuntimeError`` when *model* is not a :class:`BaseModel`
+    and *registration* is ``None``.
+
+    Args:
+        container: The container the repository is built in.
+        model: The model the repository serves.
+        registration: Explicit registration, or ``None`` for the default builder.
+        build_registered_repository: Builds a repository from an explicit registration.
+        builder_key: Key of the default repository builder.
+
+    Returns:
+        A zero-argument provider.
+    """
+    context = RepositoryBuildContext(model=model, container=container)
+
+    def _provider() -> Any:
+        if registration is not None:
+            repository = build_registered_repository(context, registration)
+        elif not issubclass(model, BaseModel):
+            raise InvalidType(
+                f"No default repository can be built for non-persistible type {model.__qualname__}"
+            )
+        else:
+            repository = container.resolve(builder_key)(context)
+        if not container.is_registered(RepositoryDecorator):
+            return repository
+        return container.resolve(RepositoryDecorator)(repository)
+
+    return _provider
+
+
+def register_repository_binding(
+    *,
+    container: LoomContainer,
+    model: type[LoomStruct],
+    capability_keys: tuple[Any, ...],
+    binding_key: object,
+    provider: Callable[[], Any],
+) -> None:
+    """Bind a model's one repository and make every capability key an alias of it.
+
+    Args:
+        container: The container being filled.
+        model: The model the repository serves.
+        capability_keys: The capability keys the repository answers.
+        binding_key: The key the model's repository is bound under.
+        provider: Builds the repository.
+
+    Raises:
+        ConfigError: When a capability key is already bound on its own, not
+            as an alias of *binding_key*.
+    """
+    container.register_default(binding_key, provider, scope=Scope.APPLICATION)
+    container.register_repo(model, binding_key)
+    for key in capability_keys:
+        if container.is_alias_of(key, binding_key):
+            continue
+        if container.is_registered(key):
+            raise ConfigError(
+                f"Repository capability {key!r} is bound independently; "
+                "use Override.repository(Model, double) in loom.testing"
+            )
+        container.register_alias(key, binding_key)
+
+
+def build_repository_registration_module(
+    *,
+    models: Sequence[type[BaseModel]],
+    explicit_models: Sequence[type[LoomStruct]] = (),
+    build_registered_repository: Callable[[RepositoryBuildContext, RepositoryRegistration], Any],
+    default_repository_type: type | None = None,
+    default_builder: DefaultRepositoryBuilder,
+    store: StoreKey,
+) -> Callable[[LoomContainer], None]:
+    """Build a container module that registers main repositories.
+
+    Explicit registrations declared with ``repository_for(...)`` are preferred.
+    Persistible ``BaseModel`` types without an explicit registration use the
+    provided default repository builder.
+
+    Each repository is also bound under its capability keys
+    (:func:`capability_keys`). Default-built repositories bind the
+    capabilities of ``default_repository_type``; ``None`` binds none.
+
+    *default_builder* builds them, registered under
+    ``store_binding(DefaultRepositoryBuilder, store)`` unless a caller
+    registered that key first, which then builds them instead.
+    """
+    repository_specs = _build_repository_specs(
+        models=models,
+        explicit_models=explicit_models,
+        default_repository_type=default_repository_type,
+    )
+
+    def register(container: LoomContainer) -> None:
+        builder = store_binding(DefaultRepositoryBuilder, store)
+        if not container.is_registered(builder):
+            container.register_instance(builder, default_builder)
+        for model, spec in repository_specs.items():
+            provider = _build_repository_provider(
+                container=container,
+                model=model,
+                registration=spec.registration,
+                build_registered_repository=build_registered_repository,
+                builder_key=builder,
+            )
+            register_repository_binding(
+                container=container,
+                model=model,
+                capability_keys=spec.capability_keys,
+                binding_key=spec.binding_key,
+                provider=provider,
+            )
+
+    return register

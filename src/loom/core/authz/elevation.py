@@ -23,8 +23,23 @@ from typing import NoReturn, Protocol
 from loom.core.authz._decide import Decision
 from loom.core.authz._roles import Permission, RoleCatalog
 from loom.core.authz._scope import Scope
+from loom.core.log_names import LogEvent, LogKey, ValueKind
 
 _logger = logging.getLogger(__name__)
+
+
+class ElevationEvent(LogEvent):
+    """What elevation logs when it cannot be sure a scope flag was cleared."""
+
+    FLAGS_CLEAR_FAILED = "loom.elevation.flags_clear_failed"
+    INVALIDATION_FAILED = "loom.elevation.invalidation_failed"
+
+
+class ElevationKey(LogKey):
+    """The fields of an elevation record."""
+
+    SCOPES = "loom.elevation.scopes", ValueKind.ARRAY
+
 
 _FLAG_STEP_TIMEOUT_S = 30.0
 """How long setting or clearing flags, then invalidating the session, may take."""
@@ -215,14 +230,14 @@ async def _fail_closed(
             with, chained from it.
     """
     _logger.error(
-        "elevation flags for %s may be left on (%s); invalidating the session",
-        sorted(scopes),
-        type(failure).__name__,
+        ElevationEvent.FLAGS_CLEAR_FAILED,
+        extra={ElevationKey.SCOPES: sorted(scopes)},
+        exc_info=failure,
     )
     invalidation, cancelled_again = await _settle(lambda: sink.invalidate(scopes, failure))
     cancelled = cancelled or cancelled_again
     if invalidation is not None:
-        _logger.error("the session could not be invalidated (%s)", type(invalidation).__name__)
+        _logger.error(ElevationEvent.INVALIDATION_FAILED, exc_info=invalidation)
     if cancelled is not None:
         raise cancelled
     if invalidation is not None:

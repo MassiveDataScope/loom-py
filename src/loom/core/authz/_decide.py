@@ -71,9 +71,7 @@ def _check_now(now: datetime | None) -> None:
 def _require_now_for_expiring(grants: tuple[Grant, ...], now: datetime | None) -> None:
     expiry = next((grant.expires_at for grant in grants if grant.expires_at is not None), None)
     if now is None and expiry is not None:
-        raise ValueError(
-            f"A grant expires at {expiry.isoformat()}; pass now= to decide whether it is alive."
-        )
+        raise ValueError("A grant that expires needs now= to decide whether it is alive.")
 
 
 def _alive(grant: Grant, now: datetime | None) -> bool:
@@ -122,7 +120,7 @@ def evaluate(
         The decision, carrying the grant that allowed it.
 
     Raises:
-        UnknownPermission: When *permission* is not declared in the catalog.
+        UnknownPermissionError: When *permission* is not declared in the catalog.
         TypeError: When *now* is not a datetime.
         ValueError: When *now* is naive, or is ``None`` while some grant
             carries an expiry.
@@ -165,7 +163,7 @@ def scopes_with(
         The minimal set of scopes covering everything the subject may reach.
 
     Raises:
-        UnknownPermission: When *permission* is not declared in the catalog.
+        UnknownPermissionError: When *permission* is not declared in the catalog.
         TypeError: When *now* is not a datetime.
         ValueError: When *now* is naive, or is ``None`` while some grant
             carries an expiry.
@@ -220,8 +218,8 @@ def can_grant(
         The check, listing the permissions the granter lacks there.
 
     Raises:
-        UnknownRole: When *role* is not declared in the catalog.
-        UnknownPermission: When *delegate* is not declared in the catalog.
+        UnknownRoleError: When *role* is not declared in the catalog.
+        UnknownPermissionError: When *delegate* is not declared in the catalog.
         TypeError: When *now* is not a datetime.
         ValueError: When *now* is naive, or is ``None`` while some of the
             granter's grants carry an expiry.
@@ -257,7 +255,7 @@ def can_revoke(
         The check, listing the permissions the granter lacks there.
 
     Raises:
-        UnknownPermission: When *delegate* is not declared in the catalog.
+        UnknownPermissionError: When *delegate* is not declared in the catalog.
         TypeError: When *now* is not a datetime.
         ValueError: When *now* is naive, or is ``None`` while some of the
             granter's grants carry an expiry.

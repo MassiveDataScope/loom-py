@@ -8,35 +8,34 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.cache import (
-    CacheBackend,
     CacheConfig,
     CachedRepository,
     CacheGateway,
+    CacheStore,
     GenerationalDependencyResolver,
 )
 from loom.core.cache.keys import entity_key
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository import Repository
-from loom.core.repository.abc import CursorCodec, PageParams
-from loom.core.repository.mutation import MutationEvent
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.transactional import transactional
-from loom.testing import RepositoryIntegrationHarness, ScenarioDict
+from loom.core.stores.repository import CursorCodec, PageParams, Repository
+from loom.core.stores.repository.mutation import MutationEvent
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.transactional import transactional
+from loom.testing import RepositoryIntegrationHarness, ScenarioDict, make
 from tests.integration.fake_repo.product.model import Product
 from tests.integration.fake_repo.product.review.schemas import CreateProductReview
 from tests.integration.fake_repo.product.schemas import CreateProduct, UpdateProduct
 
 
 class _Gateways(NamedTuple):
-    # ``CacheGateway`` overloads ``get_value`` while ``CacheBackend`` declares it
+    # ``CacheGateway`` overloads ``get_value`` while ``CacheStore`` declares it
     # once, so a type checker does not see the gateway as a structural match.
     # It is one at runtime; the cast keeps the fixture honest about that.
-    data: CacheBackend
-    counters: CacheBackend
+    data: CacheStore
+    counters: CacheStore
     config: CacheConfig
 
 
@@ -64,7 +63,7 @@ class UpdateDatedEvent(Command, frozen=True):
 
 @pytest.fixture
 async def cache_gateways(
-    cache_backend_kind: str,
+    cache_store_kind: str,
 ) -> AsyncGenerator[_Gateways, None]:
     namespace = "integration_cache"
     counter_namespace = "integration_cache_counters"
@@ -89,7 +88,7 @@ async def cache_gateways(
         },
     }
 
-    if cache_backend_kind == "redis-fake":
+    if cache_store_kind == "redis-fake":
         fakeredis_async = importlib.import_module("fakeredis.aioredis")
         fake_connection = fakeredis_async.FakeConnection
         aiocache_config["test_cache"] = {
@@ -124,8 +123,8 @@ async def cache_gateways(
     )
     try:
         yield _Gateways(
-            cast(CacheBackend, data_gateway),
-            cast(CacheBackend, counter_gateway),
+            cast(CacheStore, data_gateway),
+            cast(CacheStore, counter_gateway),
             cache_config,
         )
     finally:
@@ -161,7 +160,7 @@ async def cached_dated_repo(
     assert compiled is not None
     async with integration_context.session_manager.engine.begin() as connection:
         await connection.run_sync(compiled.metadata.create_all)
-    repository: RepositorySQLAlchemy[DatedEvent, date] = RepositorySQLAlchemy(
+    repository: SQLAlchemyRepository[DatedEvent, date] = SQLAlchemyRepository(
         session_manager=integration_context.session_manager,
         model=DatedEvent,
         cursor_codec=CursorCodec(signing="ephemeral"),
@@ -215,7 +214,7 @@ def product_service(
 
 
 @pytest.fixture(params=["memory", "redis-fake"])
-def cache_backend_kind(request: Any) -> str:
+def cache_store_kind(request: Any) -> str:
     return cast(str, request.param)
 
 
@@ -272,7 +271,7 @@ class TestCacheIntegration:
     ) -> None:
         # Arrange
         await integration_context.load(scenario_catalog_with_price_20)
-        page = PageParams(page=1, limit=2)
+        page = make(PageParams, page=1, limit=2)
 
         # Act / Assert
         with _spy_base_repo_method(cached_integration_repo, "list_paginated") as list_spy:
@@ -339,7 +338,7 @@ class TestCachedIndexRefillIntegration:
         scenario_catalog_with_price_20: ScenarioDict,
     ) -> None:
         await integration_context.load(scenario_catalog_with_price_20)
-        page = PageParams(page=1, limit=3)
+        page = make(PageParams, page=1, limit=3)
         warm = await cached_integration_repo.list_paginated(page)
         assert [item.id for item in warm.items] == [1, 2, 3]
         await self._evict_entities(cached_integration_repo, (1, 3))
@@ -367,7 +366,7 @@ class TestCachedIndexRefillIntegration:
         days = [date(2020, 1, 1) + timedelta(days=offset) for offset in range(3)]
         for offset, day in enumerate(days):
             await cached_dated_repo.create(CreateDatedEvent(id=day, label=f"e{offset}"))
-        page = PageParams(page=1, limit=3)
+        page = make(PageParams, page=1, limit=3)
         warm = await cached_dated_repo.list_paginated(page)
         assert [item.id for item in warm.items] == days
         await self._evict_entities(cached_dated_repo, days[:2])

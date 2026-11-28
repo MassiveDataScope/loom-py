@@ -17,7 +17,7 @@ import pytest
 
 from loom.core.config.errors import ConfigError
 from loom.core.environment import (
-    CONFIG_VARIABLE,
+    CONFIG_DIR_VARIABLE,
     ENVIRONMENT_VARIABLE,
     Environment,
     config_source_paths,
@@ -213,17 +213,17 @@ class TestConfigSourcePaths:
 
 class TestLoomVariable:
     def test_a_loom_variable_is_read(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv(CONFIG_VARIABLE, "/srv/config")
+        monkeypatch.setenv(CONFIG_DIR_VARIABLE, "/srv/config")
 
-        assert loom_variable(CONFIG_VARIABLE) == "/srv/config"
+        assert loom_variable(CONFIG_DIR_VARIABLE) == "/srv/config"
 
     def test_an_unset_variable_is_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv(CONFIG_VARIABLE, raising=False)
+        monkeypatch.delenv(CONFIG_DIR_VARIABLE, raising=False)
 
-        assert loom_variable(CONFIG_VARIABLE) is None
+        assert loom_variable(CONFIG_DIR_VARIABLE) is None
 
     def test_only_loom_variables_are_read(self) -> None:
-        with pytest.raises(ValueError, match="HOME"):
+        with pytest.raises(ValueError, match="not a loom variable"):
             loom_variable("HOME")
 
 
@@ -231,23 +231,23 @@ class TestScopedLoomVariable:
     def test_the_variable_is_set_inside_and_removed_after(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv(CONFIG_VARIABLE, raising=False)
+        monkeypatch.delenv(CONFIG_DIR_VARIABLE, raising=False)
 
-        with scoped_loom_variable(CONFIG_VARIABLE, "/srv/inside"):
-            inside = loom_variable(CONFIG_VARIABLE)
+        with scoped_loom_variable(CONFIG_DIR_VARIABLE, "/srv/inside"):
+            inside = loom_variable(CONFIG_DIR_VARIABLE)
 
-        assert (inside, loom_variable(CONFIG_VARIABLE)) == ("/srv/inside", None)
+        assert (inside, loom_variable(CONFIG_DIR_VARIABLE)) == ("/srv/inside", None)
 
     def test_a_previous_value_is_restored(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv(CONFIG_VARIABLE, "/srv/before")
+        monkeypatch.setenv(CONFIG_DIR_VARIABLE, "/srv/before")
 
-        with scoped_loom_variable(CONFIG_VARIABLE, "/srv/inside"):
+        with scoped_loom_variable(CONFIG_DIR_VARIABLE, "/srv/inside"):
             pass
 
-        assert loom_variable(CONFIG_VARIABLE) == "/srv/before"
+        assert loom_variable(CONFIG_DIR_VARIABLE) == "/srv/before"
 
     def test_only_loom_variables_are_set(self) -> None:
         scope = scoped_loom_variable("HOME", "/tmp")
 
-        with pytest.raises(ValueError, match="HOME"):
+        with pytest.raises(ValueError, match="not a loom variable"):
             scope.__enter__()

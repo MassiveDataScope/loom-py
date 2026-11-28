@@ -12,7 +12,8 @@ import pytest
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.elevation import ReadOnlyElevation, elevate_scope, elevated_scopes
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.engine.observation import UseCaseEvent
 from loom.core.errors import NestedElevation, NestedIdentityMismatch, UndeclaredStoreWrite
 from loom.core.identity import (
     Identity,
@@ -22,14 +23,15 @@ from loom.core.identity import (
     set_identity,
 )
 from loom.core.job.job import Job
-from loom.core.job.service import InlineJobService
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import invocation
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.scope import invocation
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.invoker import AppInvoker
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.helpers.delegation import acting_as
+from tests.helpers.jobs import InlineServiceFixture
+from tests.helpers.loggers import CapturedLog
 from tests.unit.core.authz._elevation_doubles import FakeSink
 from tests.unit.core.engine._lifecycle_doubles import Body, Log, Run, StubUnitOfWorkFactory
 
@@ -37,7 +39,7 @@ ANA = Identity(subject="ana", mechanism="test")
 BOB = Identity(subject="bob", mechanism="test")
 WRITE = Permission("rows.write")
 CATALOG = RoleCatalog((WRITE,), (Role("editor", (WRITE,)),))
-BOUNDARY = Scope.of("b1")
+BOUNDARY = Scope.from_segments("b1")
 DECISION = Decision(allowed=True, grant=Grant(subject="ana", role="editor", scope=BOUNDARY))
 REFUSED_JOIN = "Child would join the open unit of work as another identity"
 
@@ -94,8 +96,8 @@ def sink() -> FakeSink:
 
 
 @pytest.fixture
-def executor(sink: FakeSink) -> RuntimeExecutor:
-    return RuntimeExecutor(
+def executor(sink: FakeSink) -> UseCaseExecutor:
+    return UseCaseExecutor(
         UseCaseCompiler(),
         coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(Log())}),
         elevation_sink=sink,
@@ -108,14 +110,14 @@ def ambient_bob() -> Iterator[None]:
         yield
 
 
-def _child_call(executor: RuntimeExecutor, child: Run, identity: Identity | None) -> Body:
+def _child_call(executor: UseCaseExecutor, child: Run, identity: Identity | None) -> Body:
     async def call() -> Any:
         return await executor.execute(child, identity=identity)
 
     return call
 
 
-def _invoking_as(executor: RuntimeExecutor, identity: Identity) -> Body:
+def _invoking_as(executor: UseCaseExecutor, identity: Identity) -> Body:
     invoker = AppInvoker(
         cast(UseCaseFactory, _Factory()), executor, cast(UseCaseRegistry, None), identity=identity
     )
@@ -169,7 +171,7 @@ class TestAmbientBinding:
     )
     async def test_the_transport_caller_is_back_when_the_execution_ends(
         self,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
         body: Body,
         ends: Callable[[], AbstractContextManager[object]],
     ) -> None:
@@ -184,7 +186,7 @@ class TestNestedIdentity:
 
     async def test_a_nested_execution_joining_as_the_same_identity_is_allowed(
         self,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
     ) -> None:
         parent = Parent(_child_call(executor, Child(_whoami), ANA))
 
@@ -192,7 +194,7 @@ class TestNestedIdentity:
 
     @pytest.mark.parametrize("child_type", [Child, ReadChild], ids=["write", "read-only"])
     async def test_a_nested_execution_joining_as_another_identity_is_refused(
-        self, executor: RuntimeExecutor, child_type: type[Run]
+        self, executor: UseCaseExecutor, child_type: type[Run]
     ) -> None:
         call = _child_call(executor, child_type(_whoami), BOB)
 
@@ -206,22 +208,20 @@ class TestNestedIdentity:
         assert after == ANA
 
     async def test_a_refused_nesting_is_logged_with_the_use_cases_only(
-        self, executor: RuntimeExecutor, caplog: pytest.LogCaptureFixture
+        self, executor: UseCaseExecutor, caplog: pytest.LogCaptureFixture
     ) -> None:
         """The refusal names no identity; the switch before it is logged by subject (T09a)."""
         parent = _catching(_child_call(executor, Child(_whoami), BOB))
 
         await executor.execute(parent, identity=ANA)
 
-        refusals = [
-            record.getMessage() for record in caplog.records if REFUSED_JOIN in record.getMessage()
-        ]
-        assert refusals
-        assert all(BOB.subject not in refusal for refusal in refusals)
+        log = CapturedLog(caplog)
+        assert log.exception_types(UseCaseEvent.FAILED) == [NestedIdentityMismatch]
+        assert all(BOB.subject not in text for text in log.rendered(UseCaseEvent.FAILED))
 
     async def test_changing_the_ambient_identity_mid_execution_does_not_unlock_a_join(
         self,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
     ) -> None:
         """No way to join ana's unit of work as bob: neither a silent switch nor an explicit one.
 
@@ -252,7 +252,7 @@ class TestNestedIdentity:
 
     async def test_invoking_as_another_identity_from_inside_a_use_case_is_refused(
         self,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
     ) -> None:
         refused = await executor.execute(_catching(_invoking_as(executor, BOB)), identity=ANA)
 
@@ -260,7 +260,7 @@ class TestNestedIdentity:
 
     async def test_joining_a_hand_opened_unit_of_work_as_another_identity_is_refused(
         self,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
     ) -> None:
         child = Child(_whoami)
         coordinator = OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(Log())})
@@ -271,7 +271,7 @@ class TestNestedIdentity:
 
     async def test_a_read_only_execution_may_run_a_read_only_one_as_another_identity(
         self,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
     ) -> None:
         """Its scope enlists no store, so the child's reads carry the child's identity."""
         parent = ReadParent(_child_call(executor, ReadChild(_whoami), BOB))
@@ -288,7 +288,7 @@ class TestNestedIdentity:
         ids=["same-identity", "another-identity", "invoker"],
     )
     async def test_a_writing_execution_under_a_read_only_one_is_refused_whatever_its_identity(
-        self, executor: RuntimeExecutor, call: Callable[[RuntimeExecutor], Body]
+        self, executor: UseCaseExecutor, call: Callable[[UseCaseExecutor], Body]
     ) -> None:
         parent = ReadParent(call(executor))
 
@@ -297,7 +297,7 @@ class TestNestedIdentity:
 
     async def test_a_per_call_read_from_a_gather_child_may_use_another_identity(
         self,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
     ) -> None:
         call = _child_call(executor, ReadChild(_whoami), BOB)
 
@@ -311,7 +311,7 @@ class TestNestedElevation:
     """No execution nests under one that elevated a scope."""
 
     async def test_a_nested_execution_after_elevating_is_refused(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
         parent = _elevating_then(_child_call(executor, Child(_whoami), None))
 
@@ -321,9 +321,9 @@ class TestNestedElevation:
         assert "Child cannot run inside an execution that elevated editor" in refused.message
 
     async def test_an_inline_job_run_after_elevating_is_refused(
-        self, executor: RuntimeExecutor
+        self, executor: UseCaseExecutor
     ) -> None:
-        jobs = InlineJobService(cast(UseCaseFactory, _Factory()), executor)
+        jobs = InlineServiceFixture(cast(UseCaseFactory, _Factory()), executor)
 
         async def call() -> Identity:
             return await jobs.run(WhoAmIJob)
@@ -334,7 +334,7 @@ class TestNestedElevation:
 
     async def test_a_task_created_before_elevating_is_refused_a_nested_execution(
         self,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
     ) -> None:
         call = _child_call(executor, ReadChild(_whoami), None)
         elevated = asyncio.Event()
@@ -354,7 +354,7 @@ class TestNestedElevation:
         assert isinstance(refused, NestedElevation)
 
     async def test_a_nested_execution_may_elevate_itself_and_the_flag_ends_with_it(
-        self, executor: RuntimeExecutor, sink: FakeSink
+        self, executor: UseCaseExecutor, sink: FakeSink
     ) -> None:
         async def elevating() -> frozenset[str]:
             await _elevate()
@@ -371,7 +371,7 @@ class TestNestedElevation:
 
     @pytest.mark.parametrize("nested", [True, False], ids=["nested", "top-level"])
     async def test_a_read_only_execution_cannot_elevate(
-        self, executor: RuntimeExecutor, sink: FakeSink, nested: bool
+        self, executor: UseCaseExecutor, sink: FakeSink, nested: bool
     ) -> None:
         read_only = ReadChild(_elevate)
         run = Parent(_child_call(executor, read_only, None)) if nested else read_only

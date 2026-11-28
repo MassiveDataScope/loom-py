@@ -7,9 +7,10 @@ from typing import Generic, Literal, TypeVar
 
 from confluent_kafka import TopicPartition
 
+from loom.core.errors.summary import ErrorSummary
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.observability.event import LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.streaming.kafka._codec import KafkaCodec
 from loom.streaming.kafka._errors import KafkaDeserializationError
 from loom.streaming.kafka._message import HEADER_CORRELATION_ID, HEADER_TRACE_ID, MessageEnvelope
@@ -38,7 +39,7 @@ class KafkaMessageConsumer(Generic[PayloadT]):
         raw: KafkaConsumer,
         codec: KafkaCodec[PayloadT],
         payload_type: type[PayloadT],
-        obs: ObservabilityRuntime | None = None,
+        obs: Observability | None = None,
     ) -> None:
         self._raw = raw
         self._codec = codec
@@ -73,11 +74,11 @@ class KafkaMessageConsumer(Generic[PayloadT]):
                         name="kafka_decode",
                         trace_id=_header_trace_id(record.headers),
                         correlation_id=_header_correlation_id(record.headers),
-                        error=str(exc),
+                        error=exc,
                         meta={"topic": record.topic},
                     )
                 )
-            raise KafkaDeserializationError(str(exc)) from exc
+            raise KafkaDeserializationError(ErrorSummary.message_for(exc)) from exc
         if self._obs is not None:
             self._obs.emit(
                 LifecycleEvent.end(

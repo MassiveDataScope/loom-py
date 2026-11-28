@@ -15,6 +15,7 @@ require_bytewax()
 
 from loom.streaming.bytewax import _runtime_io  # noqa: E402
 from loom.streaming.bytewax._commit_tracker import KafkaCommitTracker  # noqa: E402
+from loom.streaming.event import StreamingEvent, StreamingKey  # noqa: E402
 from loom.streaming.kafka._errors import KafkaCommitError, KafkaPollError  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
 from tests.unit.streaming.bytewax.cases import build_compiled_source  # noqa: E402
@@ -153,7 +154,8 @@ class TestKafkaPartitionedSourceBuildPart:
         with caplog.at_level(logging.WARNING):
             source.build_part("s", "orders.in:2", resume_state=60)
 
-        assert any("behind the committed group offset" in r.message for r in caplog.records)
+        [behind] = [r for r in caplog.records if r.msg == StreamingEvent.RESUME_STATE_BEHIND]
+        assert behind.__dict__[StreamingKey.REPLAYED_OFFSETS] == 40
 
 
 class TestKafkaSourcePartition:
@@ -440,7 +442,7 @@ class TestKeepAlive:
 
 
 class TestObservabilityPassthrough:
-    def test_partition_clients_receive_the_observability_runtime(
+    def test_partition_clients_receive_the_observability(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:

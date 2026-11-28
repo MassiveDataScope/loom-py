@@ -22,8 +22,9 @@ from typing import Literal
 
 import msgspec
 from celery import Celery  # type: ignore[import-untyped]
-from kombu import Queue  # type: ignore[import-untyped]
+from kombu.entity import Queue
 
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Dsn
 from loom.core.model.types import PositiveInt
@@ -71,9 +72,9 @@ class CeleryConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_f
         queues: Explicit queue names to declare.  Celery creates them on
             demand when empty.
         task_default_queue: Default queue for tasks without an explicit
-            ``queue=`` argument — including callback signatures produced by
-            ``link`` / ``link_error``.  Must be one of ``queues`` when that
-            list is non-empty.  Defaults to ``"default"``.
+            ``queue=`` argument — including the success ``link`` and the
+            failure callback task.  Must be one of ``queues`` when that list
+            is non-empty.  Defaults to ``"default"``.
         runtime: AnyIO bridge settings for worker-side async execution.
 
     Example::
@@ -124,10 +125,9 @@ def create_celery_app(cfg: CeleryConfig) -> Celery:
         celery_app.start()
     """
     if cfg.queues and cfg.task_default_queue not in cfg.queues:
-        raise ValueError(
-            f"task_default_queue={cfg.task_default_queue!r} is not declared in "
-            f"queues={cfg.queues}. Callbacks would be silently routed to an "
-            "unconsumed queue. Add the queue name to the 'queues' list."
+        raise InvalidValue(
+            "task_default_queue is not declared in queues. Callbacks would be "
+            "silently routed to an unconsumed queue. Add the queue name to the 'queues' list."
         )
     app = Celery(set_as_current=False)
     app.conf.update(
@@ -145,5 +145,5 @@ def create_celery_app(cfg: CeleryConfig) -> Celery:
         task_default_queue=cfg.task_default_queue,
     )
     if cfg.queues:
-        app.conf.task_queues = [Queue(name) for name in cfg.queues]
+        app.conf.task_queues = [Queue(name) for name in cfg.queues]  # type: ignore[no-untyped-call]
     return app

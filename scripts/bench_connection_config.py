@@ -55,15 +55,14 @@ _APP_CONFIG = """\
 app:
   name: bench
   code_path: "."
-  discovery:
-    mode: modules
-    modules:
-      include: [bench_app]
-database:
-  url: "sqlite+aiosqlite:///{db_path}"
-persistence:
-  cursors:
-    signing: ephemeral
+  packages: [bench_app]
+stores:
+  default:
+    backend: sqlalchemy
+    url: "sqlite+aiosqlite:///{db_path}"
+  settings:
+    cursors:
+      signing: ephemeral
 """
 
 _STARTUP_CHILD = textwrap.dedent(
@@ -87,7 +86,7 @@ _DB_CHILD = textwrap.dedent(
     """
     import asyncio, json, sys, time
     from sqlalchemy import text
-    from loom.core.repository.sqlalchemy.session_manager import SessionManager
+    from loom.stores.sqlalchemy.session_manager import SessionManager
 
     async def main() -> list[float]:
         manager = SessionManager(sys.argv[1])
@@ -97,7 +96,7 @@ _DB_CHILD = textwrap.dedent(
             async with manager.session() as session:
                 await session.execute(text("SELECT 1"))
             samples.append((time.perf_counter() - started) * 1_000_000)
-        await manager.dispose()
+        await manager.close()
         return samples
 
     samples = asyncio.run(main())
@@ -131,7 +130,8 @@ def _run_child(source: str, *args: str, cwd: Path) -> dict[str, Any]:
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="loom-bench-") as tmp:
         project = Path(tmp)
-        (project / "bench_app.py").write_text(_APP_MODULE, encoding="utf-8")
+        (project / "bench_app").mkdir()
+        (project / "bench_app" / "__init__.py").write_text(_APP_MODULE, encoding="utf-8")
         config = project / "app.yaml"
         config.write_text(_APP_CONFIG.format(db_path=project / "bench.db"), encoding="utf-8")
 

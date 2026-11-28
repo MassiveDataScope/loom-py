@@ -108,12 +108,7 @@ def _run_prefork_worker(tmp_path: Path, database: str, children: int) -> _Run:
             {
                 "app": {
                     "name": "prefork",
-                    "discovery": {
-                        "mode": "modules",
-                        "modules": {
-                            "include": ["tests.integration.celery_bootstrap.prefork_worker_app"]
-                        },
-                    },
+                    "packages": ["tests.integration.celery_bootstrap.prefork_worker_app"],
                 },
                 "celery": {
                     "broker_url": BROKER,
@@ -121,8 +116,10 @@ def _run_prefork_worker(tmp_path: Path, database: str, children: int) -> _Run:
                     "task_always_eager": False,
                     "worker_prefetch_multiplier": 1,
                 },
-                "stores": {"default": {"backend": "sqlalchemy", "url": database}},
-                "persistence": {"cursors": {"signing": "ephemeral"}},
+                "stores": {
+                    "default": {"backend": "sqlalchemy", "url": database},
+                    "settings": {"cursors": {"signing": "ephemeral"}},
+                },
             }
         )
     )

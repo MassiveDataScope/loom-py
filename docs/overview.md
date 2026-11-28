@@ -98,7 +98,7 @@ The design goal is consistent authoring across domains:
 | Part | Authoring surface | Runtime surface |
 |------|-------------------|-----------------|
 | Core | `loom.core.*` | shared kernel services |
-| REST | `loom.rest.*` | FastAPI adapters |
+| REST | `loom.rest.*` | FastAPI runtime |
 | ETL | `loom.etl.*` | Polars / Spark runners |
 | Streaming | `loom.streaming.*` | Kafka / Bytewax adapters |
 

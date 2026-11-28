@@ -10,8 +10,9 @@ from typing import Any
 import msgspec
 import pytest
 
+from loom.core.errors import InvalidUse
 from loom.core.model.redaction import Dsn
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.runner import SupportsFlush
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompiler, InvalidStageError, filter_plan, iter_all_steps
@@ -24,7 +25,7 @@ from loom.etl.compiler._plan import (
 )
 from loom.etl.runner import ETLRunner
 from loom.etl.storage._config import StorageConfig, StorageDefaults, TablePathConfig, TempConfig
-from loom.etl.testing import StubSourceReader, StubTargetWriter
+from loom.etl.testing import InMemorySourceReader, InMemoryTargetWriter
 from tests.helpers.version_limited_extras import require_pyspark
 from tests.unit.etl.doubles import (
     OrdersStagingAStep,
@@ -68,11 +69,11 @@ def params() -> RunDateIgnoredParams:
 @pytest.fixture
 def runner_factory() -> RunnerFactory:
     def _make(observers: Sequence[Any] | None = None) -> ETLRunner:
-        reader = StubSourceReader({"raw.orders": object()})
+        reader = InMemorySourceReader({"raw.orders": object()})
         return ETLRunner(
             reader,
-            StubTargetWriter(),
-            observability=ObservabilityRuntime(list(observers or ())),
+            InMemoryTargetWriter(),
+            observability=Observability(list(observers or ())),
         )
 
     return _make
@@ -185,7 +186,7 @@ class TestFilterPlan:
 
         with pytest.raises(
             TypeError,
-            match=r"not the string 'OrdersStagingAStep'.*include=\{'OrdersStagingAStep'\}",
+            match=r"takes an iterable of names, not a string",
         ):
             filter_plan(plan, "OrdersStagingAStep")
 
@@ -230,9 +231,9 @@ class TestRunnerRun:
         include: list[str] | None,
         expected_steps: int,
     ) -> None:
-        from loom.etl.testing import StubRunObserver
+        from loom.etl.testing import RecordingRunObserver
 
-        observer = StubRunObserver()
+        observer = RecordingRunObserver()
         runner_factory([observer]).run(PipelineAll, params, include=include)
         assert len(observer.step_statuses) == expected_steps
 
@@ -264,9 +265,9 @@ class TestRunnerRun:
 
         spy = _PrometheusSpy()
         runner = ETLRunner(
-            StubSourceReader({"raw.orders": object()}),
-            StubTargetWriter(),
-            observability=ObservabilityRuntime([spy]),
+            InMemorySourceReader({"raw.orders": object()}),
+            InMemoryTargetWriter(),
+            observability=Observability([spy]),
         )
 
         assert isinstance(runner, SupportsFlush)
@@ -307,9 +308,9 @@ class TestRunnerRun:
 
         spy = _PrometheusSpy()
         runner = ETLRunner(
-            StubSourceReader({"raw.orders": object()}),
-            StubTargetWriter(),
-            observability=ObservabilityRuntime([spy]),
+            InMemorySourceReader({"raw.orders": object()}),
+            InMemoryTargetWriter(),
+            observability=Observability([spy]),
         )
 
         with pytest.raises(RuntimeError, match="boom"):
@@ -322,7 +323,7 @@ class TestRunnerRun:
 class TestRunnerFromConfig:
     def test_from_config_spark_engine_without_spark_raises(self) -> None:
         config = StorageConfig(engine="spark")
-        with pytest.raises(ValueError, match="SparkSession"):
+        with pytest.raises(InvalidUse, match="SparkSession"):
             ETLRunner.from_config(config)
 
     def test_from_config_spark_engine_with_spark_builds_spark_backends(self) -> None:
@@ -330,7 +331,7 @@ class TestRunnerFromConfig:
 
         from unittest.mock import MagicMock
 
-        from loom.etl.backends.spark import SparkSourceReader
+        from loom.etl.engines.spark import SparkSourceReader
 
         spark = MagicMock()
         runner = ETLRunner.from_config(StorageConfig(engine="spark"), spark=spark)
@@ -351,7 +352,7 @@ class TestRunnerFromConfig:
         checkpoint_enabled: bool,
         has_checkpoint_store: bool,
     ) -> None:
-        from loom.etl.backends.polars import PolarsSourceReader, PolarsTargetWriter
+        from loom.etl.engines.polars import PolarsSourceReader, PolarsTargetWriter
 
         config = StorageConfig(
             defaults=StorageDefaults(table_path=TablePathConfig(uri=Dsn(str(tmp_path)))),
@@ -394,7 +395,7 @@ class TestRunnerFromConfig:
 
 class TestRunnerFromDict:
     def test_from_dict_polars_path_builds_polars_backends(self, tmp_path: Path) -> None:
-        from loom.etl.backends.polars import PolarsSourceReader
+        from loom.etl.engines.polars import PolarsSourceReader
 
         runner = ETLRunner.from_dict({"defaults": {"table_path": {"uri": str(tmp_path)}}})
         assert isinstance(runner._executor._reader, PolarsSourceReader)
@@ -402,7 +403,7 @@ class TestRunnerFromDict:
     @pytest.mark.parametrize(
         "storage,error,match",
         [
-            ({"engine": "spark"}, ValueError, "SparkSession"),
+            ({"engine": "spark"}, InvalidUse, "SparkSession"),
             ({"engine": "unknown"}, msgspec.ValidationError, ""),
         ],
     )

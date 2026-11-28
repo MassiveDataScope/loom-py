@@ -38,7 +38,7 @@ print(json.dumps(sorted(
 # imports ``celery.signals``: neither is the worker. Its adapter, its
 # bootstrap and the prefork pool are.
 _WORKER = (
-    "loom.celery.adapter",
+    "loom.celery.runtime",
     "loom.celery.bootstrap",
     "celery.concurrency.prefork",
     "fastapi",
@@ -53,24 +53,24 @@ from pathlib import Path
 
 sys.path.insert(0, sys.argv[1])
 
-from loom.composition import Recipe, build_application
+from loom.composition import Project, Recipe
 from loom.core.discovery.base import DiscoveryResult
-from loom.core.persistence.profile import WORKER_PROFILE
+from loom.core.stores.profile import WORKER_PROFILE
 
 
 class Bare:
-    def recipe(self, source):
+    def recipe(self, project):
         return Recipe(
             profile=WORKER_PROFILE,
-            discovered=DiscoveryResult(models=(), use_cases=(), interfaces=()),
+            discovered=DiscoveryResult(models=(), use_cases=()),
         )
 
-    def bind(self, application):
+    def mount(self, application):
         return application
 
 
 async def main():
-    application = build_application(sys.argv[2], adapter=Bare(), environment="test")
+    application = Project.load(sys.argv[2], environment="test").compose(Bare())
     async with application.running():
         pass
 

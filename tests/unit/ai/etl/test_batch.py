@@ -11,7 +11,7 @@ import pytest
 
 from loom.ai.etl._batch import PROMPT_MISSING, Batch, RowOutcome
 from loom.ai.etl._ledger import SpendLedger
-from loom.ai.runtime import AgentRuntime
+from loom.ai.execution import AgentHost
 from loom.core.identity import Identity
 
 _LIMIT = 3
@@ -33,9 +33,9 @@ class _Runtime:
         return SimpleNamespace(output={"answer": prompt}, usage=None)
 
 
-def _answer_all(runtime: _Runtime, prompts: list[str | None]) -> list[RowOutcome]:
+def _answer_all(host: _Runtime, prompts: list[str | None]) -> list[RowOutcome]:
     batch = Batch(
-        runtime=cast(AgentRuntime, runtime),
+        host=cast(AgentHost, host),
         name="labeller",
         limit=_LIMIT,
         ledger=SpendLedger(None),
@@ -47,11 +47,11 @@ def _answer_all(runtime: _Runtime, prompts: list[str | None]) -> list[RowOutcome
 
 class TestConcurrencyLimit:
     def test_no_more_than_limit_tasks_run_besides_the_caller(self) -> None:
-        runtime = _Runtime()
+        host = _Runtime()
 
-        _answer_all(runtime, [str(row) for row in range(200)])
+        _answer_all(host, [str(row) for row in range(200)])
 
-        assert runtime.peak_tasks <= _LIMIT + 1
+        assert host.peak_tasks <= _LIMIT + 1
 
     def test_outcomes_follow_the_order_of_the_prompts(self) -> None:
         prompts: list[str | None] = [str(row) for row in range(40)]
@@ -90,25 +90,25 @@ class TestBatchOutcomes:
         assert [o.output["answer"] if o.output else None for o in outcomes] == ["1", "2"]
 
     def test_a_base_exception_in_one_row_reaches_the_caller_in_a_group(self) -> None:
-        runtime = _Failing("5", _Abort())
+        host = _Failing("5", _Abort())
         rows = [str(row) for row in range(10)]
 
         with pytest.raises(BaseExceptionGroup) as excinfo:
-            _answer_all(runtime, rows)
+            _answer_all(host, rows)
 
         assert excinfo.group_contains(_Abort)
 
     def test_a_keyboard_interrupt_in_one_row_reaches_the_caller_as_itself(self) -> None:
-        runtime = _Failing("5", KeyboardInterrupt())
+        host = _Failing("5", KeyboardInterrupt())
         rows = [str(row) for row in range(10)]
 
         with pytest.raises(KeyboardInterrupt):
-            _answer_all(runtime, rows)
+            _answer_all(host, rows)
 
     @pytest.mark.parametrize("rows", [1, 10])
     def test_a_row_whose_run_is_cancelled_fails_the_batch_naming_it(self, rows: int) -> None:
-        runtime = _Failing("0", asyncio.CancelledError())
+        host = _Failing("0", asyncio.CancelledError())
         inputs = [str(row) for row in range(rows)]
 
-        with pytest.raises(RuntimeError, match=r"labeller.*1 row\(s\).*first row 0"):
-            _answer_all(runtime, inputs)
+        with pytest.raises(RuntimeError, match=r"labeller.*rows without an outcome"):
+            _answer_all(host, inputs)

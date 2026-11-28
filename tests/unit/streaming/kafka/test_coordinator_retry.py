@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 from confluent_kafka import KafkaError, KafkaException
 
+from loom.core.log_names import LogField
+from loom.streaming.event import StreamingEvent, StreamingKey
 from loom.streaming.kafka.client._retry import (
     CoordinatorRetryPolicy,
     is_coordinator_error,
@@ -162,11 +164,15 @@ class TestAsyncCommitVisibility:
 
         with caplog.at_level(logging.ERROR):
             client._on_commit(
-                KafkaError(KafkaError.REQUEST_TIMED_OUT),
+                KafkaError(KafkaError.REQUEST_TIMED_OUT, "broker b1.internal said no"),
                 [TopicPartition("orders", 3, 91)],
             )
 
-        assert any("orders:3@91" in record.getMessage() for record in caplog.records)
+        [failure] = caplog.records
+        assert failure.msg == StreamingEvent.OFFSET_COMMIT_FAILED
+        assert failure.__dict__[StreamingKey.PARTITIONS] == ["orders:3@91"]
+        assert failure.__dict__[LogField.ERROR_CODE] == "REQUEST_TIMED_OUT"
+        assert "b1.internal" not in str(failure.__dict__)
 
     def test_successful_async_commit_is_silent(
         self,

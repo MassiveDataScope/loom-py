@@ -110,11 +110,10 @@ class SignatureReader:
         """
         if isinstance(built, FunctionType):
             init, first = built, 0
-        elif (
-            inspect.isclass(built)
-            and type(built).__call__ is type.__call__
-            and built.__new__ is object.__new__
-        ):
+        elif inspect.isclass(built) and type(built).__call__ is type.__call__:
+            new: object = built.__new__
+            if new is not object.__new__:
+                return ()
             init, first = built.__init__, 1
         else:
             return ()

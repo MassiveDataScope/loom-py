@@ -9,7 +9,7 @@ from bytewax.operators import branch as bw_branch
 from bytewax.operators import flat_map as bw_flat_map
 from bytewax.operators import map as bw_map
 
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.streaming.bytewax._error_boundary import (
     ErrorBoundary,
     _classify_routing,
@@ -125,7 +125,7 @@ def _routed_to(target: int | None) -> Callable[[Any], list[Any]]:
 
 
 def _execute_router_step(
-    observer: ObservabilityRuntime,
+    observer: Observability,
     flow_name: str,
     idx: int,
     router: Router[Any, Any],
@@ -348,6 +348,6 @@ def _execute_router_node(node: object, message: Any) -> Any:
             message,
             _resolve_record_result(record_node.execute(message), "Router"),
         )
-    raise TypeError(
+    raise UnsupportedNodeError(
         f"Router branch node {type(node).__name__} is not supported by Bytewax adapter."
     )

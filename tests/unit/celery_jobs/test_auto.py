@@ -1,99 +1,56 @@
-"""Unit tests for loom.celery.auto.create_app."""
+"""``create_app`` builds the worker's Celery application from a configuration file."""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from typing import Any
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+
+import pytest
 
 from loom.celery.auto import create_app
+from loom.core.engine.events import EventKind
+from loom.core.job.envelope import wire_job_name
 from loom.core.job.job import Job
+from tests.helpers.jobs import RecordingExecutionObserver
+
+WORKER_CONFIG = """\
+app:
+  name: worker
+celery:
+  broker_url: memory://
+  result_backend: cache+memory://
+  task_always_eager: true
+stores:
+  default:
+    backend: sqlalchemy
+    url: sqlite+aiosqlite:///test.db
+"""
 
 
-class _DummyJob(Job[int]):
+class AutoJob(Job[int]):
     def execute(self) -> int:
         return 1
 
 
+@pytest.fixture
+def config_path(tmp_path: Path) -> str:
+    path = tmp_path / "worker.yaml"
+    path.write_text(WORKER_CONFIG, encoding="utf-8")
+    return str(path)
+
+
 class TestCreateApp:
-    def test_create_app_delegates_to_bootstrap_worker(self) -> None:
-        expected = MagicMock()
-        result = SimpleNamespace(celery_app=expected)
-        with patch("loom.celery.auto.bootstrap_worker", return_value=result) as mock_bootstrap:
-            app = create_app("config/worker.yaml", jobs=[_DummyJob])
-        assert app is expected
-        mock_bootstrap.assert_called_once_with(
-            "config/worker.yaml",
-            config_dir=None,
-            environment=None,
-            jobs=[_DummyJob],
-            callbacks=(),
-            modules=(),
-            metrics=None,
-            resolvers=(),
-        )
+    def test_the_application_serves_the_jobs_it_is_given(self, config_path: str) -> None:
+        app = create_app(config_path, jobs=[AutoJob])
 
-    def test_create_app_allows_discovery_without_explicit_jobs(self) -> None:
-        expected = MagicMock()
-        result = SimpleNamespace(celery_app=expected)
-        with patch("loom.celery.auto.bootstrap_worker", return_value=result) as mock_bootstrap:
-            app = create_app("config/worker.yaml")
-        assert app is expected
-        mock_bootstrap.assert_called_once_with(
-            "config/worker.yaml",
-            config_dir=None,
-            environment=None,
-            jobs=(),
-            callbacks=(),
-            modules=(),
-            metrics=None,
-            resolvers=(),
-        )
+        assert wire_job_name(AutoJob.__qualname__) in app.tasks
 
-    def test_create_app_passes_optional_arguments(self) -> None:
-        expected = MagicMock()
-        result = SimpleNamespace(celery_app=expected)
-        module = MagicMock()
-        callback: type[Any] = type("Callback", (), {})
-        metrics = MagicMock()
+    def test_the_application_runs_a_job_and_reports_it_to_the_execution_observer(
+        self, config_path: str
+    ) -> None:
+        observer = RecordingExecutionObserver()
+        app = create_app(config_path, jobs=[AutoJob], execution_observer=observer)
 
-        with patch("loom.celery.auto.bootstrap_worker", return_value=result) as mock_bootstrap:
-            app = create_app(
-                "base.yaml",
-                "worker.yaml",
-                jobs=[_DummyJob],
-                callbacks=[callback],
-                modules=[module],
-                metrics=metrics,
-            )
+        result = app.tasks[wire_job_name(AutoJob.__qualname__)].apply().get()
 
-        assert app is expected
-        mock_bootstrap.assert_called_once_with(
-            "base.yaml",
-            "worker.yaml",
-            config_dir=None,
-            environment=None,
-            jobs=[_DummyJob],
-            callbacks=[callback],
-            modules=[module],
-            metrics=metrics,
-            resolvers=(),
-        )
-
-    def test_create_app_forwards_resolvers(self) -> None:
-        result = SimpleNamespace(celery_app=MagicMock())
-        resolver = MagicMock()
-
-        with patch("loom.celery.auto.bootstrap_worker", return_value=result) as mock_bootstrap:
-            create_app("config/worker.yaml", jobs=[_DummyJob], resolvers=[resolver])
-
-        assert mock_bootstrap.call_args.kwargs["resolvers"] == [resolver]
-
-    def test_create_app_forwards_the_config_directory_and_environment(self) -> None:
-        result = SimpleNamespace(celery_app=MagicMock())
-
-        with patch("loom.celery.auto.bootstrap_worker", return_value=result) as mock_bootstrap:
-            create_app(config_dir="config", environment="staging", jobs=[_DummyJob])
-
-        kwargs = mock_bootstrap.call_args.kwargs
-        assert (kwargs["config_dir"], kwargs["environment"]) == ("config", "staging")
+        assert result == 1
+        assert EventKind.JOB_SUCCEEDED in observer.kinds

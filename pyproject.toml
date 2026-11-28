@@ -15,7 +15,6 @@ classifiers = [
 ]
 dependencies = [
     "msgspec>=0.18,<1.0",
-    "structlog>=24.4,<27.0",
     "omegaconf>=2.3,<2.5",
     "prometheus-client>=0.20",
     "aiocache>=0.12,<1.0",
@@ -32,6 +31,7 @@ loom = "loom.cli:main"
 testing = [
     "pytest>=8.3.0",
     "httpx>=0.27",
+    "polyfactory>=3.5,<4",
 ]
 rest = [
     "fastapi>=0.115,<1.0",
@@ -49,10 +49,11 @@ sqlalchemy = [
 clickhouse = [
     "clickhouse-connect>=0.9.2,<1.0",
 ]
-dynamodb = [
+aws = [
     "boto3>=1.35",
 ]
-sqs = [
+testing-aws = [
+    "moto[sqs]>=5.2.5,<6.0",
     "boto3>=1.35",
 ]
 mongo = [
@@ -167,9 +168,8 @@ logfire = [
     "opentelemetry-sdk>=1.27,<2.0",
 ]
 celery = [
-    "celery>=5.3,<6.0",
+    "celery[redis]>=5.3,<6.0",
     "kombu>=5.3,<6.0",
-    "redis>=5.0,<6.0",
 ]
 cli = [
     "pyyaml>=6",
@@ -185,7 +185,7 @@ lambda = [
 ]
 
 [project.entry-points."loom.ai.engines"]
-pydantic-ai = "loom.ai.engines.pydantic_ai.provider:PydanticAIEngineProvider"
+pydantic-ai = "loom.ai.engines.pydantic_ai.plugin:PydanticAIEnginePlugin"
 
 # Authentication strategies for the remote endpoints loom calls out to: MCP
 # servers and A2A agents alike, since the contract is httpx.Auth and knows
@@ -197,17 +197,27 @@ oauth = "loom.ai.remote_auth:standard_oauth"
 bearer = "loom.ai.remote_auth:bearer_token"
 static = "loom.ai.remote_auth:static_headers"
 
-[project.entry-points."loom.etl.backends"]
-polars = "loom.etl.backends.polars.provider:PolarsProvider"
-spark = "loom.etl.backends.spark.provider:SparkProvider"
+[project.entry-points."loom.etl.engines"]
+polars = "loom.etl.engines.polars.engine:PolarsEtlEngine"
+spark = "loom.etl.engines.spark.engine:SparkEtlEngine"
 
-# Persistence backends `create_app` resolves from `persistence.backend`. A
-# deployment registers its own under the same group from its own package.
-[project.entry-points."loom.persistence.backends"]
-sqlalchemy = "loom.core.repository.sqlalchemy.backend:SQLAlchemyBackend"
-dynamodb = "loom.core.repository.dynamodb.backend:DynamoDBBackend"
-mongo = "loom.core.repository.mongo.backend:MongoBackend"
-none = "loom.core.persistence.none:NoneBackend"
+# Store plugins a store's `backend` key resolves. A deployment registers
+# its own under the same group from its own package.
+[project.entry-points."loom.stores.plugins"]
+sqlalchemy = "loom.stores.sqlalchemy.plugin:SQLAlchemyStorePlugin"
+dynamodb = "loom.stores.dynamodb.plugin:DynamoDBStorePlugin"
+mongo = "loom.stores.mongo.plugin:MongoStorePlugin"
+none = "loom.core.stores.none:NullStorePlugin"
+
+# Check sets by the configuration path they validate; a set is imported only
+# when the process uses that path. A package shipping checks registers under
+# the same group, named by the path it validates.
+[project.entry-points."loom.deploy_checks"]
+"observability.log" = "loom.core.logger.checks:CHECKS"
+stores = "loom.core.stores.audit_checks:CHECKS"
+"stores.settings.cursors" = "loom.core.stores.repository.checks:CHECKS"
+"app.rest" = "loom.rest.checks:CHECKS"
+"app.entry_points" = "loom.core.discovery.checks:CHECKS"
 
 [build-system]
 requires = [
@@ -255,13 +265,19 @@ dev = [
     "fakeredis>=2.23.0",
     "fastapi>=0.115,<1.0",
     "greenlet>=3.0.0",
+    "hypothesis>=6.168,<7",
+    "moto[dynamodb,secretsmanager,sns,sqs,ssm]>=5.2.5,<6.0",
     "mypy>=1.11.0,<2.0",
     "omegaconf>=2.3,<2.5",
     "pydantic>=2.0,<3.0",
     "pre-commit>=3.8.0",
+    "poethepoet>=0.32,<1",
+    "polyfactory>=3.5,<4",
     "pyright>=1.1.390,<2.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
+    "pytest-env>=1.3.0,<2.0",
+    "pytest-socket>=0.8.1,<1.0",
     "pyjwt[crypto]>=2.12.0",
     "redis>=5.0.0",
     "ruff>=0.9.0,<1.0",
@@ -277,6 +293,7 @@ dev = [
     "delta-spark>=3.2,<4.0; python_version < '3.13'",
     "chispa>=0.10,<1.0",
     "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.6.1,<4",
     "findspark>=2.0.1",
     "confluent-kafka>=2.6,<3.0",
     "bytewax>=0.21; python_version < '3.13'",
@@ -312,7 +329,7 @@ packages = [
 include = [
     "src/loom/py.typed",
     "src/loom/ai/declarative/schemas/*.json",
-    "src/loom/core/repository/sqlalchemy/rls/guard/*.sql",
+    "src/loom/stores/sqlalchemy/rls/guard/*.sql",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -337,12 +354,14 @@ select = [
     "B",
     "C4",
     "SIM",
+    "TID251",
 ]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = [
     "Agent",
     "Caller",
+    "Delivery",
     "Exists",
     "Input",
     "Load",
@@ -351,6 +370,7 @@ extend-immutable-calls = [
     "Query",
     "loom.core.use_case.Agent",
     "loom.core.use_case.Caller",
+    "loom.core.use_case.Delivery",
     "loom.core.use_case.Exists",
     "loom.core.use_case.Input",
     "loom.core.use_case.Load",
@@ -359,6 +379,7 @@ extend-immutable-calls = [
     "loom.core.use_case.Query",
     "loom.core.use_case.markers.Agent",
     "loom.core.use_case.markers.Caller",
+    "loom.core.use_case.markers.Delivery",
     "loom.core.use_case.markers.Exists",
     "loom.core.use_case.markers.Input",
     "loom.core.use_case.markers.Load",
@@ -366,6 +387,63 @@ extend-immutable-calls = [
     "loom.core.use_case.markers.Mcp",
     "loom.core.use_case.markers.Query",
 ]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"unittest.mock".msg = "Double a port of ours instead (clean-code testing.md §3); third-party clients are tested against moto, LocalStack or Redis."
+"structlog".msg = "Log with the standard library."
+"aws_lambda_powertools.logging".msg = "Log with the standard library."
+
+[tool.ruff.lint.per-file-ignores]
+"tests/helpers/aws_island.py" = ["TID251"]
+"tests/integration/core/repository/sqlalchemy/test_cache_integration.py" = ["TID251"]
+"tests/integration/streaming/test_into_table_integration.py" = ["TID251"]
+"tests/unit/ai/engines/test_pydantic_ai_output_check.py" = ["TID251"]
+"tests/unit/celery_bootstrap/test_process_bridge.py" = ["TID251"]
+"tests/unit/celery_bootstrap/test_bootstrap_cache.py" = ["TID251"]
+"tests/unit/celery_bootstrap/test_bootstrap.py" = ["TID251"]
+"tests/unit/composition/test_job_service.py" = ["TID251"]
+"tests/unit/core/bootstrap/test_kernel_execution_observer.py" = ["TID251"]
+"tests/unit/core/cache/test_gateway_config.py" = ["TID251"]
+"tests/unit/core/config/test_aws_section.py" = ["TID251"]
+"tests/unit/core/config/test_secrets.py" = ["TID251"]
+"tests/unit/core/config/test_ssm.py" = ["TID251"]
+"tests/unit/core/connections/test_context_clients.py" = ["TID251"]
+"tests/unit/core/engine/executor/doubles.py" = ["TID251"]
+"tests/unit/core/engine/executor/test_executor.py" = ["TID251"]
+"tests/unit/core/engine/executor/test_observation.py" = ["TID251"]
+"tests/unit/core/engine/executor/test_preparation.py" = ["TID251"]
+"tests/unit/core/engine/test_execution_observer.py" = ["TID251"]
+"tests/unit/core/engine/test_post_commit_publish.py" = ["TID251"]
+"tests/unit/core/errors/test_errors.py" = ["TID251"]
+"tests/unit/core/repository/dynamodb/test_plugin.py" = ["TID251"]
+"tests/unit/core/repository/test_record_layout.py" = ["TID251"]
+"tests/unit/etl/engines/test_upsert_delete_flag_support.py" = ["TID251"]
+"tests/unit/etl/engines/test_write_policy_historify.py" = ["TID251"]
+"tests/unit/etl/checkpoint/io/test_checkpoint_polars.py" = ["TID251"]
+"tests/unit/etl/client_step/test_client_step.py" = ["TID251"]
+"tests/unit/etl/io/sources/test_mongo_reader.py" = ["TID251"]
+"tests/unit/etl/io/targets/test_clickhouse_writer.py" = ["TID251"]
+"tests/unit/etl/io/test_writer_registry.py" = ["TID251"]
+"tests/unit/etl/storage/doubles.py" = ["TID251"]
+"tests/unit/etl/storage/test_engine_factory.py" = ["TID251"]
+"tests/unit/etl/test_config_loader.py" = ["TID251"]
+"tests/unit/etl/test_runner_environment.py" = ["TID251"]
+"tests/unit/etl/test_runner_resolvers.py" = ["TID251"]
+"tests/unit/etl/test_runner.py" = ["TID251"]
+"tests/unit/prefect/doubles.py" = ["TID251"]
+"tests/unit/prefect/test_backfill_flow.py" = ["TID251"]
+"tests/unit/prefect/test_deploy_flow.py" = ["TID251"]
+"tests/unit/prefect/test_etl_flow.py" = ["TID251"]
+"tests/unit/prefect/test_flow_environment.py" = ["TID251"]
+"tests/unit/prefect/test_flow_trigger.py" = ["TID251"]
+"tests/unit/prefect/test_maintenance_flow.py" = ["TID251"]
+"tests/unit/prefect/test_manifest_s3.py" = ["TID251"]
+"tests/unit/prefect/test_notify.py" = ["TID251"]
+"tests/unit/prefect/test_run_params.py" = ["TID251"]
+"tests/unit/prefect/test_task_run_observer.py" = ["TID251"]
+"tests/unit/rest/test_rest_dispatcher.py" = ["TID251"]
+"tests/unit/testing/test_http_harness.py" = ["TID251"]
+"tests/unit/testing/test_runner.py" = ["TID251"]
 
 [tool.pyright]
 pythonVersion = "3.11"
@@ -403,6 +481,7 @@ exclude = [
 [[tool.mypy.overrides]]
 module = [
     "pyspark.*",
+    "py4j.*",
     "delta.*",
     "findspark",
     "fsspec.*",
@@ -437,9 +516,41 @@ module = [
 ]
 ignore_missing_imports = true
 
+# bytewax is an extra installed only on Python < 3.13. fastmcp, and the mcp
+# package it brings, live in the opt-in `mcp-tests` group. Neither is in the
+# default environment this gate type-checks.
 [[tool.mypy.overrides]]
 module = [
-    "loom.core.backend.scoped_ddl",
+    "bytewax",
+    "bytewax.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "fastmcp",
+    "fastmcp.*",
+    "mcp",
+    "mcp.*",
+]
+ignore_missing_imports = true
+
+# Those modules subclass bytewax or fastmcp classes. With the packages
+# absent the bases are Any, and strict mypy rejects subclassing Any. The
+# flag applies to the module being checked, not to the missing package.
+[[tool.mypy.overrides]]
+module = [
+    "loom.ai.engines.pydantic_ai._transport",
+    "loom.streaming.bytewax._adapter",
+    "loom.streaming.bytewax._runtime_io",
+    "loom.streaming.bytewax.handlers.storage",
+    "loom.streaming.mongo._bytewax_source",
+]
+disallow_subclassing_any = false
+
+[[tool.mypy.overrides]]
+module = [
+    "loom.stores.sqlalchemy.scoped_ddl",
 ]
 disallow_untyped_calls = false
 
@@ -456,11 +567,9 @@ pythonpath = [
 ]
 # `slow` tests are deselected by default, as CI's fast lane does; CI runs them in its
 # slow lane with an explicit `-m`. Run them locally with `-m slow`, or everything with `-m ""`.
-addopts = "-ra --log-disable=aiosqlite -m 'not slow'"
+addopts = "-rfE --log-disable=aiosqlite -m 'not slow and not live' --allow-hosts=127.0.0.1,::1,localhost --allow-unix-socket"
 asyncio_mode = "auto"
 timeout = 300
-log_cli = true
-log_cli_level = "DEBUG"
 log_cli_format = "%(asctime)s %(levelname)s %(name)s %(message)s"
 markers = [
     "bytewax: tests that exercise the Bytewax adapter and runtime wiring",
@@ -469,6 +578,49 @@ markers = [
     "integration: end-to-end streaming flow tests",
     "slow: long-running tests, deselected by default; run them with -m slow",
     "live: tests that call a real model provider; skipped without credentials",
+]
+
+[tool.pytest_env]
+POLARS_MAX_THREADS = "1"
+RAYON_NUM_THREADS = "1"
+OMP_NUM_THREADS = "1"
+TOKIO_WORKER_THREADS = "1"
+TEST_SERVER_MODE = { unset = true }
+TEST_SERVER_MODE_ENDPOINT = { unset = true }
+TEST_PROXY_MODE = { unset = true }
+TEST_PROXY_MODE_ENDPOINT = { unset = true }
+INITIAL_NO_AUTH_ACTION_COUNT = { unset = true }
+
+[tool.poe]
+verbosity = -1
+
+[tool.poe.tasks]
+# Every job has one command: `uv run poe <task>`. Pytest tasks forward extra
+# arguments, so `uv run poe test-fast tests/unit/core/job -k backoff` narrows a
+# run; explicit paths replace the lane's default `testpaths` override.
+lint = [
+    { cmd = "ruff check ." },
+    { cmd = "ruff format --check src tests" },
+]
+fmt = [
+    { cmd = "ruff format src tests" },
+    { cmd = "ruff check --fix ." },
+]
+test = "pytest -n 4 --dist worksteal -q -p no:cacheprovider"
+test-fast = "pytest -n 4 --dist worksteal -q -p no:cacheprovider -o 'testpaths=tests/unit tests/contract tests/docs'"
+test-int = "pytest -n 4 --dist worksteal -q -p no:cacheprovider -o testpaths=tests/integration --ignore=tests/integration/rls"
+test-props = { cmd = "pytest -n 4 --dist worksteal -q -p no:cacheprovider -o testpaths=tests/unit -m hypothesis", env = { HYPOTHESIS_PROFILE = "ci" } }
+test-cov = "pytest -n 4 --dist worksteal -q -p no:cacheprovider --cov=src/loom --cov-report=term-missing --cov-report=xml"
+test-logs = "pytest -n 0 -p no:cacheprovider -o log_cli=true -o log_cli_level=DEBUG"
+golden-update = "pytest -q -p no:cacheprovider --update-golden"
+log-contract = "python -m scripts.log_contract"
+gate = ["lint", "types", "test-fast", "test-int"]
+
+[tool.poe.tasks.types]
+help = "mypy and pyright over src, as CI's quality gate runs both; any error fails"
+sequence = [
+    { cmd = "mypy --no-color-output src" },
+    { cmd = "pyright src" },
 ]
 
 [tool.commitizen]

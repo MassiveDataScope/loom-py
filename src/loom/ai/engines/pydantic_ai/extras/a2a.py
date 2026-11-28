@@ -27,6 +27,7 @@ from a2a.types.a2a_pb2 import AgentCard, Role, SendMessageRequest
 from loom.ai._filters import matches, select_names
 from loom.ai.compiler import CompiledA2ACapability
 from loom.ai.remote_auth import headers_from_ref, shared_a2a_auth
+from loom.core.config.errors import ConfigError
 
 __all__ = ["build_a2a_http_client", "create_a2a_client", "send_to_remote_agent"]
 
@@ -67,7 +68,7 @@ def build_a2a_http_client(capability: CompiledA2ACapability) -> httpx.AsyncClien
 async def create_a2a_client(capability: CompiledA2ACapability) -> AsyncIterator[Client]:
     """Open one session against a remote agent, card fetched and checked.
 
-    Nothing happens until the context is entered, so the runtime's start-up
+    Nothing happens until the context is entered, so the host's start-up
     deadline bounds the whole of it and a failure is reported as a coded
     start-up issue.
 
@@ -103,7 +104,7 @@ async def send_to_remote_agent(capability: CompiledA2ACapability, prompt: str) -
     """Delegate one prompt to a remote agent and return its reply text.
 
     Opens :func:`create_a2a_client` per call, because ``build_toolsets`` is
-    synchronous and the engine has no channel to the session the runtime
+    synchronous and the engine has no channel to the session the host
     opened: sharing it would need a lifecycle handoff that does not exist yet.
     The cost is one card fetch per delegation, bounded by ``tool_timeout_ms``
     like the call it precedes, and it buys a stateless toolset — no cached
@@ -150,11 +151,11 @@ def _reject_ungranted_card(capability: CompiledA2ACapability, card: AgentCard) -
         pattern for pattern in capability.include if not _matches_any(pattern, advertised)
     )
     if unmatched:
-        raise ValueError(
+        raise ConfigError(
             f"the card advertises nothing matching the granted skills: {', '.join(unmatched)}"
         )
     if not select_names(advertised, include=capability.include, exclude=capability.exclude):
-        raise ValueError("the card advertises no skill matching the granted filter")
+        raise ConfigError("the card advertises no skill matching the granted filter")
 
 
 def _matches_any(pattern: str, names: Sequence[str]) -> bool:

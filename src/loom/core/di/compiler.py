@@ -29,7 +29,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from itertools import repeat
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from loom.core.di.errors import ResolutionError
 from loom.core.di.graph import (
@@ -111,11 +111,13 @@ class SupplierCompiler:
                 refused or part of a construction cycle, with the path.
         """
         with STRUCTURE_LOCK:
-            plan: Callable[[], Any] | None = self._plans.get(cls)
-            if plan is None:
+            compiled = self._plans.get(cls)
+            if compiled is None:
                 node = ClassNode(cls)
-                plan = self._plans[cls] = self._constructor_call(DependencyPath(node), node, cls)
-            return plan
+                compiled = self._plans[cls] = self._constructor_call(
+                    DependencyPath(node), node, cls
+                )
+            return cast(Callable[[], T], compiled)
 
     def _compile(self, path: DependencyPath, key: object) -> Supplier:
         """The supplier of *key*, which ends *path*."""
@@ -131,19 +133,26 @@ class SupplierCompiler:
             raise DependencyGraphError(binding.refused)
         self._open.add(key)
         try:
-            make = self._constructor_call(path, KeyNode(key), binding.provider)
+            if binding.target is not None:
+                supplier = self._compile(
+                    path.to(Edge(KeyNode(binding.target), "target")), binding.target
+                )
+            else:
+                make = self._constructor_call(path, KeyNode(key), binding.provider)
+                supplier = self._scoped(key, binding, make)
         finally:
             self._open.discard(key)
-        supplier = self._served[key] = self._scoped(key, binding, make)
+        self._served[key] = supplier
         return supplier
 
     def _scoped(self, key: object, binding: _Binding, make: Supplier) -> Supplier:
         """Serve *binding* by its scope: per execution, as a constant, or built once.
 
-        An unbuilt singleton's supplier is replaced by a constant once built; a
-        dependent compiled earlier keeps it, and it reads the built instance.
+        An unbuilt singleton's supplier is replaced by a constant once built, under
+        its key and under every alias of it; a dependent compiled earlier keeps it,
+        and it reads the built instance.
         """
-        if binding.scope.per_execution:
+        if binding.scope.is_per_execution:
             return per_execution(binding, make)
         instance = binding.instance
         if instance is not UNBUILT:
@@ -155,9 +164,10 @@ class SupplierCompiler:
             if instance is not UNBUILT:
                 return instance
             instance = binding.build(make)
+            constant = repeat(instance).__next__
             with STRUCTURE_LOCK:
-                if served.get(key) is singleton:
-                    served[key] = repeat(instance).__next__
+                for served_key in [k for k, v in served.items() if v is singleton]:
+                    served[served_key] = constant
             return instance
 
         return singleton

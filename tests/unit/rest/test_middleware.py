@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pytest
-from structlog.contextvars import bind_contextvars, clear_contextvars, get_contextvars
 
 from loom.core.tracing import get_trace_id
 from loom.rest.middleware import TraceIdMiddleware, _extract_header
+from tests.helpers.loggers import CapturingHandler
 
 # ---------------------------------------------------------------------------
 # ASGI test helpers
@@ -44,12 +45,11 @@ class _AppCapture:
 
     def __init__(self) -> None:
         self.seen_trace_id: str | None = None
-        self.seen_log_context: dict[str, Any] = {}
         self.response_started = False
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         self.seen_trace_id = get_trace_id()
-        self.seen_log_context = get_contextvars()
+        logging.getLogger("tests.middleware").info("rest.request_seen")
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b""})
 
@@ -171,27 +171,17 @@ class TestTraceIdMiddlewareResponseHeader:
         assert len(header_dict[b"x-request-id"]) == 32
 
 
-class TestTraceIdMiddlewareLogContext:
+class TestTraceIdMiddlewareLogs:
     @pytest.mark.asyncio
-    async def test_trace_id_bound_into_log_context(self) -> None:
-        app = _AppCapture()
-        mw = TraceIdMiddleware(app)
+    async def test_a_record_emitted_during_the_request_carries_its_trace_id(
+        self, rendering: CapturingHandler
+    ) -> None:
         scope = _make_http_scope([(b"x-request-id", b"log-tid")])
 
-        await mw(scope, _null_receive, _make_async_sink([]))
+        await TraceIdMiddleware(_AppCapture())(scope, _null_receive, _make_async_sink([]))
 
-        assert app.seen_log_context.get("trace_id") == "log-tid"
-
-    @pytest.mark.asyncio
-    async def test_log_context_restored_after_request(self) -> None:
-        mw = TraceIdMiddleware(_AppCapture())
-        bind_contextvars(trace_id="outer")
-        try:
-            await mw(_make_http_scope(), _null_receive, _make_async_sink([]))
-
-            assert get_contextvars().get("trace_id") == "outer"
-        finally:
-            clear_contextvars()
+        [(_, fields)] = rendering.rendered
+        assert fields["trace_id"] == "log-tid"
 
 
 class TestTraceIdMiddlewareContextReset:

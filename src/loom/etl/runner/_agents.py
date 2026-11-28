@@ -9,7 +9,8 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any, NoReturn
 
-from loom.etl.runtime.contracts import AgentBatchRunner, AgentIssue, AgentIssueKind
+from loom.core.errors import InternalError
+from loom.etl.ports.contracts import AgentBatchRunner, AgentIssue, AgentIssueKind
 
 
 class UnservedAgents(AgentBatchRunner):
@@ -35,7 +36,7 @@ class UnservedAgents(AgentBatchRunner):
 
     def version(self, name: str) -> NoReturn:
         """Refuse; a compiled plan never reaches here."""
-        raise RuntimeError(self._reason)
+        raise InternalError(self._reason)
 
     def map(
         self,
@@ -48,4 +49,4 @@ class UnservedAgents(AgentBatchRunner):
         max_usd: Decimal | None,
     ) -> NoReturn:
         """Refuse; a compiled plan never reaches here."""
-        raise RuntimeError(self._reason)
+        raise InternalError(self._reason)

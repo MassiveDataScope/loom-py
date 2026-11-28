@@ -15,38 +15,44 @@ from typing import Any, ClassVar, cast
 
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.cache.abc.config import CacheConfig
 from loom.core.cache.dependency import GenerationalDependencyResolver
 from loom.core.cache.repository import CachedRepository
 from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.post_commit import store_channel
-from loom.core.errors import StoresNotCommitted
+from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.engine.post_commit import (
+    ActionSubject,
+    PostCommitEvent,
+    PostCommitKey,
+    store_channel,
+)
+from loom.core.errors import StoresNotCommittedError
 from loom.core.job.context import (
     add_pending_dispatch,
     add_pending_publish,
     clear_pending_dispatches,
 )
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import CursorCodec, RepoFor
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import CommitUncertain, OrderedCommits
-from loom.core.uow.scope import current_scope, unscoped
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.repository import CursorCodec, RepoFor
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.coordinator import CommitUncertain, OrderedCommits
+from loom.core.stores.uow.scope import current_scope, unscoped
 from loom.core.use_case import Joined, UseCase
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
 from tests.helpers.jobs import SQS_URL, EmailJob, SQSClient, sqs_service
-from tests.unit.core.cache._doubles import CountingCacheBackend
+from tests.helpers.loggers import CapturedLog
+from tests.unit.core.cache._doubles import CountingCacheStore
 
 pytestmark = pytest.mark.timeout(30)
 
 AUDIT, EVENTS = StoreKey("audit"), StoreKey("events")
-_NEVER_RAN = "PostCommitShieldedActionNeverRan"
+_NEVER_RAN = PostCommitEvent.SHIELDED_ACTION_NEVER_RAN
 Step = Callable[[], Awaitable[object]]
 
 FAILURES: dict[StoreKey, BaseException] = {}
@@ -95,7 +101,7 @@ class _CommitFails(SQLAlchemyUnitOfWork):
 class _Autocommit:
     """A protocol-only unit of work of a store without transactions."""
 
-    transactional: ClassVar[bool] = False
+    is_transactional: ClassVar[bool] = False
 
     async def begin(self) -> None: ...
     async def commit(self) -> None: ...
@@ -167,13 +173,13 @@ class _Stores:
     def __init__(self, default: SessionManager, audit: SessionManager) -> None:
         codec = CursorCodec(signing="ephemeral")
         self.default, self.audit = default, audit
-        self.orders = RepositorySQLAlchemy(default, _Order, cursor_codec=codec)
-        self.entries = RepositorySQLAlchemy(audit, _Entry, cursor_codec=codec)
+        self.orders = SQLAlchemyRepository(default, _Order, cursor_codec=codec)
+        self.entries = SQLAlchemyRepository(audit, _Entry, cursor_codec=codec)
         self.ran: list[str] = []
         coordinator = OrderedCommits(
             {DEFAULT_STORE: _Sql(default), AUDIT: _Sql(audit), EVENTS: _NoTransactions()}
         )
-        self.executor = RuntimeExecutor(UseCaseCompiler(), coordinator=coordinator)
+        self.executor = UseCaseExecutor(UseCaseCompiler(), coordinator=coordinator)
 
     def mark(self, label: str) -> Callable[[], None]:
         return lambda: self.ran.append(label)
@@ -209,7 +215,7 @@ class _Stores:
     def write_entry(self, entries: Any = None) -> Step:
         return lambda: (entries or self.entries).create(_New(ref="e"))
 
-    def cached_entries(self, backend: CountingCacheBackend) -> Any:
+    def cached_entries(self, backend: CountingCacheStore) -> Any:
         resolver = GenerationalDependencyResolver(backend)
         return CachedRepository(
             self.entries, config=CacheConfig(), cache=backend, dependency_resolver=resolver
@@ -229,8 +235,8 @@ async def stores() -> AsyncIterator[_Stores]:
         yield _Stores(default, audit)
     finally:
         FAILURES.clear()
-        await default.dispose()
-        await audit.dispose()
+        await default.close()
+        await audit.close()
 
 
 def _raises(error: type[BaseException] | None) -> AbstractContextManager[object]:
@@ -242,7 +248,7 @@ class _BodyFails(Exception):
 
 
 class _FailsWhenDone:
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         if event.kind is EventKind.EXEC_DONE:
             raise _Failed
 
@@ -263,8 +269,8 @@ class _Send:
     def __call__(self) -> None:
         raise AssertionError("an uncertain store's send must not run")
 
-    def log_fields(self) -> list[dict[str, object]]:
-        return [{"job_name": "EmailJob", "task_id": "task-1"}]
+    def subjects(self) -> list[ActionSubject]:
+        return [ActionSubject(job="EmailJob", task_id="task-1")]
 
 
 class TestStorePostCommit:
@@ -283,14 +289,14 @@ class TestStorePostCommit:
                 {AUDIT: _Refused()},
                 ["default.priority", "events.priority", "default.publish", "events.publish"]
                 + ["default.plain", "events.plain"],
-                StoresNotCommitted,
+                StoresNotCommittedError,
                 id="audit-rolls-back-after-default-committed",
             ),
             pytest.param(
                 {AUDIT: CommitUncertain(ConnectionError("ack lost"))},
                 ["default.priority", "audit.priority", "events.priority"]
                 + ["default.publish", "events.publish", "default.plain", "events.plain"],
-                StoresNotCommitted,
+                StoresNotCommittedError,
                 id="audit-uncertain-runs-its-priority-lane-only",
             ),
             pytest.param(
@@ -326,7 +332,7 @@ class TestStorePostCommit:
         ("failures", "ran", "error"),
         [
             pytest.param({}, ["job.priority", "job.publish", "job.plain"], None, id="both-commit"),
-            pytest.param({AUDIT: _Refused()}, [], StoresNotCommitted, id="joined-rolls-back"),
+            pytest.param({AUDIT: _Refused()}, [], StoresNotCommittedError, id="joined-rolls-back"),
         ],
     )
     async def test_a_dispatch_runs_only_if_every_store_of_its_execution_committed(
@@ -350,7 +356,7 @@ class TestStorePostCommit:
     @pytest.mark.parametrize(
         ("failing", "bumped", "error"),
         [
-            pytest.param(DEFAULT_STORE, True, StoresNotCommitted, id="audit-committed"),
+            pytest.param(DEFAULT_STORE, True, StoresNotCommittedError, id="audit-committed"),
             pytest.param(AUDIT, False, _Refused, id="audit-rolled-back"),
         ],
     )
@@ -358,7 +364,7 @@ class TestStorePostCommit:
         self, stores: _Stores, failing: StoreKey, bumped: bool, error: type[BaseException]
     ) -> None:
         FAILURES[failing] = _Refused()
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         cached = stores.cached_entries(backend)
         use_case = _JoinsAudit(cached, stores.write_entry(cached), stores.write_order())
 
@@ -370,7 +376,7 @@ class TestStorePostCommit:
     async def test_a_unit_of_work_entered_by_hand_bumps_once_it_committed(
         self, stores: _Stores
     ) -> None:
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         cached = stores.cached_entries(backend)
 
         async with SQLAlchemyUnitOfWork(stores.audit):
@@ -383,7 +389,7 @@ class TestStorePostCommit:
         self, stores: _Stores
     ) -> None:
         """T099 P4: a write outside the invocation commits at once; its bump must not wait."""
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         cached = stores.cached_entries(backend)
 
         async def durable() -> None:
@@ -411,7 +417,7 @@ class TestStorePostCommit:
             pytest.param(
                 CommitUncertain(ConnectionError("ack lost")),
                 ["default.priority"],
-                StoresNotCommitted,
+                StoresNotCommittedError,
                 id="uncertain-runs-its-priority-lane-only",
             ),
         ],
@@ -483,7 +489,7 @@ class TestStorePostCommit:
             stores.write_order(), spawn, stores.run(_OnAudit(stores.write_entry()))
         )
 
-        with pytest.raises(StoresNotCommitted):
+        with pytest.raises(StoresNotCommittedError):
             await stores.executor.execute(use_case)
         await left_running[0]
 
@@ -530,7 +536,7 @@ class TestStorePostCommit:
         ids: list[str] = []
 
         async def dispatch() -> None:
-            ids.append(service.dispatch(EmailJob).job_id)
+            ids.append(service.dispatch_after_commit(EmailJob).job_id)
 
         use_case = _OnDefault(
             stores.write_order(), dispatch, stores.run(_OnAudit(stores.write_entry(), dispatch))
@@ -540,13 +546,13 @@ class TestStorePostCommit:
 
         assert client.batches == [(SQS_URL, [ids[0]]), (SQS_URL, [ids[1]])]
 
-    async def test_a_failing_metrics_adapter_does_not_skip_the_actions(
+    async def test_a_failing_execution_observer_does_not_skip_the_actions(
         self, stores: _Stores
     ) -> None:
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(),
             coordinator=OrderedCommits({DEFAULT_STORE: _Sql(stores.default)}),
-            metrics=_FailsWhenDone(),
+            execution_observer=_FailsWhenDone(),
         )
         use_case = _OnDefault(stores.write_order(), stores.queue("default"))
 
@@ -559,7 +565,7 @@ class TestStorePostCommit:
     async def test_one_store_without_transactions_in_a_failed_invocation_runs_its_priority_lane(
         self, stores: _Stores, failure: Step
     ) -> None:
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: _NoTransactions()})
         )
         use_case = _OnDefault(stores.queue("default"), stores.gathered(), failure)
@@ -588,12 +594,11 @@ class TestStorePostCommit:
             stores.write_order(), stores.run(_OnAudit(stores.write_entry(), send))
         )
 
-        with pytest.raises(StoresNotCommitted):
+        with pytest.raises(StoresNotCommittedError):
             await stores.executor.execute(use_case)
 
-        (fields,) = [
-            record.msg
-            for record in caplog.records
-            if isinstance(record.msg, dict) and record.msg.get("event") == _NEVER_RAN
-        ]
-        assert (fields["job_name"], fields["task_id"]) == ("EmailJob", "task-1")
+        (fields,) = CapturedLog(caplog).named(_NEVER_RAN)
+        assert (fields[PostCommitKey.SENT_JOB], fields[PostCommitKey.SENT_TASK_ID]) == (
+            "EmailJob",
+            "task-1",
+        )

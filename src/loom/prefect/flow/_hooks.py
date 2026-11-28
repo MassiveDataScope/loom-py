@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Iterable
 from typing import Any
 
 from loom.core.config.errors import ConfigError
 from loom.core.environment import resolve_environment
-from loom.core.logger import get_logger
 from loom.prefect._async import run_sync
 from loom.prefect._summary import get_run_summary
+from loom.prefect.event import PrefectEvent, PrefectKey
 from loom.prefect.notify import Notifier, NotifyEvent
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 def pause_schedule_on_failure(flow: Any, flow_run: Any, state: Any) -> None:  # noqa: ARG001
@@ -23,6 +24,7 @@ def pause_schedule_on_failure(flow: Any, flow_run: Any, state: Any) -> None:  # 
     if not deployment_id:
         return
 
+    fields: dict[str, object] = {PrefectKey.DEPLOYMENT: str(deployment_id)}
     try:
         from prefect.client.orchestration import get_client  # noqa: PLC0415
 
@@ -33,9 +35,9 @@ def pause_schedule_on_failure(flow: Any, flow_run: Any, state: Any) -> None:  # 
                     await client.update_deployment_schedule(deployment_id, sched.id, active=False)
 
         run_sync(_pause())
-        _log.warning("pause-on-failure: deactivated schedules", deployment_id=str(deployment_id))
+        _log.warning(PrefectEvent.SCHEDULES_PAUSED, extra=fields)
     except Exception:  # noqa: BLE001
-        _log.warning("pause-on-failure hook failed", exc_info=True)
+        _log.warning(PrefectEvent.SCHEDULES_PAUSE_FAILED, extra=fields, exc_info=True)
 
 
 def make_notification_hooks(
@@ -49,25 +51,22 @@ def make_notification_hooks(
 
     def _dispatch(state_name: str) -> Any:
         def _hook(flow: Any, flow_run: Any, state: Any) -> None:  # noqa: ARG001
-            del flow  # NOSONAR S1172
-            event = _event_from_run(flow_name, flow_run, state, state_name)
+            del flow, state  # NOSONAR S1172
+            event = _event_from_run(flow_name, flow_run, state_name)
             for n in notifiers_tuple:
                 try:
                     n.notify(event)
                 except Exception:  # noqa: BLE001
-                    _log.warning("notifier raised — swallowed", exc_info=True)
+                    _log.warning(
+                        PrefectEvent.NOTIFICATION_FAILED, extra=event.log_fields(), exc_info=True
+                    )
 
         return _hook
 
     return [_dispatch("Failed")], [_dispatch("Completed")]
 
 
-def _event_from_run(
-    flow_name: str,
-    flow_run: Any,
-    state: Any,
-    state_name: str,
-) -> NotifyEvent:
+def _event_from_run(flow_name: str, flow_run: Any, state_name: str) -> NotifyEvent:
     return NotifyEvent(
         flow_name=flow_name,
         flow_run_name=getattr(flow_run, "name", "") or "",
@@ -76,7 +75,7 @@ def _event_from_run(
         correlation_id=_correlation_from_params(flow_run),
         duration_seconds=_duration_from_run(flow_run),
         env=_env_from_params(flow_run),
-        message=getattr(state, "message", None) or get_run_summary(),
+        message=get_run_summary(),
     )
 
 

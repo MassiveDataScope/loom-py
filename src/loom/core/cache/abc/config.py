@@ -4,6 +4,7 @@ from typing import Any
 
 import msgspec
 
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import RedactedMap
 
@@ -106,11 +107,11 @@ class CacheConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fi
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.ttl_jitter < 1.0:
-            msg = f"ttl_jitter must be in [0, 1), got {self.ttl_jitter}"
-            raise ValueError(msg)
+            msg = "ttl_jitter must be in [0, 1)"
+            raise InvalidValue(msg)
         for name, bound in (("max_size", self.max_size), ("max_bytes", self.max_bytes)):
             if bound is not None and bound < 1:
-                raise ValueError(f"{name} must be at least 1, got {bound}")
+                raise InvalidValue(f"{name} must be at least 1")
 
     @property
     def effective_counter_alias(self) -> str:

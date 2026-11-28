@@ -48,13 +48,6 @@ class ProducerBackendStub:
         self.flush_calls.append(timeout)
 
 
-class FakeDeliveryError:
-    """Fake delivery error emitted by the producer callback."""
-
-    def __str__(self) -> str:
-        return "delivery-boom"
-
-
 class FakeKafkaMessage:
     """Kafka-like message returned by the raw consumer stub."""
 

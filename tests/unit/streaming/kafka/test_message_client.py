@@ -7,7 +7,7 @@ from confluent_kafka import TopicPartition
 from prometheus_client import CollectorRegistry, generate_latest
 
 from loom.core.observability.event import LifecycleEvent
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.prometheus import KafkaPrometheusMetrics
 from loom.streaming.kafka import (
     KafkaDeserializationError,
@@ -171,7 +171,7 @@ class TestKafkaMessageProducer:
         producer = KafkaMessageProducer(
             raw=raw_producer_stub,
             codec=order_created_codec,
-            obs=ObservabilityRuntime([kafka_metrics]),
+            obs=Observability([kafka_metrics]),
         )
 
         producer.send(
@@ -199,7 +199,7 @@ class TestKafkaMessageProducer:
         producer = KafkaMessageProducer(
             raw=raw_producer_stub,
             codec=order_created_codec,
-            obs=ObservabilityRuntime([_RecordingObserver()]),
+            obs=Observability([_RecordingObserver()]),
         )
 
         producer.send(
@@ -273,7 +273,7 @@ class TestKafkaMessageConsumer:
             raw=raw_consumer_stub,
             codec=order_created_codec,
             payload_type=OrderCreated,
-            obs=ObservabilityRuntime([_RecordingObserver()]),
+            obs=Observability([_RecordingObserver()]),
         )
 
         record = consumer.poll(100)
@@ -379,7 +379,7 @@ class TestKafkaMessageConsumer:
             raw=raw_consumer_stub,
             codec=order_created_codec,
             payload_type=OrderCreated,
-            obs=ObservabilityRuntime([kafka_metrics]),
+            obs=Observability([kafka_metrics]),
         )
 
         consumer.poll(100)
@@ -399,7 +399,7 @@ class TestKafkaMessageConsumer:
             raw=raw_consumer_stub,
             codec=order_created_codec,
             payload_type=OrderCreated,
-            obs=ObservabilityRuntime([kafka_metrics]),
+            obs=Observability([kafka_metrics]),
         )
 
         with pytest.raises(KafkaDeserializationError):

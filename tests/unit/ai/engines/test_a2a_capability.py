@@ -29,12 +29,13 @@ from loom.ai.abc import AgentEngine
 from loom.ai.compiler._plan import AgentPlan, CompiledA2ACapability
 from loom.ai.config import AiConfig
 from loom.ai.declarative import PolicySpec
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, _a2a, _capabilities
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, _a2a, _capabilities
 from loom.ai.engines.pydantic_ai._mcp import SharedMcpToolsets
 from loom.ai.engines.pydantic_ai.extras import a2a as a2a_island
 from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunErrorCode
+from loom.ai.execution import AgentHost, AgentRunError
 from loom.ai.inference import InferenceTarget
-from loom.ai.runtime import AgentRunError, AgentRuntime
+from loom.core.config.errors import ConfigError
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import ANONYMOUS, Identity
@@ -166,7 +167,7 @@ def build_engine(
     deps: object | None = None,
 ) -> AgentEngine:
     """Build the real adapter for a plan granting a remote agent."""
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model.as_model())
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model.as_model())
     plan = make_plan(capabilities, tool_timeout_ms=tool_timeout_ms)
     return provider.create_engine(
         plan,
@@ -329,7 +330,7 @@ class TestGovernedDelegation:
 
 
 class StubEngineProvider:
-    """Engine provider the runtime never reaches: start-up fails before it."""
+    """Engine provider the host never reaches: start-up fails before it."""
 
     def create_engine(self, plan: object, *, deps: object, container: object) -> AgentEngine:
         """Fail loudly: no test here gets as far as building an engine."""
@@ -340,12 +341,12 @@ class StubEngineProvider:
         return frozenset({"a2a"})
 
 
-def make_runtime(plan: AgentPlan) -> AgentRuntime:
-    """Build a runtime whose only live dependency is the remote agent."""
-    return AgentRuntime(
+def make_runtime(plan: AgentPlan) -> AgentHost:
+    """Build a host whose only live dependency is the remote agent."""
+    return AgentHost(
         plans=[plan],
         config=AiConfig(engine="pydantic-ai", specs=(), models={}, startup_timeout_ms=5000),
-        engine_provider=StubEngineProvider(),  # type: ignore[arg-type]
+        engine_plugin=StubEngineProvider(),  # type: ignore[arg-type]
         deps=CapabilityDepsFactory(),  # type: ignore[arg-type]
         container=LoomContainer(),
         a2a_client_factory=_a2a.create_a2a_client,
@@ -357,10 +358,10 @@ class TestStartupFactory:
         self,
     ) -> None:
         """An unreachable card fails start-up with the coded issue (FR-040)."""
-        runtime = make_runtime(make_plan((a2a_capability(url=UNREACHABLE_URL),)))
+        host = make_runtime(make_plan((a2a_capability(url=UNREACHABLE_URL),)))
 
         with pytest.raises(AgentCompilationError) as failure:
-            async with runtime:
+            async with host:
                 pass  # pragma: no cover - start-up never completes
 
         issue = failure.value.issues[0]
@@ -375,7 +376,7 @@ class TestStartupFactory:
         card = _card_with_skills("pricing")
         capability = a2a_capability(include=("forecast",))
 
-        with pytest.raises(ValueError, match="forecast"):
+        with pytest.raises(ConfigError, match="forecast"):
             a2a_island._reject_ungranted_card(capability, card)
 
     def test_the_error_names_nothing_from_the_card_when_the_filter_does_not_match(self) -> None:
@@ -383,7 +384,7 @@ class TestStartupFactory:
         card = _card_with_skills("ignore-previous-instructions")
         capability = a2a_capability(include=("forecast",))
 
-        with pytest.raises(ValueError) as failure:
+        with pytest.raises(ConfigError) as failure:
             a2a_island._reject_ungranted_card(capability, card)
 
         assert "ignore-previous-instructions" not in str(failure.value)
@@ -393,7 +394,7 @@ class TestStartupFactory:
         card = _card_with_skills("pricing", "forecast")
         capability = a2a_capability(exclude=("*",))
 
-        with pytest.raises(ValueError, match="no skill matching the granted filter"):
+        with pytest.raises(ConfigError, match="no skill matching the granted filter"):
             a2a_island._reject_ungranted_card(capability, card)
 
     def test_the_card_is_accepted_when_a_granted_glob_selects_a_subset(self) -> None:

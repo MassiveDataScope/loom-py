@@ -51,24 +51,16 @@ def _malformed_cursors(issued: str) -> dict[str, str]:
 
 
 class TestFastapiAppIntegration:
-    @pytest.mark.parametrize(
-        "config_relpath",
-        [
-            "tests/integration/fake_repo/config/conf.modules.yaml",
-            "tests/integration/fake_repo/config/conf.manifest.yaml",
-        ],
-    )
     def test_fake_repo_app_bootstrap_without_metrics(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        config_relpath: str,
     ) -> None:
         db_path = tmp_path / "fake-repo-app.sqlite"
         database_url = f"sqlite+aiosqlite:///{db_path}"
         monkeypatch.setenv("LOOM_TEST_DATABASE_URL", database_url)
 
-        config_path = Path(config_relpath)
+        config_path = Path("tests/integration/fake_repo/config/conf.packages.yaml")
         app = create_app_from_config(
             str(config_path),
         )
@@ -127,7 +119,7 @@ class TestFastapiAppIntegration:
         database_url = f"sqlite+aiosqlite:///{db_path}"
         monkeypatch.setenv("LOOM_TEST_DATABASE_URL", database_url)
 
-        config_path = Path("tests/integration/fake_repo/config/conf.interfaces.yaml")
+        config_path = Path("tests/integration/fake_repo/config/conf.metrics.yaml")
         registry = prometheus_client.CollectorRegistry()
         app = create_app_from_config(str(config_path), metrics_registry=registry)
 
@@ -181,24 +173,16 @@ class TestFastapiAppIntegration:
             metrics_trailing_slash_response = client.get("/metrics/")
             assert metrics_trailing_slash_response.status_code == 404
 
-    @pytest.mark.parametrize(
-        "config_relpath",
-        [
-            "tests/integration/fake_repo/config/conf.modules.yaml",
-            "tests/integration/fake_repo/config/conf.manifest.yaml",
-        ],
-    )
     def test_fake_repo_list_query_cursor_and_profile_controls(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        config_relpath: str,
     ) -> None:
         db_path = tmp_path / "fake-repo-query.sqlite"
         database_url = f"sqlite+aiosqlite:///{db_path}"
         monkeypatch.setenv("LOOM_TEST_DATABASE_URL", database_url)
 
-        app = create_app_from_config(config_relpath)
+        app = create_app_from_config("tests/integration/fake_repo/config/conf.packages.yaml")
         with TestClient(app) as client:
             assert client.post("/products/", json={"name": "a", "price": 10.0}).status_code == 201
             assert client.post("/products/", json={"name": "b", "price": 20.0}).status_code == 201
@@ -255,7 +239,7 @@ class TestFastapiAppIntegration:
         monkeypatch.setenv(
             "LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'sort.sqlite'}"
         )
-        app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+        app = create_app_from_config("tests/integration/fake_repo/config/conf.packages.yaml")
         with TestClient(app) as client:
             assert (
                 client.post("/products/", json={"name": "s3cr3t", "price": 1.0}).status_code == 201
@@ -278,7 +262,7 @@ class TestFastapiAppIntegration:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'c.sqlite'}")
-        app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+        app = create_app_from_config("tests/integration/fake_repo/config/conf.packages.yaml")
 
         with TestClient(app, raise_server_exceptions=False) as client:
             for name in ("a", "b", "c"):
@@ -307,7 +291,7 @@ class TestFastapiAppIntegration:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 's.sqlite'}")
-        app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+        app = create_app_from_config("tests/integration/fake_repo/config/conf.packages.yaml")
         by_price = "/products/?pagination=cursor&limit=1&sort=price&direction=ASC"
 
         with TestClient(app, raise_server_exceptions=False) as client:
@@ -339,8 +323,8 @@ class TestFastapiAppIntegration:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, position: dict[str, object]
     ) -> None:
         monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 't.sqlite'}")
-        monkeypatch.setenv("LOOM__PERSISTENCE__CURSORS__SIGNING", "unsigned")
-        app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+        monkeypatch.setenv("LOOM__STORES__SETTINGS__CURSORS__SIGNING", "unsigned")
+        app = create_app_from_config("tests/integration/fake_repo/config/conf.packages.yaml")
 
         with TestClient(app, raise_server_exceptions=False) as client:
             for name in ("a", "b", "c"):
@@ -362,7 +346,7 @@ class TestFastapiAppIntegration:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parameter: str
     ) -> None:
         monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'e.sqlite'}")
-        app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+        app = create_app_from_config("tests/integration/fake_repo/config/conf.packages.yaml")
 
         with TestClient(app, raise_server_exceptions=False) as client:
             assert client.post("/products/", json={"name": "a", "price": 1.0}).status_code == 201
@@ -375,7 +359,7 @@ class TestFastapiAppIntegration:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("LOOM_TEST_DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'w.sqlite'}")
-        app = create_app_from_config("tests/integration/fake_repo/config/conf.modules.yaml")
+        app = create_app_from_config("tests/integration/fake_repo/config/conf.packages.yaml")
 
         with TestClient(app, raise_server_exceptions=False) as client:
             for name in ("a", "b", "c"):

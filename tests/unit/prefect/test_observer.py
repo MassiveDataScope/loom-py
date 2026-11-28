@@ -1,26 +1,18 @@
-"""Tests for loom.prefect._observer.PrefectObserver.
-
-Verifies:
-- PrefectObserver implements the LifecycleObserver protocol (has on_event).
-- on_event() does NOT raise when called outside a Prefect context.
-- on_event() logs the event when called inside a Prefect context
-  (prefect.get_run_logger is patched to return a mock logger).
-- on_event() falls back to stdlib logging when get_run_logger raises.
-- All LifecycleEvent kinds (START, END, ERROR) are handled without raising.
-"""
+"""PrefectObserver writes loom's lifecycle records and the pipeline summary artifact."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import logging
 
-from prefect.exceptions import MissingContextError
+import prefect.artifacts
+import pytest
 
+from loom.core.observability.diagnostic import ObservabilityEvent
 from loom.core.observability.event import LifecycleEvent, LifecycleStatus, Scope
 from loom.prefect.observer import PrefectObserver
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+_STDLIB_LOGGER = "loom.core.observability.observer.log"
+_RUN_LOGGER = "prefect.flow_runs"
 
 
 def _start_event(name: str = "MyPipeline") -> LifecycleEvent:
@@ -50,126 +42,79 @@ def _error_event(name: str = "MyStep") -> LifecycleEvent:
         trace_id="trace-1",
         correlation_id="corr-1",
         duration_ms=5.0,
-        error="something went wrong",
+        error=ValueError(),
     )
 
 
+def _records(caplog: pytest.LogCaptureFixture, logger_name: str) -> list[tuple[int, str]]:
+    return [
+        (record.levelno, record.message) for record in caplog.records if record.name == logger_name
+    ]
+
+
 class TestPrefectObserver:
-    # ---------------------------------------------------------------------------
-    # Construction
-    # ---------------------------------------------------------------------------
-
-    def test_can_be_instantiated(self) -> None:
-        """PrefectObserver can be constructed without arguments."""
+    @pytest.mark.parametrize(
+        ("event", "level", "message"),
+        [
+            (_start_event(), logging.INFO, ObservabilityEvent.LIFECYCLE_STARTED),
+            (_end_event(), logging.INFO, ObservabilityEvent.LIFECYCLE_ENDED),
+            (_error_event(), logging.ERROR, ObservabilityEvent.LIFECYCLE_FAILED),
+            (
+                LifecycleEvent.start(scope=Scope.STEP, name="TransformStep"),
+                logging.DEBUG,
+                ObservabilityEvent.LIFECYCLE_STARTED,
+            ),
+            (
+                LifecycleEvent.end(
+                    scope=Scope.STEP,
+                    name="TransformStep",
+                    duration_ms=10.0,
+                    status=LifecycleStatus.SUCCESS,
+                ),
+                logging.INFO,
+                ObservabilityEvent.LIFECYCLE_ENDED,
+            ),
+        ],
+        ids=["pipeline-start", "pipeline-end", "step-error", "step-start", "step-end"],
+    )
+    def test_on_event_logs_on_the_stdlib_logger_outside_a_run(
+        self,
+        event: LifecycleEvent,
+        level: int,
+        message: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Each lifecycle kind is logged on the stdlib logger when no run is active."""
+        caplog.set_level(logging.DEBUG)
         observer = PrefectObserver()
-        assert observer is not None
 
-    def test_has_on_event_method(self) -> None:
-        """PrefectObserver exposes an on_event method."""
-        observer = PrefectObserver()
-        assert callable(getattr(observer, "on_event", None))
+        observer.on_event(event)
 
-    # ---------------------------------------------------------------------------
-    # No-raise guarantee outside Prefect context
-    # ---------------------------------------------------------------------------
+        assert _records(caplog, _STDLIB_LOGGER) == [(level, message)]
+        assert _records(caplog, _RUN_LOGGER) == []
 
-    def test_on_event_does_not_raise_outside_prefect_context(self) -> None:
-        """on_event must not raise even when no Prefect run context is active."""
-        observer = PrefectObserver()
-        # Simulate missing Prefect context by making get_run_logger raise
-        with patch(
-            "prefect.get_run_logger",
-            side_effect=MissingContextError("No active flow run context"),
-        ):
-            # None of these must raise
-            observer.on_event(_start_event())
-            observer.on_event(_end_event())
-            observer.on_event(_error_event())
+    def test_inside_a_run_the_event_is_the_loom_record_not_a_run_logger_line(
+        self, prefect_run_context: None, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
 
-    def test_on_event_start_does_not_raise(self) -> None:
-        """START events are handled without error (no Prefect context mocked)."""
-        observer = PrefectObserver()
-        with patch("prefect.get_run_logger", side_effect=MissingContextError("no context")):
-            observer.on_event(_start_event())  # must not raise
+        PrefectObserver().on_event(_error_event("FailedStep"))
 
-    def test_on_event_end_does_not_raise(self) -> None:
-        """END events are handled without error."""
-        observer = PrefectObserver()
-        with patch("prefect.get_run_logger", side_effect=MissingContextError("no context")):
-            observer.on_event(_end_event())
+        assert _records(caplog, _STDLIB_LOGGER) == [
+            (logging.ERROR, ObservabilityEvent.LIFECYCLE_FAILED)
+        ]
+        assert _records(caplog, _RUN_LOGGER) == []
 
-    def test_on_event_error_does_not_raise(self) -> None:
-        """ERROR events are handled without error."""
-        observer = PrefectObserver()
-        with patch("prefect.get_run_logger", side_effect=MissingContextError("no context")):
-            observer.on_event(_error_event())
-
-    # ---------------------------------------------------------------------------
-    # With Prefect context active (mocked logger)
-    # ---------------------------------------------------------------------------
-
-    def test_on_event_uses_prefect_logger_when_available(self) -> None:
-        """on_event calls the Prefect run logger when a context is active."""
-        mock_logger = MagicMock()
-
-        observer = PrefectObserver()
-        with patch("prefect.get_run_logger", return_value=mock_logger):
-            observer.on_event(_start_event("SomePipeline"))
-
-        # The logger must have been called at least once with some message
-        assert mock_logger.info.called or mock_logger.debug.called or mock_logger.warning.called
-
-    def test_on_event_logs_error_kind_with_error_level(self) -> None:
-        """ERROR events should trigger a warning or error log when logger is available."""
-        mock_logger = MagicMock()
-
-        observer = PrefectObserver()
-        with patch("prefect.get_run_logger", return_value=mock_logger):
-            observer.on_event(_error_event("FailedStep"))
-
-        any_error_log = (
-            mock_logger.error.called or mock_logger.warning.called or mock_logger.exception.called
+    def test_a_pipeline_end_inside_a_flow_run_publishes_its_summary_artifact(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        published: list[dict[str, str]] = []
+        monkeypatch.setenv("PREFECT__FLOW_RUN_ID", "0b6c2f0e-6f43-4a39-9d4c-1d1e2f3a4b5c")
+        monkeypatch.setattr(
+            prefect.artifacts, "create_markdown_artifact", lambda **kw: published.append(kw)
         )
-        assert any_error_log, "ERROR events should produce a warning/error log entry"
 
-    # ---------------------------------------------------------------------------
-    # Step-scoped events
-    # ---------------------------------------------------------------------------
+        PrefectObserver().on_event(_end_event("Nightly"))
 
-    def test_on_event_handles_step_start(self) -> None:
-        """STEP START events are handled without raising."""
-        observer = PrefectObserver()
-        event = LifecycleEvent.start(scope=Scope.STEP, name="TransformStep")
-        with patch("prefect.get_run_logger", side_effect=MissingContextError):
-            observer.on_event(event)
-
-    def test_on_event_handles_step_end(self) -> None:
-        """STEP END events are handled without raising."""
-        observer = PrefectObserver()
-        event = LifecycleEvent.end(
-            scope=Scope.STEP,
-            name="TransformStep",
-            duration_ms=10.0,
-            status=LifecycleStatus.SUCCESS,
-        )
-        with patch("prefect.get_run_logger", side_effect=MissingContextError):
-            observer.on_event(event)
-
-    # ---------------------------------------------------------------------------
-    # Fallback to stdlib logging
-    # ---------------------------------------------------------------------------
-
-    def test_on_event_falls_back_to_stdlib_logging(self) -> None:
-        """on_event uses logging.getLogger() fallback when Prefect logger unavailable."""
-        observer = PrefectObserver()
-
-        with (
-            patch("prefect.get_run_logger", side_effect=MissingContextError("no context")),
-            patch("logging.getLogger") as mock_get_logger,
-        ):
-            mock_std_logger = MagicMock()
-            mock_get_logger.return_value = mock_std_logger
-            observer.on_event(_start_event())
-
-    # Either Prefect or stdlib logger was used — no exception is the key guarantee.
-    # We only verify the observer didn't raise.
+        summary = "## Nightly\n\n- Status: success\n- Duration: 123.0ms\n"
+        assert published == [{"key": "pipeline-summary", "markdown": summary}]

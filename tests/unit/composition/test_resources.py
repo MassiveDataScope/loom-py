@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 
-from loom.composition.resources import Resource, ResourceKind
+from loom.core.resources import Resource, ResourceKind
 
 
 def _store(readiness_key: str = "") -> Resource:

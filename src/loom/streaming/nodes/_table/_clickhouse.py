@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Sequence
 from time import monotonic
@@ -10,13 +11,17 @@ from uuid import uuid4
 
 import msgspec
 
+from loom.connections.clickhouse.client import build_clickhouse_client
 from loom.core.connections import ClickHouseConnection
-from loom.core.connections.clickhouse.client import build_clickhouse_client
+from loom.core.log_names import LogField
+from loom.streaming.event import StreamingEvent, StreamingKey
 from loom.streaming.nodes._table.common import (
     ClickHouseSinkConfig,
     _column_names,
     _set_column_values,
 )
+
+_log = logging.getLogger(__name__)
 
 
 def _to_ch_row(item: Any, column_names: list[str], target: str) -> list[Any]:
@@ -93,10 +98,8 @@ class _ClickHouseTablePartition:
         self,
         settings: ClickHouseSinkConfig,
         payload_type: type[Any],
-        logger: Any = None,
     ) -> None:
         self._client = build_clickhouse_client(_bounded(settings))
-        self._logger = logger
         self._table = settings.table
         self._target = f"ClickHouse table {settings.table!r}"
         self._column_names = _column_names(payload_type)
@@ -179,26 +182,23 @@ class _ClickHouseTablePartition:
                 column_oriented=True,
             )
         except Exception:
-            if self._logger is not None:
-                self._logger.error(
-                    "sink_flush_error",
-                    backend="clickhouse",
-                    table=self._table,
-                    records=n,
-                )
+            _log.error(
+                StreamingEvent.SINK_FLUSH_FAILED,
+                extra={StreamingKey.TARGET: self._table, StreamingKey.RECORDS: n},
+            )
             raise
         self._buffer = [[] for _ in self._column_names]
         self._buffer_records = 0
         self._buffer_bytes = 0
         self._buffer_started_at = None
-        if self._logger is not None:
-            self._logger.info(
-                "sink_flush",
-                trace_id=trace_id,
-                correlation_id=correlation_id,
-                backend="clickhouse",
-                table=self._table,
-                records=n,
-                duration_ms=round((monotonic() - t0) * 1000, 1),
-            )
+        _log.info(
+            StreamingEvent.SINK_FLUSHED,
+            extra={
+                LogField.TRACE_ID: trace_id,
+                LogField.CORRELATION_ID: correlation_id,
+                StreamingKey.TARGET: self._table,
+                StreamingKey.RECORDS: n,
+                LogField.DURATION_MS: round((monotonic() - t0) * 1000, 1),
+            },
+        )
         return n

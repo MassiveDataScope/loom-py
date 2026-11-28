@@ -10,27 +10,37 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from loom.celery.service import CeleryJobService
-from loom.core import _async
+from loom.core import concurrency
 from loom.core.engine import post_commit
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.post_commit import PostCommitChannel, active_channel
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.engine.post_commit import (
+    ActionSubject,
+    PostCommitChannel,
+    PostCommitEvent,
+    PostCommitKey,
+    active_channel,
+)
 from loom.core.errors import PostCommitError
 from loom.core.job.context import add_pending_dispatch, flush_pending_dispatches
 from loom.core.job.job import Job
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.uow.coordinator import OrderedCommits
+from loom.core.log_names import LogField
+from loom.core.logger import log_context
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
+from tests.helpers.jobs import CeleryServiceFixture
+from tests.helpers.loggers import CapturedLog, CapturingHandler
 
 from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 pytestmark = pytest.mark.timeout(3)
 
-_DROPPED = "PostCommitPlainActionsDropped"
-_FAILED = "PostCommitActionFailedAfterInterruption"
-_NEVER_RAN = "PostCommitShieldedActionNeverRan"
+_DROPPED = PostCommitEvent.PLAIN_ACTIONS_DROPPED
+_FAILED = PostCommitEvent.ACTION_FAILED
+_NEVER_RAN = PostCommitEvent.SHIELDED_ACTION_NEVER_RAN
 _COMMITTED = "uow.commit"
+_ERROR = ConnectionError("broker down")
 
 
 class _Gate:
@@ -74,8 +84,15 @@ class _Send:
         if self._error is not None:
             raise self._error
 
-    def log_fields(self) -> tuple[dict[str, object]]:
-        return ({"job_name": self.task_name, "task_id": self.task_id},)
+    def subjects(self) -> tuple[ActionSubject]:
+        return (ActionSubject(job=self.task_name, task_id=self.task_id),)
+
+
+_SENT = {PostCommitKey.SENT_JOB: _Send.task_name, PostCommitKey.SENT_TASK_ID: _Send.task_id}
+
+
+def _plain() -> None:
+    raise _ERROR
 
 
 @pytest.fixture
@@ -98,11 +115,7 @@ def logged() -> Iterator[Callable[[str], asyncio.Event]]:
 
 def _event(caplog: pytest.LogCaptureFixture, name: str) -> dict[str, Any]:
     """The structured fields of the one post-commit log record named *name*."""
-    (fields,) = [
-        record.msg
-        for record in caplog.records
-        if isinstance(record.msg, dict) and record.msg.get("event") == name
-    ]
+    (fields,) = CapturedLog(caplog).named(name)
     return fields
 
 
@@ -113,7 +126,7 @@ async def _cancelled(task: asyncio.Task[Any]) -> None:
 
 
 class _DispatchAfterCommit(UseCase[Any, None]):
-    def __init__(self, service: CeleryJobService, bump: _Gate) -> None:
+    def __init__(self, service: CeleryServiceFixture, bump: _Gate) -> None:
         self.service = service
         self.bump = bump
 
@@ -121,7 +134,7 @@ class _DispatchAfterCommit(UseCase[Any, None]):
         channel = active_channel()
         assert channel is not None
         channel.enqueue_priority(self.bump)
-        self.service.dispatch(_EmailJob)
+        self.service.dispatch_after_commit(_EmailJob)
 
 
 class _InlineAfterCommit(UseCase[Any, None]):
@@ -161,12 +174,12 @@ class TestPostCommitPublish:
         app.send_task.side_effect = lambda *_, **__: sent.set()
         bump = _Gate()
         log = Log()
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(),
             coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(log)}),
         )
         task = asyncio.create_task(
-            executor.execute(_DispatchAfterCommit(CeleryJobService(app), bump))
+            executor.execute(_DispatchAfterCommit(CeleryServiceFixture(app), bump))
         )
         await bump.started.wait()
         assert _COMMITTED in log.entries
@@ -222,7 +235,7 @@ class TestPostCommitPublish:
         hang = _Hang()
         calls: list[str] = []
         log = Log()
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(),
             coordinator=OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(log)}),
         )
@@ -234,7 +247,7 @@ class TestPostCommitPublish:
         await hang.cancelled.wait()
 
         assert calls == []
-        assert {"event": _DROPPED, "count": 1}.items() <= _event(caplog, _DROPPED).items()
+        assert {PostCommitKey.DROPPED_ACTIONS: 1}.items() <= _event(caplog, _DROPPED).items()
 
     @pytest.mark.parametrize(
         ("requeue", "ran_later", "warned"),
@@ -277,8 +290,8 @@ class TestPostCommitPublish:
         await failure_logged.wait()
 
         fields = _event(caplog, _FAILED)
-        assert (fields["job_name"], fields["task_id"]) == (_Send.task_name, _Send.task_id)
-        assert "broker down" in fields["error"]
+        assert {**_SENT, PostCommitKey.INTERRUPTED: True}.items() <= fields.items()
+        assert CapturedLog(caplog).exception_types(_FAILED) == [ConnectionError]
 
     async def test_sends_a_dead_shield_never_ran_are_logged(
         self, caplog: pytest.LogCaptureFixture, logged: Callable[[str], asyncio.Event]
@@ -292,11 +305,11 @@ class TestPostCommitPublish:
         await hang.started.wait()
         await _cancelled(task)
 
-        for shielded in list(_async._held):  # what closing the loop does
+        for shielded in list(concurrency._held):  # what closing the loop does
             shielded.cancel()
         await never_ran.wait()
 
-        assert _event(caplog, _NEVER_RAN)["task_id"] == _Send.task_id
+        assert _event(caplog, _NEVER_RAN)[PostCommitKey.SENT_TASK_ID] == _Send.task_id
 
     async def test_without_a_cancellation_one_error_carries_every_failure_by_lane(self) -> None:
         channel = PostCommitChannel()
@@ -314,20 +327,23 @@ class TestPostCommitPublish:
         assert info.value.committed is True
         assert info.value.failures == tuple(errors)
 
-    async def test_a_failure_after_a_commit_is_logged_by_job_and_task(
-        self,
-        caplog: pytest.LogCaptureFixture,
+    async def test_a_failure_after_a_commit_is_logged_by_what_it_sent_under_the_running_job(
+        self, caplog: pytest.LogCaptureFixture, rendering: CapturingHandler
     ) -> None:
+        running = {LogField.JOB: "Outer", LogField.TASK_ID: "t0"}
         channel = PostCommitChannel()
-        channel.enqueue_publish(_Send(ConnectionError("broker down")))
-        drained = channel.drain(committed=True)
+        channel.enqueue_publish(_Send(_ERROR))
+        channel.enqueue_publish(_plain)
 
-        with pytest.raises(PostCommitError):
-            await drained
+        with log_context(running), pytest.raises(PostCommitError):
+            await channel.drain(committed=True)
 
-        fields = _event(caplog, "PostCommitActionFailed")
-        assert (fields["job_name"], fields["task_id"]) == (_Send.task_name, _Send.task_id)
-        assert "broker down" in fields["error"]
+        named, plain = rendering.named(PostCommitEvent.ACTION_FAILED)
+        assert {**running, **_SENT, PostCommitKey.INTERRUPTED: False}.items() <= named.items()
+        assert running.items() <= plain.items()
+        assert not plain.keys() & _SENT.keys()
+        failed = CapturedLog(caplog).exception_types(PostCommitEvent.ACTION_FAILED)
+        assert failed == [ConnectionError] * 2
 
     async def test_a_publish_runs_before_an_inline_job_queued_earlier(self) -> None:
         calls: list[str] = []

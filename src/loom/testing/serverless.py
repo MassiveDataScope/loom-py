@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final, NotRequired, TypedDict
 from urllib.parse import quote_plus
 
+from loom.core.errors import InvalidValue
 from loom.core.job.envelope import encode_job_message
 from loom.jobs.aws import FIFO_SUFFIX
 from loom.testing.gateway import EventFormat, api_gateway_event
@@ -23,11 +24,23 @@ if TYPE_CHECKING:
     from loom.core.identity import Identity
     from loom.core.job.job import Job
 
-__all__ = ["EventFormat", "LambdaEvent", "QueueableEvent", "S3ObjectSpec"]
+__all__ = ["TEST_QUEUE", "EventFormat", "LambdaEvent", "QueueableEvent", "S3ObjectSpec"]
 
 _REGION: Final = "us-east-1"
 _ARN: Final = f"{_REGION}:000000000000"
+_SQS_ARN: Final = f"{_REGION}:123456789012"
+"""The region and account of the queue of an SQS test record: the account moto answers for."""
 _TIME: Final = "2026-01-01T00:00:00Z"
+
+TEST_QUEUE: Final = {
+    "url": f"https://sqs.{_REGION}.amazonaws.com/123456789012/loom-jobs",
+    "abandoned": "discard",
+}
+"""The ``sqs.queues`` entry the default queue ARN of a :class:`LambdaEvent` record names.
+
+It is the standard queue ``loom-jobs``: a record built with ``group_id`` names
+``loom-jobs.fifo``, which it does not cover; pass ``queue_arn=`` for that.
+"""
 
 
 class S3ObjectSpec(TypedDict):
@@ -62,10 +75,10 @@ class LambdaEvent(dict[str, Any]):
         """An API Gateway request; ``json_body`` is serialised and typed ``application/json``.
 
         Raises:
-            TypeError: When both ``json_body`` and ``body`` are given.
+            ValueError: When both ``json_body`` and ``body`` are given.
         """
         if json_body is not None and body is not None:
-            raise TypeError("an HTTP request takes json_body= or body=, not both")
+            raise InvalidValue("an HTTP request takes json_body= or body=, not both")
         written = {name.lower(): value for name, value in (headers or {}).items()}
         if json_body is not None:
             body = json.dumps(json_body)
@@ -85,7 +98,7 @@ class LambdaEvent(dict[str, Any]):
         group_id: str | None = None,
         queue_arn: str | None = None,
     ) -> LambdaEvent:
-        """One SQS record of the ``JobEnvelope`` ``SQSJobService`` sends for *job*."""
+        """One SQS record of the ``JobEnvelope`` ``SQSJobTransport`` sends for *job*."""
         body = encode_job_message(job, payload=payload, params=params, identity=identity).decode()
         return cls.sqs_record(body, message_id=message_id, group_id=group_id, queue_arn=queue_arn)
 
@@ -194,7 +207,9 @@ def _sqs_record(
     attributes = {"ApproximateReceiveCount": "1", "SentTimestamp": "0"}
     if group_id is not None:
         attributes["MessageGroupId"] = group_id
-    default_arn = f"arn:aws:sqs:{_ARN}:loom-jobs" + (FIFO_SUFFIX if group_id is not None else "")
+    default_arn = f"arn:aws:sqs:{_SQS_ARN}:loom-jobs" + (
+        FIFO_SUFFIX if group_id is not None else ""
+    )
     return {
         "messageId": message_id or str(uuid.uuid4()),
         "receiptHandle": "test-receipt",

@@ -22,6 +22,7 @@ Requires ``bytewax`` to be installed.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -35,8 +36,8 @@ from bytewax.operators import output as bw_output
 from bytewax.outputs import DynamicSink, StatelessSinkPartition
 
 from loom.core.async_bridge import AsyncBridge
-from loom.core.logger import get_logger
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.errors import InternalError
+from loom.core.observability.observability import Observability
 from loom.core.tracing.context import generate_trace_id
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort
 from loom.streaming.bytewax._errors import RuntimeConfigurationError
@@ -54,8 +55,10 @@ from loom.streaming.compiler._plan import (
     CompiledSource,
 )
 from loom.streaming.core._errors import ErrorKind
+from loom.streaming.core._exceptions import MissingSinkError
 from loom.streaming.core._message import Message
 from loom.streaming.core._typing import StreamPayload
+from loom.streaming.event import StreamingEvent, StreamingKey
 from loom.streaming.kafka._codec import MsgspecCodec
 from loom.streaming.kafka._record import KafkaRecord
 from loom.streaming.kafka._wire import (
@@ -67,7 +70,7 @@ from loom.streaming.kafka._wire import (
 from loom.streaming.nodes._with import With, WithAsync
 
 Stream: TypeAlias = Any
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 __all__ = ["build_dataflow", "build_dataflow_with_shutdown", "_NODE_HANDLERS"]
 
@@ -122,7 +125,7 @@ class _DropSink(DynamicSink[Any]):
 def build_dataflow(
     plan: CompiledPlan,
     *,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
     source: Any | None = None,
     sink: Any | None = None,
     terminal_sinks: Mapping[tuple[int, ...], Any] | None = None,
@@ -131,7 +134,7 @@ def build_dataflow(
     """Build a Bytewax Dataflow from a compiled plan."""
     return build_dataflow_with_shutdown(
         plan,
-        observability_runtime=observability_runtime,
+        observability=observability,
         source=source,
         sink=sink,
         terminal_sinks=terminal_sinks,
@@ -142,7 +145,7 @@ def build_dataflow(
 def build_dataflow_with_shutdown(
     plan: CompiledPlan,
     *,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
     source: Any | None = None,
     sink: Any | None = None,
     terminal_sinks: Mapping[tuple[int, ...], Any] | None = None,
@@ -154,7 +157,7 @@ def build_dataflow_with_shutdown(
 
     Args:
         plan: Compiled flow plan.
-        observability_runtime: Optional observability runtime for lifecycle events.
+        observability: Optional observability for lifecycle events.
         source: Optional Bytewax source override (used in tests).
         sink: Optional Bytewax sink override (used in tests).
         terminal_sinks: Optional per-branch sink overrides.
@@ -165,7 +168,7 @@ def build_dataflow_with_shutdown(
     """
     if terminal_sinks is None:
         terminal_sinks = build_runtime_terminal_sinks(plan.terminal_sinks, commit_tracker)
-    resolved_runtime = observability_runtime or ObservabilityRuntime.noop()
+    resolved_runtime = observability or Observability.noop()
     _bind_commit_tracker_object(source, commit_tracker, plan.source)
     _bind_commit_tracker_object(sink, commit_tracker, plan.source)
     _bind_commit_tracker_mapping(terminal_sinks, commit_tracker, plan.source)
@@ -197,9 +200,7 @@ class _SupportsCommitBind(Protocol):
 class _SupportsTerminalTracing(Protocol):
     """Runtime sink that can record the death of the messages it writes."""
 
-    def bind_terminal_tracing(
-        self, observer: ObservabilityRuntime, flow: str, flow_run_id: str
-    ) -> None:
+    def bind_terminal_tracing(self, observer: Observability, flow: str, flow_run_id: str) -> None:
         """Make this sink emit a terminal span per message it writes."""
 
 
@@ -260,11 +261,11 @@ def _delivery_field(source: CompiledSource) -> str:
     """Config key of the ``delivery`` that asked for the commit tracker.
 
     Raises:
-        TypeError: If *source* is not a Kafka source; only a Kafka source
+        InternalError: If *source* is not a Kafka source; only a Kafka source
             builds a commit tracker.
     """
     if not isinstance(source, (CompiledSingleSource, CompiledMultiSource)):
-        raise TypeError(f"Expected a Kafka compiled source, got {type(source).__name__}.")
+        raise InternalError(f"Expected a Kafka compiled source, got {type(source).__name__}.")
     return f"{source.settings_key}.delivery"
 
 
@@ -276,7 +277,7 @@ def _assemble_dataflow(plan: CompiledPlan, ctx: _BuildContext) -> Any:
     ctx.wire_flow_output(stream)
     for kind in plan.error_routes:
         if kind not in ctx.error_sinks:
-            raise RuntimeError(f"Bytewax sink is required for error route {kind.value}.")
+            raise MissingSinkError(f"Bytewax sink is required for error route {kind.value}.")
     return flow
 
 
@@ -301,7 +302,7 @@ class _BuildContext:
         self,
         plan: CompiledPlan,
         bridge: AsyncBridge | None,
-        flow_runtime: ObservabilityRuntime,
+        flow_runtime: Observability,
         flow_run_id: str,
         source: Any | None = None,
         sink: Any | None = None,
@@ -343,7 +344,7 @@ class _BuildContext:
         sink = self._runtime_sink_for(path)
         if stream is None:
             if sink is not None:
-                raise RuntimeError(
+                raise InternalError(
                     f"the output compiled for path {path} is never written: the branch "
                     "already ended the path of every message it received."
                 )
@@ -391,19 +392,21 @@ class _BuildContext:
             bw_output(f"{step_id}_{kind.value}_errors", stream, sink)
             return
         logger.warning(
-            "unrouted_error_drop_sink",
-            flow=self.plan.name,
-            kind=kind.value,
-            step_id=step_id,
+            StreamingEvent.UNROUTED_ERRORS_DROPPED,
+            extra={
+                StreamingKey.FLOW: self.plan.name,
+                StreamingKey.KIND: kind.value,
+                StreamingKey.STEP: step_id,
+            },
         )
         bw_output(f"{step_id}_{kind.value}_dropped", stream, _DropSink(self.commit_tracker))
 
     def wire_flow_output(self, stream: Any | None) -> None:
         """End the flow's live stream at the output sink, else complete it at a drop sink."""
         if self.sink is None and self.plan.output is not None:
-            raise RuntimeError("Bytewax sink is required for terminal output wiring.")
+            raise MissingSinkError("Bytewax sink is required for terminal output wiring.")
         if stream is None and self.plan.output is not None:
-            raise RuntimeError(
+            raise InternalError(
                 "flow.output is never written: the process already ended the path of every "
                 "message it received."
             )
@@ -416,7 +419,7 @@ class _BuildContext:
     def wire_decode_error(self, stream: Any) -> None:
         """Route undecodable records to the WIRE error sink, else complete them at a drop sink."""
         if ErrorKind.WIRE in self.plan.error_routes and ErrorKind.WIRE not in self.error_sinks:
-            raise RuntimeError("Bytewax sink is required for WIRE error routing.")
+            raise MissingSinkError("Bytewax sink is required for WIRE error routing.")
         self.wire_node_error(ErrorKind.WIRE, "decode", stream)
 
     def inline_sink_partition_for(
@@ -494,13 +497,15 @@ class _BuildContext:
 def _build_source_pipeline(flow: Any, ctx: _BuildContext) -> Stream:
     """Build the source-side pipeline up to the first decoded Message stream."""
     if ctx.source is None:
-        raise RuntimeError("Bytewax source is required to build a runtime dataflow.")
+        raise InternalError("Bytewax source is required to build a runtime dataflow.")
     source = ctx.source
     if not ctx.plan.source.needs_decode:
         return bw_input("source", flow, source)
     codec: MsgspecCodec[Any] = MsgspecCodec()
     if not isinstance(ctx.plan.source, (CompiledSingleSource, CompiledMultiSource)):
-        raise TypeError(f"Expected a Kafka compiled source, got {type(ctx.plan.source).__name__}.")
+        raise InternalError(
+            f"Expected a Kafka compiled source, got {type(ctx.plan.source).__name__}."
+        )
     strategy = ctx.plan.source.decode_strategy
     step_id = f"decode_{strategy}"
 
@@ -558,13 +563,15 @@ def _decode_source_record(
         record = cast(KafkaRecord[bytes], payload)
         source = ctx.plan.source
         if not source.needs_decode:
-            raise TypeError("Mongo CDC sources must emit Message values, not KafkaRecord items.")
+            raise InternalError(
+                "Mongo CDC sources must emit Message values, not KafkaRecord items."
+            )
         if isinstance(source, CompiledMultiSource):
             return try_decode_multi_record(record, source.dispatch, codec)
         if not isinstance(source, CompiledSingleSource):
-            raise TypeError(f"Expected CompiledSingleSource, got {type(source).__name__}.")
+            raise InternalError(f"Expected CompiledSingleSource, got {type(source).__name__}.")
         return try_decode_record(record, source.payload_type, codec)
-    raise TypeError(f"Expected Message or KafkaRecord, got {type(payload).__name__}.")
+    raise InternalError(f"Expected Message or KafkaRecord, got {type(payload).__name__}.")
 
 
 def _is_decode_ok(result: DecodeResult[StreamPayload]) -> bool:
@@ -576,4 +583,4 @@ def _decode_ok_message(result: DecodeResult[StreamPayload]) -> Message[StreamPay
     """Unwrap a successful source decode result."""
     if isinstance(result, DecodeOk):
         return result.message
-    raise TypeError(f"Expected DecodeOk, got {type(result).__name__}.")
+    raise InternalError(f"Expected DecodeOk, got {type(result).__name__}.")

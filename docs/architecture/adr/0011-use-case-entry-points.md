@@ -14,7 +14,7 @@ function. It could not be served by a message trigger (SQS, EventBridge, the
 jobs worker) without a parallel `Job` class, it could not host agents or MCP
 on Lambda, and a message trigger had no declared place to send its result.
 
-Applications worked around this with inheritance: `SqsXUseCase(XUseCase)`
+Applications worked around this with inheritance: `SQSXUseCase(XUseCase)`
 overrides `execute` to persist its result. That repeats the compiled
 signature, puts the LLM call inside the write transaction, and puts the
 transport in the use case's name. `Job` already carries its transport as

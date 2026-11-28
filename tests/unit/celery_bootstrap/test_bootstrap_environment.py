@@ -15,10 +15,11 @@ import yaml
 
 import loom.rest.checks as rest_checks
 from loom.celery.bootstrap import bootstrap_worker
+from loom.core.config.checks import EMBEDDED_PASSWORD_CHECK
 from loom.core.config.errors import ConfigError
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
 from loom.core.job.job import Job
-from loom.core.logger.checks import CONSOLE_RENDERER_CHECK
+from tests.helpers.loggers import CapturedLog
 
 _CELERY = {
     "broker_url": "memory://",
@@ -65,17 +66,15 @@ class TestBootstrapEnvironment:
             {
                 "app": {"name": "worker"},
                 "celery": _CELERY,
-                "observability": {
-                    "log": {"config": {"name": "loom.tests.worker", "renderer": "console"}}
-                },
+                "acme": {"url": "postgresql://user:hunter2@db/app"},
             },
         )
 
         with caplog.at_level(logging.WARNING, logger="loom.core.checks"):
             bootstrap_worker(config, environment="production", jobs=[_SyncJob])
 
-        messages = " ".join(r.getMessage() for r in caplog.records)
-        assert CONSOLE_RENDERER_CHECK in messages
+        messages = CapturedLog(caplog).rendered_text
+        assert EMBEDDED_PASSWORD_CHECK in messages
         assert rest_checks.AUTHENTICATION_CHECK not in messages
         assert rest_checks.SCHEMA_CHECK not in messages
 
@@ -86,7 +85,7 @@ class TestBootstrapEnvironment:
             bootstrap_worker(config, config_dir=str(tmp_path), jobs=[_SyncJob])
 
     def test_a_removed_logger_key_stops_the_worker(self, tmp_path: Path) -> None:
-        observability = {"log": {"config": {"environment": "dev"}}}
+        observability = {"log": {"environment": "dev"}}
         config = _write(
             tmp_path / "worker.yaml", {"celery": _CELERY, "observability": observability}
         )

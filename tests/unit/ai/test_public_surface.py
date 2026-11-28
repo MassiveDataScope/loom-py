@@ -21,7 +21,7 @@ import pytest
 
 import loom.ai
 import loom.ai.declarative
-import loom.ai.runtime
+import loom.ai.execution
 from loom.ai.abc import AgentEngine
 
 _REQUIRED_EXPORTS = frozenset(
@@ -41,7 +41,7 @@ _REQUIRED_EXPORTS = frozenset(
         "Conversation",
         "HealthStatus",
         "AgentEngine",
-        "AgentEngineProvider",
+        "AgentEnginePlugin",
         "ToolsetFactory",
         "ToolsetContext",
         "McpSession",
@@ -80,8 +80,8 @@ class TestPublicExports:
         assert set(loom.ai.__all__) >= _REQUIRED_EXPORTS
 
     def test_mcp_session_is_one_object_under_both_public_names(self) -> None:
-        """``loom.ai.McpSession`` and ``loom.ai.runtime.McpSession`` are the same Protocol."""
-        assert loom.ai.McpSession is loom.ai.runtime.McpSession
+        """``loom.ai.McpSession`` and ``loom.ai.execution.McpSession`` are the same Protocol."""
+        assert loom.ai.McpSession is loom.ai.execution.McpSession
 
     def test_all_contains_no_private_names(self) -> None:
         """No underscore-prefixed symbol leaks into the public surface."""

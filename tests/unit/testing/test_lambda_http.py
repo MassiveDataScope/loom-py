@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from loom.composition import create_app
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from loom.testing import LambdaTestClient
 from loom.testing.lambda_http import EventFormat
@@ -32,7 +34,7 @@ def config(tmp_path_factory: pytest.TempPathFactory) -> str:
 
 @pytest.fixture(scope="module")
 def handler(config: str) -> Iterator[LambdaHTTPHandler]:
-    served = create_app(config, adapter=LambdaAdapter(), environment="test")
+    served = create_app(config, runtime=LambdaRuntime(), environment="test")
     yield served
     served.close()
 
@@ -144,8 +146,24 @@ class TestLambdaTestClient:
             assert client.application is not None
         assert (served, unserved) == (200, 404)
 
+    @pytest.mark.parametrize("source", ["variable", "local"])
+    def test_a_client_without_a_path_loads_the_default_config_directory(
+        self, config: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+    ) -> None:
+        directory = tmp_path / ("elsewhere" if source == "variable" else "config")
+        shutil.copytree(Path(config).parent, directory)
+        (directory / "base.yaml").write_bytes(Path(config).read_bytes())
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("LOOM_CONFIG_DIR", raising=False)
+        if source == "variable":
+            monkeypatch.setenv("LOOM_CONFIG_DIR", str(directory))
+        with LambdaTestClient(function="items", environment="test") as client:
+            served = client.get("/items/7", headers=bearer("alice")).status_code
+
+        assert served == 200
+
     def test_a_handler_takes_no_create_app_options(self, handler: LambdaHTTPHandler) -> None:
-        with pytest.raises(TypeError, match="need a configuration path"):
+        with pytest.raises(ValueError, match="need a configuration path"):
             LambdaTestClient(handler, function="items")
 
     def test_closing_a_client_leaves_a_handler_passed_in_open(

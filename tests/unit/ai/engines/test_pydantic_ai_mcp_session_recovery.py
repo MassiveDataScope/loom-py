@@ -55,7 +55,7 @@ async def _session(
 ) -> _ToolsetSession:
     """A session as ``SharedMcpToolsets.open`` makes one: holding the first toolset's entry."""
     await first.__aenter__()
-    return _ToolsetSession(_OpenToolset.of(first), rebuild=factory)  # type: ignore[arg-type]
+    return _ToolsetSession(_OpenToolset.from_toolset(first), rebuild=factory)  # type: ignore[arg-type]
 
 
 class TestTheCallThatFoundTheSessionDead:
@@ -180,4 +180,4 @@ class TestWithoutTheMcpClient:
         from loom.ai.engines.pydantic_ai._failures import Outcome
 
         monkeypatch.setitem(sys.modules, "mcp", None)
-        assert Outcome.of(ConnectionError("Connection closed")) is Outcome.UNSAFE
+        assert Outcome.from_exception(ConnectionError("Connection closed")) is Outcome.UNSAFE

@@ -5,8 +5,9 @@ Lambda handler -- which runs its application on a loop of its own -- reaches
 them over real sockets. What a test can do to them:
 
 * read the request log (each request's JSON-RPC method, with the TCP
-  connection it came on and the ``Authorization`` header it carried), how often
-  each tool ran, and the TCP connects the proxy accepted;
+  connection it came on and the ``Authorization`` and MCP session headers it
+  carried), how often each tool ran, the TCP connects the proxy accepted, and
+  those that carried no request;
 * :meth:`LiveMcpServer.stale` -- every open connection goes silently dead: the
   server side is closed, the client is told nothing, and the client's next
   write on it is answered with an RST, as a connection a frozen Lambda kept
@@ -35,11 +36,13 @@ import threading
 from collections import Counter
 from collections.abc import Awaitable, Callable, Iterator, MutableMapping
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 import uvicorn
 
 Era = Literal["modern", "legacy"]
+
+_T = TypeVar("_T")
 
 _Scope = MutableMapping[str, Any]
 _Message = MutableMapping[str, Any]
@@ -59,12 +62,14 @@ class Request:
         verb: The HTTP method.
         method: The JSON-RPC method, or ``""`` for a request without a body.
         authorization: The ``Authorization`` header sent, if any.
+        session: The MCP session id sent, if any.
     """
 
     connection: int
     verb: str
     method: str
     authorization: str | None
+    session: str | None
 
 
 @dataclass
@@ -84,7 +89,12 @@ def _reset(writer: asyncio.StreamWriter) -> None:
 
 
 class _Proxy:
-    """A TCP proxy in front of the server, counting connects and injecting faults."""
+    """A TCP proxy in front of the server, counting connects and injecting faults.
+
+    Attributes:
+        upstream: The server-side port of each accepted connection, in accept
+            order; ``None`` until its upstream connection is open.
+    """
 
     def __init__(self, upstream_port: int, tool_ran: asyncio.Event) -> None:
         self._upstream_port = upstream_port
@@ -92,6 +102,7 @@ class _Proxy:
         self._open: list[_Connection] = []
         self._server: asyncio.Server | None = None
         self.accepted = 0
+        self.upstream: list[int | None] = []
         self.cut_armed = False
         self.port = 0
 
@@ -101,7 +112,10 @@ class _Proxy:
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         self.accepted += 1
+        index = len(self.upstream)
+        self.upstream.append(None)
         up_reader, up_writer = await asyncio.open_connection("127.0.0.1", self._upstream_port)
+        self.upstream[index] = up_writer.get_extra_info("sockname")[1]
         connection = _Connection(writer, up_writer)
         self._open.append(connection)
         try:
@@ -193,6 +207,16 @@ class LiveMcpServer:
         assert self._proxy is not None
         return self._proxy.accepted
 
+    def silent_connects(self, since: int) -> int:
+        """Return how many connects after the first *since* carried no request."""
+        proxy = self._proxied()
+
+        def count() -> int:
+            logged = {request.connection for request in self.log}
+            return sum(port not in logged for port in proxy.upstream[since:])
+
+        return self._in_loop(count)
+
     def stale(self) -> None:
         """Make every open connection RST on the client's next write; see the module docstring."""
         self._in_loop(self._proxied().stale)
@@ -209,13 +233,13 @@ class LiveMcpServer:
         assert self._proxy is not None
         return self._proxy
 
-    def _in_loop(self, action: Callable[[], None]) -> None:
+    def _in_loop(self, action: Callable[[], _T]) -> _T:
         assert self._loop is not None
 
-        async def run() -> None:
-            action()
+        async def run() -> _T:
+            return action()
 
-        asyncio.run_coroutine_threadsafe(run(), self._loop).result(_START_BUDGET_S)
+        return asyncio.run_coroutine_threadsafe(run(), self._loop).result(_START_BUDGET_S)
 
     def _app(self, tool_ran: asyncio.Event) -> Any:
         from fastmcp import FastMCP
@@ -258,12 +282,14 @@ class LiveMcpServer:
             request = json.loads(body) if body else {}
             headers = dict(scope["headers"])
             authorization = headers.get(b"authorization")
+            session = headers.get(_SESSION_HEADER)
             self.log.append(
                 Request(
                     connection=scope["client"][1],
                     verb=scope["method"],
                     method=request.get("method", "") if isinstance(request, dict) else "",
                     authorization=authorization.decode() if authorization else None,
+                    session=session.decode() if session else None,
                 )
             )
             if self.era == "legacy" and request.get("method") == "server/discover":

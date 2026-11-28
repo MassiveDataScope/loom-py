@@ -120,7 +120,7 @@ class TestRedaction:
         assert mapping.reveal()["password"] == "s3cr3t"
 
     def test_a_blank_secret_entry_is_refused_without_quoting_it(self) -> None:
-        with pytest.raises(ValueError, match="password must not be empty"):
+        with pytest.raises(ValueError, match="a secret entry must not be empty"):
             RedactedMap({"password": "  ", "ssl": "require"})
 
     @pytest.mark.parametrize(

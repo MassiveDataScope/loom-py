@@ -1,31 +1,30 @@
-"""CeleryJobService — Celery-backed implementation of the JobService protocol.
+"""CeleryJobTransport: the :class:`~loom.core.job.transport.JobTransport` for a Celery broker.
 
-Dispatches Jobs to the broker post-commit by enqueuing a sync callable on
-the post-commit channel of the current execution
-(:mod:`loom.core.engine.post_commit`, through
-:func:`~loom.core.job.context.add_pending_publish`).  No broker call is
-made inside :meth:`~CeleryJobService.dispatch`; the actual ``send_task``
-runs when the executor drains the channel after the Unit of Work has
-closed, or at the end of an execution without one.
+:meth:`~CeleryJobTransport.send_after_commit` enqueues a sync callable on the
+post-commit channel of the current execution (:mod:`loom.core.engine.post_commit`,
+through :func:`~loom.core.job.context.add_pending_publish`).  No broker call is
+made there; the ``send_task`` runs when the executor drains the channel after the
+Unit of Work has closed, or at the end of an execution without one.
+:meth:`~CeleryJobTransport.send` publishes at once, off the event loop.
 
 Usage::
 
-    from loom.celery.service import CeleryJobService
+    from loom.celery.service import CeleryJobTransport
 
-    service = CeleryJobService(celery_app)
+    service = JobService(CeleryJobTransport(celery_app))
 
     class NotifyUsersUseCase(UseCase[User, None]):
         def __init__(self, jobs: JobService) -> None:
             self._jobs = jobs
 
         async def execute(self, cmd: NotifyCmd = Input()) -> None:
-            self._jobs.dispatch(SendEmailJob, payload={"email": cmd.email})
+            self._jobs.dispatch_after_commit(SendEmailJob, payload={"email": cmd.email})
 """
 
 from __future__ import annotations
 
-import uuid
-from collections.abc import Sequence
+import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -34,26 +33,25 @@ import msgspec
 from celery import Celery  # type: ignore[import-untyped]
 
 from loom.celery.constants import callback_task_name
-from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.metrics import NoMetrics
-from loom.core.identity import captured_delegation
-from loom.core.job.callback import CallbackOutcome, refuse_reserved_payload
-from loom.core.job.config import JobSettings
+from loom.celery.event import CeleryEvent
+from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.execution_observer import NullExecutionObserver
+from loom.core.engine.post_commit import ActionSubject
+from loom.core.errors.summary import ErrorSummary
+from loom.core.job.callback import CallbackOutcome
 from loom.core.job.context import add_pending_publish
-from loom.core.job.envelope import wire_job_name
-from loom.core.job.handle import JobGroup, JobHandle
-from loom.core.job.job import Job
+from loom.core.job.dispatch import JobDispatch
+from loom.core.job.handle import JobHandle
+from loom.core.log_names import LogField
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.tracing import get_trace_id
+from loom.core.observability.observability import Observability
 
 if TYPE_CHECKING:
-    from loom.core.engine.executor import RuntimeExecutor
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.job.callback import JobCallback
-    from loom.core.use_case.factory import UseCaseFactory
 
 ResultT = TypeVar("ResultT")
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -70,15 +68,14 @@ class _PendingCeleryDispatch:
     queue: str
     countdown: int
     priority: int
-    eta: datetime | None
     soft_time_limit: int | None
     link: Any | None
-    link_error: Any | None
-    observability_runtime: ObservabilityRuntime
+    failure_callback: str | None
+    observability: Observability
 
     def __call__(self) -> None:
         """Invoke ``send_task`` synchronously. Called by flush."""
-        with self.observability_runtime.span(
+        with self.observability.span(
             Scope.TRANSPORT,
             self.task_name,
             trace_id=self.trace_id,
@@ -94,22 +91,21 @@ class _PendingCeleryDispatch:
                     "params": self.params,
                     "trace_id": self.trace_id,
                     "identity": self.identity,
+                    "failure_callback": self.failure_callback,
                 },
                 task_id=self.task_id,
                 queue=self.queue,
                 countdown=self.countdown,
                 priority=self.priority,
-                eta=self.eta,
                 soft_time_limit=self.soft_time_limit,
                 link=self.link,
-                link_error=self.link_error,
             )
 
-    def log_fields(self) -> tuple[dict[str, object]]:
-        return ({"job_name": self.task_name, "task_id": self.task_id},)
+    def subjects(self) -> tuple[ActionSubject]:
+        return (ActionSubject(job=self.task_name, task_id=self.task_id),)
 
 
-class _CallbackLink(msgspec.Struct, frozen=True):
+class CallbackLink(msgspec.Struct, frozen=True):
     """The keyword arguments of a job's callback task, the dispatcher's delegation among them."""
 
     job_id: str
@@ -117,260 +113,137 @@ class _CallbackLink(msgspec.Struct, frozen=True):
     trace_id: str | None
     identity: dict[str, Any] | None
 
-    def signature(
-        self, celery_app: Celery, callback_type: type[Any], outcome: CallbackOutcome
-    ) -> Any:
-        """Return the signature calling *callback_type*'s hook for *outcome* with this link.
+    def success_signature(self, celery_app: Celery, callback_type: type[Any]) -> Any:
+        """Return the signature calling *callback_type*'s ``on_success`` with this link.
 
-        A success signature is mutable, so Celery passes the job's return
-        value first; a failure signature is immutable.
+        The signature is mutable, so Celery passes the job's return value first.
 
         Args:
             celery_app: The application the signature belongs to.
             callback_type: The callback class whose task it calls.
-            outcome: The outcome the job's ``link`` or ``link_error`` reports.
 
         Returns:
-            The Celery ``Signature``.
+            The Celery ``Signature``, for the job's ``link``.
         """
         return celery_app.signature(
-            callback_task_name(callback_type, outcome),
+            callback_task_name(callback_type, CallbackOutcome.SUCCESS),
             kwargs=msgspec.structs.asdict(self),
-            immutable=outcome is CallbackOutcome.FAILURE,
         )
 
+    def send_failure(self, celery_app: Celery, task_name: str, error: Exception) -> None:
+        """Send the failure callback task *task_name* with this link and the error's class and text.
 
-class CeleryJobService:
-    """Celery-backed implementation of the ``JobService`` protocol.
+        The callback runs at least once: a worker that dies between this send
+        and acknowledging the job's message sends it again. A send that fails
+        is logged and never raised, so the caller still raises the job's own error.
 
-    All dispatch calls are deferred until the current Unit of Work has
-    committed and closed.  Tasks are enqueued on the execution's post-commit
-    channel via :func:`~loom.core.job.context.add_pending_publish`; the
-    :class:`~loom.core.engine.executor.RuntimeExecutor` drains the channel
-    after the close (or at the end of an execution without a Unit of Work)
-    and discards it when the execution fails.
+        Args:
+            celery_app: The application the callback task belongs to.
+            task_name: The name of the callback task (:func:`callback_task_name`).
+            error: The error that ended the job, as the worker raised it.
+        """
+        summary = ErrorSummary.of(error)
+        try:
+            celery_app.send_task(
+                task_name,
+                kwargs={
+                    **msgspec.structs.asdict(self),
+                    "exc_type": summary.type,
+                    "exc_code": summary.code,
+                },
+            )
+        except Exception:
+            _log.exception(
+                CeleryEvent.FAILURE_CALLBACK_NOT_SENT, extra={LogField.TASK_ID: self.job_id}
+            )
 
-    Callbacks are wired as native Celery ``link`` / ``link_error``
-    signatures so the broker manages delivery without framework
-    intervention after dispatch.
 
-    When *factory* and *executor* are provided, :meth:`run` executes the
-    job in-process (same as :class:`~loom.core.job.service.InlineJobService`)
-    without touching the broker; without them it raises
-    :class:`NotImplementedError`.
+class CeleryJobTransport:
+    """Send validated jobs to a Celery broker on either dispatch channel.
 
     Args:
-        celery_app: Configured Celery application instance.
-        metrics: Optional metrics adapter.  Receives a ``JOB_DISPATCHED``
-            event from the web process each time a job is registered for
-            deferred dispatch — before the UoW commits and the broker call
-            is made.
-        factory: Optional use-case factory.  Required for :meth:`run`.
-        executor: Optional runtime executor.  Required for :meth:`run`.
-        settings: The application's job settings; the ClassVars when omitted.
-
-    Example::
-
-        service = CeleryJobService(celery_app, factory=factory, executor=executor)
-        handle = service.dispatch(SendEmailJob, payload={"user_id": 1})
+        celery_app: Broker application owned by this transport.
+        execution_observer: Receives dispatch events.
+        observability: Traces each broker send.
     """
 
     def __init__(
         self,
         celery_app: Celery,
-        metrics: MetricsAdapter | None = None,
-        factory: UseCaseFactory | None = None,
-        executor: RuntimeExecutor | None = None,
-        observability_runtime: ObservabilityRuntime | None = None,
-        *,
-        settings: JobSettings | None = None,
+        execution_observer: ExecutionObserver | None = None,
+        observability: Observability | None = None,
     ) -> None:
         self._app = celery_app
-        self._settings = settings or JobSettings()
-        self._metrics = NoMetrics() if metrics is None else metrics
-        self._factory = factory
-        self._executor = executor
-        self._observability_runtime = observability_runtime or ObservabilityRuntime.noop()
+        self._execution_observer = (
+            NullExecutionObserver() if execution_observer is None else execution_observer
+        )
+        self._observability = observability or Observability.noop()
 
     def close(self) -> None:
-        """Close the Celery application owned by this service."""
+        """Close this transport's Celery application."""
         self._app.close()
 
-    async def run(
-        self,
-        job_type: type[Job[ResultT]],
-        *,
-        params: dict[str, Any] | None = None,
-        payload: dict[str, Any] | None = None,
-    ) -> ResultT:
-        """Execute a Job in-process and return its result immediately.
+    def send_after_commit(self, dispatch: JobDispatch) -> JobHandle[Any]:
+        """Queue the broker send for the successful post-commit flush."""
+        pending, handle = self._build_pending(dispatch)
+        add_pending_publish(pending)
+        return handle
 
-        Requires *factory* and *executor* to have been supplied at
-        construction time.  This is the case when the service is built by
-        :func:`~loom.rest.fastapi.auto.create_app`.
+    async def send(self, dispatch: JobDispatch) -> JobHandle[Any]:
+        """Send the task to the broker before returning, without blocking the event loop.
 
-        Use :meth:`dispatch` for fire-and-forget broker delivery.
-
-        Args:
-            job_type: Concrete ``Job`` subclass to run.
-            params: Primitive params bound to the execute signature.
-            payload: Raw dict for ``Input()`` command construction.
-
-        Returns:
-            The value returned by ``Job.execute()``.
-
-        Raises:
-            NotImplementedError: When factory or executor were not supplied
-                at construction.
+        The blocking ``send_task`` runs in a worker thread with a copy of the
+        caller's context. A thread cannot be interrupted: when the awaiting task
+        is cancelled, the send that already started still finishes and the job is
+        published, though no handle reaches the caller.
         """
-        if self._factory is None or self._executor is None:
-            raise NotImplementedError(
-                "CeleryJobService.run() requires factory and executor. "
-                "Pass them at construction or use InlineJobService."
-            )
-        result: ResultT = await self._executor.run(
-            job_type,
-            factory=self._factory,
-            params=params,
-            payload=payload,
-        )
-        return result
+        pending, handle = self._build_pending(dispatch)
+        await asyncio.to_thread(pending)
+        return handle
 
-    def dispatch(
-        self,
-        job_type: type[Job[ResultT]],
-        *,
-        params: dict[str, Any] | None = None,
-        payload: dict[str, Any] | None = None,
-        on_success: type[JobCallback] | None = None,
-        on_failure: type[JobCallback] | None = None,
-        queue: str | None = None,
-        countdown: int | None = None,
-        priority: int | None = None,
-        eta: datetime | None = None,
-    ) -> JobHandle[ResultT]:
-        """Register a Job for deferred dispatch to the Celery broker.
+    def check_callbacks(
+        self, on_success: type[JobCallback] | None, on_failure: type[JobCallback] | None
+    ) -> None:
+        """Accept callbacks, whose discovery is checked by the service."""
+        return None
 
-        The job is NOT sent immediately.  A :class:`_PendingCeleryDispatch`
-        is added to the async context's pending queue and executed after
-        the current Unit of Work commits.  If the UoW rolls back, the
-        pending entry is discarded and no task reaches the broker.
+    async def wait_until_idle(self) -> None:
+        """Return at once: what this transport sends runs in another process."""
+        return None
 
-        The current trace ID, the identity acting
-        (:func:`~loom.core.identity.current_caller`) and the deadline of its
-        delegation are captured at registration time so they are propagated
-        to the Celery worker even though the send happens later.  They travel
-        inside the envelope, and inside each callback link: no context
-        variable crosses a broker, and the callbacks act as the dispatcher.
-
-        Args:
-            job_type: Concrete ``Job`` subclass to dispatch.
-            params: Primitive params for the execute signature.
-            payload: Raw dict for ``Input()`` command construction.
-            on_success: Callback type invoked by the broker on task success.
-            on_failure: Callback type invoked by the broker on task failure.
-            queue: Override the job's queue for this dispatch only.
-            countdown: Delay in seconds before first execution.  Defaults
-                to the job's countdown.
-            priority: Task priority.  Defaults to the job's priority.
-            eta: Absolute datetime for first execution.  Mutually exclusive
-                with ``countdown`` in Celery semantics.
-
-        Returns:
-            A :class:`~loom.core.job.handle.JobHandle` whose ``job_id``
-            matches the ``task_id`` that will be passed to ``send_task``.
-
-        Raises:
-            ValueError: When a callback is attached and *payload* holds
-                ``job_id``, ``result``, ``exc_type`` or ``exc_msg``.
-        """
-        task_id = str(uuid.uuid4())
-        trace_id = get_trace_id()
-        identity = captured_delegation().encoded()
-        payload = payload or {}
-        if on_success is not None or on_failure is not None:
-            refuse_reserved_payload(payload)
-        options = self._settings.of(job_type)
-        eff_queue = queue or options.queue
-        eff_countdown = countdown if countdown is not None else options.countdown
-        eff_priority = priority if priority is not None else options.priority
-        callback_link = _CallbackLink(task_id, payload, trace_id, identity)
-
+    def _build_pending(
+        self, dispatch: JobDispatch
+    ) -> tuple[_PendingCeleryDispatch, JobHandle[Any]]:
+        envelope = dispatch.envelope
+        task_id = str(envelope.task_id)
+        link = CallbackLink(task_id, envelope.payload or {}, envelope.trace_id, envelope.identity)
         pending = _PendingCeleryDispatch(
             celery_app=self._app,
-            task_name=wire_job_name(job_type.__qualname__),
+            task_name=envelope.job,
             task_id=task_id,
-            payload=payload,
-            params=params,
-            trace_id=trace_id,
-            identity=identity,
-            queue=eff_queue,
-            countdown=eff_countdown,
-            priority=eff_priority,
-            eta=eta,
-            soft_time_limit=options.timeout,
+            payload=envelope.payload or {},
+            params=envelope.params,
+            trace_id=envelope.trace_id,
+            identity=envelope.identity,
+            queue=dispatch.queue,
+            countdown=dispatch.countdown.seconds,
+            priority=dispatch.priority,
+            soft_time_limit=dispatch.options.timeout,
             link=None
-            if on_success is None
-            else callback_link.signature(self._app, on_success, CallbackOutcome.SUCCESS),
-            link_error=None
-            if on_failure is None
-            else callback_link.signature(self._app, on_failure, CallbackOutcome.FAILURE),
-            observability_runtime=self._observability_runtime,
+            if dispatch.on_success is None
+            else link.success_signature(self._app, dispatch.on_success),
+            failure_callback=None
+            if dispatch.on_failure is None
+            else callback_task_name(dispatch.on_failure, CallbackOutcome.FAILURE),
+            observability=self._observability,
         )
-        add_pending_publish(pending)
-        self._metrics.on_event(
-            RuntimeEvent(
+        self._execution_observer.on_event(
+            ExecutionEvent(
                 kind=EventKind.JOB_DISPATCHED,
-                use_case_name=job_type.__qualname__,
-                trace_id=trace_id,
+                use_case_name=dispatch.job_type.__qualname__,
+                trace_id=envelope.trace_id,
             )
         )
-
-        return JobHandle(
-            job_id=task_id,
-            queue=eff_queue,
-            dispatched_at=datetime.now(UTC),
+        return pending, JobHandle(
+            job_id=task_id, queue=dispatch.queue, dispatched_at=datetime.now(UTC)
         )
-
-    def dispatch_parallel(
-        self,
-        jobs: Sequence[tuple[type[Job[Any]], dict[str, Any]]],
-        *,
-        on_all_success: type[JobCallback] | None = None,
-        on_any_failure: type[JobCallback] | None = None,
-    ) -> JobGroup:
-        """Dispatch multiple Jobs and return a group handle.
-
-        Each job is dispatched independently via :meth:`dispatch` and
-        will be executed in parallel by the available workers once the
-        Unit of Work commits.
-
-        ``on_all_success`` and ``on_any_failure`` require native Celery
-        chord support which is not yet implemented.  Passing either raises
-        :class:`NotImplementedError`.  Parallel dispatch without callbacks
-        works as expected.
-
-        Args:
-            jobs: Sequence of ``(job_type, payload)`` pairs.
-            on_all_success: Not yet supported.  Pass ``None``.
-            on_any_failure: Not yet supported.  Pass ``None``.
-
-        Returns:
-            A :class:`~loom.core.job.handle.JobGroup` with one handle
-            per dispatched job.
-
-        Raises:
-            NotImplementedError: When *on_all_success* or *on_any_failure*
-                is provided.  Celery chord support is reserved for a
-                future release.
-        """
-        if on_all_success is not None or on_any_failure is not None:
-            raise NotImplementedError(
-                "dispatch_parallel() callbacks (on_all_success / on_any_failure) "
-                "require Celery chord support, which is not yet implemented. "
-                "Pass None for both callback arguments."
-            )
-        handles = tuple(
-            self.dispatch(job_type, payload=job_payload) for job_type, job_payload in jobs
-        )
-        return JobGroup(handles=handles)

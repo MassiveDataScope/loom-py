@@ -66,15 +66,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
+
 @dataclass(frozen=True)
 class IntoJsonl:
     payload: type[IncidentEvent]
-    name: str = "incidents"          # the key under streaming.sinks
+    name: str = "incidents"  # the key under streaming.sinks
     router_branch_safe: ClassVar[bool] = True
 
     def build_partition(
         self,
-        config: Any,                 # your own resolved section
+        config: Any,  # your own resolved section
         worker_index: int,
         worker_count: int,
         bridge: Any = None,
@@ -88,13 +89,13 @@ class JsonlPartition:
         self._path, self._buffer = path, []
 
     def write_batch(self, items: Sequence[IncidentEvent]) -> int:
-        self._buffer.extend(items)   # once per Bytewax epoch
-        return 0                     # buffered, nothing durable yet
+        self._buffer.extend(items)  # once per Bytewax epoch
+        return 0  # buffered, nothing durable yet
 
     def close(self) -> int:
-        flush(self._path, self._buffer)   # must be idempotent
+        flush(self._path, self._buffer)  # must be idempotent
         flushed, self._buffer = len(self._buffer), []
-        return flushed               # how many buffered events are now durable
+        return flushed  # how many buffered events are now durable
 ```
 
 `Process(IntoJsonl(payload=IncidentEvent))` type-checks under `mypy --strict`:
@@ -143,7 +144,7 @@ The built-in resolvers use boto3's default region and credential chain, and
 create their client only when a placeholder resolves: a YAML with no
 `${secrets:...}` or `${ssm:...}` never touches AWS and boots without boto3.
 When a placeholder does resolve and boto3 is missing, the error names the extra
-to install, `loom-kernel[config-ssm]`.
+to install, `loom-kernel[aws]`.
 
 `resolvers=` adds your own prefixes or overrides a built-in by name, on
 `from_yaml` and on `run(config_path=...)`. Any object with a `name` and a
@@ -155,6 +156,7 @@ class VaultResolver:
 
     def resolve(self, key: str) -> str:
         return read_vault_secret(key)
+
 
 runner = StreamingRunner.from_yaml(
     incident_flow, "config/streaming.yaml", resolvers=[VaultResolver()]

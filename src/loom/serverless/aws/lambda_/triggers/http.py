@@ -2,9 +2,9 @@
 
 Install the ``lambda`` extra. The entry point changes one line::
 
-    handler = create_app("config.yaml", adapter=LambdaAdapter())
+    handler = create_app("config.yaml", runtime=LambdaRuntime())
 
-The recipe is the FastAPI adapter's, so the configuration, the authentication,
+The recipe is the FastAPI runtime's, so the configuration, the authentication,
 discovery and the CRUD gating have one source of truth. The transport is a bare
 Starlette application with one route per compiled route, reusing FastAPI's error
 handlers and the router runtime: a response matches the FastAPI one by
@@ -26,22 +26,23 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from loom.composition import Application, CompositionSource, LoopHost, Recipe
-from loom.core.config import ConfigContext, ConfigKey
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence import LAMBDA_PROFILE
-from loom.core.sql import SqlConfig
+from loom.composition import Application, LoopHost, Project, Recipe
+from loom.core.config import ConfigContext, ConfigSection
+from loom.core.logger import LogRuntime
+from loom.core.observability.observability import Observability
+from loom.core.stores import LAMBDA_PROFILE
+from loom.core.stores.sql import SqlConfig
 from loom.rest.auth import Authenticator
 from loom.rest.compiler import CompiledRoute
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi._exclusions import verify_exclusion_paths
-from loom.rest.fastapi.adapter import RestDeclaration, compose_rest, mount_request_stack
 from loom.rest.fastapi.app import CompiledApi, compile_api
-from loom.rest.fastapi.router_runtime import (
+from loom.rest.fastapi.router import (
+    _ResolvedRoute,
     _RouteHandler,
-    _RouteRuntime,
     path_param_annotation,
 )
+from loom.rest.fastapi.runtime import RestDeclaration, compose_rest, mount_request_stack
 from loom.rest.fastapi.sql import mounted_sql_endpoints
 from loom.serverless.aws.lambda_._refusals import COMPONENT, LambdaUnservedConfigError
 from loom.serverless.aws.lambda_.interfaces import http_function
@@ -50,7 +51,7 @@ _PATH_LOCATION = "path"
 
 
 def compose_http(
-    source: CompositionSource, function: str | None, authenticator: Authenticator | None
+    project: Project, function: str | None, authenticator: Authenticator | None
 ) -> tuple[Recipe, Callable[[Application], LambdaHTTPHandler]]:
     """The FastAPI recipe with the Lambda pool profile, and how to bind its application.
 
@@ -62,7 +63,7 @@ def compose_http(
     ``exclude_paths`` is honoured as written.
 
     Args:
-        source: What the entry point composes from.
+        project: What the entry point composes from.
         function: The ``http`` function of ``lambda.functions`` served: its
             interfaces only, with its ``auth`` when it declares one; every
             interface when ``None``.
@@ -72,20 +73,25 @@ def compose_http(
     Raises:
         LambdaUnservedConfigError: When the configuration mounts an SQL
             endpoint.
-        ConfigError: For any reason :func:`~loom.rest.fastapi.adapter.compose_rest`
+        ConfigError: For any reason :func:`~loom.rest.fastapi.runtime.compose_rest`
             raises it.
     """
-    _refuse_sql_endpoints(source.config)
-    served = http_function(source.config, function)
+    _refuse_sql_endpoints(project.config)
+    served = http_function(project.config, function)
     recipe, declared = compose_rest(
-        source,
+        project,
         authenticator=authenticator,
         serves_documentation=False,
         auth_section=served.auth_section,
         select_interfaces=served.select,
     )
     recipe = dataclasses.replace(
-        recipe, profile=LAMBDA_PROFILE, agents=True, agent_endpoints=False, pool_metrics=None
+        recipe,
+        profile=LAMBDA_PROFILE,
+        agents=True,
+        agent_endpoints=False,
+        log_runtime=LogRuntime.LAMBDA,
+        pool_metrics=None,
     )
     return recipe, functools.partial(_bind, declared)
 
@@ -101,13 +107,13 @@ def _bind(declared: RestDeclaration, application: Application) -> LambdaHTTPHand
 
 
 def _refuse_sql_endpoints(ctx: ConfigContext) -> None:
-    sql = ctx.section_optional(ConfigKey.SQL, SqlConfig)
+    sql = ctx.section_optional(ConfigSection.SQL, SqlConfig)
     mounted = mounted_sql_endpoints(sql) if sql is not None else ()
     if mounted:
         raise LambdaUnservedConfigError(
             f"sql.connections.{mounted[0]}.sql_endpoint",
             f"{COMPONENT} does not mount SQL endpoints. Disable the endpoint "
-            "(sql_endpoint.enabled: false) or serve it with FastAPIAdapter.",
+            "(sql_endpoint.enabled: false) or serve it with FastAPIRuntime.",
         )
 
 
@@ -123,7 +129,7 @@ def _starlette_app(application: Application, declared: RestDeclaration) -> Starl
     return app
 
 
-def _route(compiled: CompiledRoute, api: CompiledApi, observability: ObservabilityRuntime) -> Route:
+def _route(compiled: CompiledRoute, api: CompiledApi, observability: Observability) -> Route:
     """One Starlette route running *compiled* through the router runtime.
 
     The path keeps bare ``{name}`` parameters: a Starlette convertor such as
@@ -140,9 +146,9 @@ class _RouteEndpoint:
     """Validates the path parameters of one route as FastAPI does, then runs it."""
 
     def __init__(
-        self, compiled: CompiledRoute, api: CompiledApi, observability: ObservabilityRuntime
+        self, compiled: CompiledRoute, api: CompiledApi, observability: Observability
     ) -> None:
-        runtime = _RouteRuntime.of(compiled)
+        runtime = _ResolvedRoute.from_compiled_route(compiled)
         self._handler = _RouteHandler(runtime, api.factory, api.executor, observability)
         param_types = dict(compiled.execute_param_types)
         self._coercers: dict[str, TypeAdapter[Any]] = {
@@ -200,9 +206,11 @@ class LambdaHTTPHandler:
         self._host = host
 
     def __call__(self, event: dict[str, Any], context: Any) -> dict[str, Any]:
-        """Answer one API Gateway HTTP API event."""
+        """Answer one API Gateway HTTP API event once the inline jobs it dispatched have run."""
         self._host.make_current()
-        return self._mangum(event, context)
+        response: dict[str, Any] = self._mangum(event, context)
+        self._host.wait_until_idle()
+        return response
 
     def close(self) -> None:
         """Close the application and its loop, from a shutdown hook or a test; idempotent.

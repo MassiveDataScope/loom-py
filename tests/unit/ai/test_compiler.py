@@ -37,7 +37,7 @@ from loom.ai.declarative import (
 )
 from loom.ai.errors import AgentErrorCode
 from loom.core.errors import BoundaryValidationError
-from loom.core.sql.config import SqlConfig
+from loom.core.stores.sql.config import SqlConfig
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.unit.ai.phases.conftest import ALL_KINDS, admits_every_native_tool
 

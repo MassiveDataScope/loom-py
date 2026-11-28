@@ -2,27 +2,28 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING
 
-from loom.core.config import ConfigKey
+from loom.core.config import ConfigSection
 from loom.core.config.errors import ConfigError
-from loom.core.logger import get_logger
+from loom.serverless.event import ServerlessEvent, ServerlessKey
 
 if TYPE_CHECKING:
     from loom.ai.config import AiConfig
-    from loom.composition import CompositionSource
+    from loom.composition import Project
 
-COMPONENT = "LambdaAdapter"
-"""The adapter refusals and composition errors name."""
+COMPONENT = "LambdaRuntime"
+"""The runtime refusals and composition errors name."""
 _STDIO = "stdio"
 """The MCP transport that runs a server as a subprocess, which a frozen function cannot keep."""
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 class LambdaUnservedConfigError(ConfigError):
-    """Raised when the configuration declares something a Lambda adapter does not serve.
+    """Raised when the configuration declares something a Lambda runtime does not serve.
 
     Raised by the recipe, before anything opens.
 
@@ -35,7 +36,7 @@ class LambdaUnservedConfigError(ConfigError):
         self.key = key
 
 
-def refuse_unserved_config(source: CompositionSource) -> None:
+def refuse_unserved_config(project: Project) -> None:
     """Refuse, from the configuration alone, what no Lambda function serves.
 
     Runs before discovery: a metrics scrape and an MCP server spoken to over
@@ -43,18 +44,18 @@ def refuse_unserved_config(source: CompositionSource) -> None:
     interpolation is not seen here: :func:`check_resolved_ai` refuses it at Init.
 
     Args:
-        source: What the entry point composes from.
+        project: What the entry point composes from.
 
     Raises:
         LambdaUnservedConfigError: When metrics are enabled or an MCP server
             declares ``transport: stdio``.
     """
-    if source.observability_config.prometheus.enabled:
+    if project.observability_config.prometheus.enabled:
         raise LambdaUnservedConfigError(
             "observability.prometheus.enabled",
             "a Lambda function serves no metrics scrape. Disable it for this entry point.",
         )
-    _refuse_stdio(_written_transports(source.config.raw(f"{ConfigKey.AI}.mcp_servers")))
+    _refuse_stdio(_written_transports(project.config.raw(f"{ConfigSection.AI}.mcp_servers")))
 
 
 def check_resolved_ai(config: AiConfig | None) -> None:
@@ -74,7 +75,7 @@ def check_resolved_ai(config: AiConfig | None) -> None:
         return
     _refuse_stdio({name: server.transport for name, server in config.mcp_servers.items()})
     for key in _endpoint_keys(config):
-        _log.warning(f"{key} is ignored on Lambda: {COMPONENT} serves no agent endpoint", key=key)
+        _log.warning(ServerlessEvent.AGENT_ENDPOINT_IGNORED, extra={ServerlessKey.CONFIG_KEY: key})
 
 
 def _written_transports(servers: object) -> dict[str, object]:
@@ -93,9 +94,9 @@ def _refuse_stdio(transports: Mapping[str, object]) -> None:
     for name, transport in transports.items():
         if transport == _STDIO:
             raise LambdaUnservedConfigError(
-                f"{ConfigKey.AI}.mcp_servers.{name}.transport",
+                f"{ConfigSection.AI}.mcp_servers.{name}.transport",
                 f"{COMPONENT} cannot run an MCP server over stdio: a frozen function keeps "
-                "no subprocess. Reach the server over http, or serve it with FastAPIAdapter.",
+                "no subprocess. Reach the server over http, or serve it with FastAPIRuntime.",
             )
 
 
@@ -103,6 +104,6 @@ def _endpoint_keys(config: AiConfig) -> Iterator[str]:
     """The keys of *config* that would serve an agent over HTTP or A2A."""
     for name, endpoint in config.endpoints.items():
         if endpoint.enabled:
-            yield f"{ConfigKey.AI}.endpoints.{name}.enabled"
+            yield f"{ConfigSection.AI}.endpoints.{name}.enabled"
     if config.a2a is not None:
-        yield f"{ConfigKey.AI}.a2a.expose"
+        yield f"{ConfigSection.AI}.a2a.expose"

@@ -6,33 +6,39 @@ from collections.abc import Sequence
 from typing import Any
 
 import msgspec
+import pytest
 
+from loom.core.config import ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import (
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import (
     BulkCreatable,
     Countable,
     Creatable,
     Deletable,
+    FieldReadable,
     Listable,
+    OnConflict,
     Readable,
+    RepositoryCatalog,
     Updatable,
 )
-from loom.core.repository.dynamodb.repository import RepositoryDynamoDB
-from loom.core.repository.registration import (
+from loom.core.stores.repository.registration import (
     RepositoryDecorator,
     build_repository_registration_module,
     capabilities_of,
 )
-from loom.core.repository.registry import (
+from loom.core.stores.repository.registry import (
     DefaultRepositoryBuilder,
     RepositoryBuildContext,
     RepositoryRegistration,
     RepositoryToken,
 )
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.stores.dynamodb.repository import DynamoDBRepository
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.testing.overrides import Override
 
 
 class AcmeRegistrationWidget(BaseModel):
@@ -51,7 +57,7 @@ class _BulkWidgetRepository(
         raise AssertionError("not exercised")
 
     async def create_many(
-        self, data: Sequence[msgspec.Struct]
+        self, data: Sequence[msgspec.Struct], *, on_conflict: OnConflict = OnConflict.ERROR
     ) -> tuple[AcmeRegistrationWidget, ...]:  # pragma: no cover - never invoked
         raise AssertionError("not exercised")
 
@@ -76,9 +82,10 @@ def _container(default_repository_type: type | None) -> LoomContainer:
 
 class TestCapabilitiesOf:
     def test_dynamodb_declares_only_the_key_operations(self) -> None:
-        assert set(capabilities_of(RepositoryDynamoDB)) == {
+        assert set(capabilities_of(DynamoDBRepository)) == {
             Readable,
             Creatable,
+            BulkCreatable,
             Updatable,
             Deletable,
         }
@@ -87,8 +94,9 @@ class TestCapabilitiesOf:
         assert set(capabilities_of(_BulkWidgetRepository)) == {Creatable, BulkCreatable}
 
     def test_keeps_the_declaration_order(self) -> None:
-        assert capabilities_of(RepositorySQLAlchemy) == (
+        assert capabilities_of(SQLAlchemyRepository) == (
             Readable,
+            FieldReadable,
             Creatable,
             BulkCreatable,
             Updatable,
@@ -113,6 +121,43 @@ class TestDefaultKeys:
         assert container.is_registered(RepositoryToken(AcmeRegistrationWidget))
         assert not container.is_registered(Readable[AcmeRegistrationWidget])
         assert not container.is_registered(Creatable[AcmeRegistrationWidget])
+
+    def test_capability_key_only_binding_is_refused(self) -> None:
+        container = LoomContainer()
+        container.register_instance(Creatable[AcmeRegistrationWidget], object())
+
+        with pytest.raises(ConfigError, match="Override.repository"):
+            build_repository_registration_module(
+                models=(AcmeRegistrationWidget,),
+                build_registered_repository=_unused_builder,
+                default_repository_type=_BulkWidgetRepository,
+                default_builder=_default_builder,
+                store=DEFAULT_STORE,
+            )(container)
+
+    def test_capability_resolves_through_repository_token(self) -> None:
+        container = _container(_BulkWidgetRepository)
+        double = object()
+        container.register_instance(RepositoryToken(AcmeRegistrationWidget), double)
+
+        assert container.resolve(Creatable[AcmeRegistrationWidget]) is double
+        assert container.resolve(BulkCreatable[AcmeRegistrationWidget]) is double
+        assert container.resolve_repo(AcmeRegistrationWidget) is double
+
+    def test_override_reaches_capability_and_both_catalog_lookups(self) -> None:
+        container = _container(_BulkWidgetRepository)
+        catalog = RepositoryCatalog(container, {DEFAULT_STORE: (AcmeRegistrationWidget,)})
+        original = catalog[AcmeRegistrationWidget]
+        double = object()
+
+        with Override.repository(AcmeRegistrationWidget, double).apply(container):
+            assert container.resolve(Creatable[AcmeRegistrationWidget]) is double
+            assert catalog[AcmeRegistrationWidget] is double
+            assert catalog.for_table("registration_widgets_fixture") is double
+
+        assert container.resolve(Creatable[AcmeRegistrationWidget]) is original
+        assert catalog[AcmeRegistrationWidget] is original
+        assert catalog.for_table("registration_widgets_fixture") is original
 
 
 class _Wrapped:
@@ -167,3 +212,29 @@ class TestProviderMemo:
         assert isinstance(
             container.resolve(RepositoryToken(AcmeRegistrationWidget)), _BulkWidgetRepository
         )
+
+    def test_every_lookup_returns_the_instance_the_provider_built_once(self) -> None:
+        built: list[object] = []
+
+        def build(context: RepositoryBuildContext) -> object:
+            repository = object()
+            built.append(repository)
+            return repository
+
+        container = LoomContainer()
+        build_repository_registration_module(
+            models=(AcmeRegistrationWidget,),
+            build_registered_repository=_unused_builder,
+            default_repository_type=_BulkWidgetRepository,
+            default_builder=build,
+            store=DEFAULT_STORE,
+        )(container)
+        catalog = RepositoryCatalog(container, {DEFAULT_STORE: (AcmeRegistrationWidget,)})
+
+        primary = catalog[AcmeRegistrationWidget]
+
+        assert container.resolve(Creatable[AcmeRegistrationWidget]) is primary
+        assert container.resolve(BulkCreatable[AcmeRegistrationWidget]) is primary
+        assert container.resolve_repo(AcmeRegistrationWidget) is primary
+        assert catalog.for_table("registration_widgets_fixture") is primary
+        assert built == [primary]

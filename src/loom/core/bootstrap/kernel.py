@@ -1,8 +1,8 @@
-"""Shared kernel runtime assembly for transport adapters.
+"""The kernel of an application, built once for every transport adapter.
 
-This module builds a reusable runtime composed of container, compiler,
-factory, and executor. Transport adapters (REST, Celery, CLI) can consume
-the same runtime without duplicating bootstrap logic.
+A :class:`Kernel` holds the container, compiler, factory, executor, registry
+and invoker. Transport adapters (REST, Celery, CLI) consume the same kernel
+without duplicating bootstrap logic.
 
 :func:`create_kernel` is the public entry point. :func:`seeded_container`
 and :meth:`KernelRecipe.install` are its steps.
@@ -10,32 +10,53 @@ and :meth:`KernelRecipe.install` are its steps.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
 from loom.core.authz.elevation import ElevationSink
-from loom.core.bootstrap.bootstrap import BootstrapError, BootstrapResult
+from loom.core.bootstrap.bootstrap import BootstrapError
 from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.di.errors import describe_key
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.metrics import MetricsAdapter
+from loom.core.engine.execution_observer import ExecutionObserver
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.environment import Environment, resolve_environment
+from loom.core.errors.summary import ErrorSummary
 from loom.core.execution import ExecutionResolver
-from loom.core.logger import LoggerPort, get_logger
-from loom.core.repository.registration import classify_key
-from loom.core.uow.coordinator import Coordinator
+from loom.core.log_names import LogEvent, LogField, LogKey
+from loom.core.stores.repository.registration import classify_key
+from loom.core.stores.uow.coordinator import Coordinator
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.invoker import AppInvoker, ApplicationInvoker
 from loom.core.use_case.kinds import declare_kinds
 from loom.core.use_case.registry import UseCaseRegistry
 
+_log = logging.getLogger(__name__)
+
+
+class BootstrapEvent(LogEvent):
+    """What the bootstrap logs while it composes the container and the kernel."""
+
+    CONTAINER_BUILD_STARTED = "loom.bootstrap.container_build_started"
+    MODULE_REGISTERED = "loom.bootstrap.module_registered"
+    USE_CASES_COMPILED = "loom.bootstrap.use_cases_compiled"
+    CONTAINER_VALIDATED = "loom.bootstrap.container_validated"
+    KERNEL_COMPLETED = "loom.bootstrap.kernel_completed"
+
+
+class BootstrapKey(LogKey):
+    """The fields of a bootstrap record."""
+
+    MODULE = "loom.bootstrap.module"
+
+
 KERNEL_KEYS: tuple[BindingKey, ...] = (
     UseCaseFactory,
-    RuntimeExecutor,
+    UseCaseExecutor,
     UseCaseRegistry,
     ApplicationInvoker,
 )
@@ -43,21 +64,29 @@ KERNEL_KEYS: tuple[BindingKey, ...] = (
 
 
 @dataclass(frozen=True, kw_only=True)
-class KernelRuntime(BootstrapResult):
-    """Reusable application runtime: the bootstrap result plus its executor and invoker.
+class Kernel:
+    """The compiled core of an application, the same under every runtime.
 
     Attributes:
+        container: Validated DI container with all bindings resolved.
+        compiler: Use-case compiler with all plans cached.
+        factory: Factory for constructing use-case instances per request.
         executor: Runtime executor shared by transport adapters.
         registry: Read-only use-case registry for name-based resolution.
-        app: App-level invoker facade, bound to no identity: each use case it
-            invokes acts as the identity acting where it is called;
+        invoker: App-level invoker facade, bound to no identity: each use case
+            it invokes acts as the identity acting where it is called;
             :meth:`~loom.core.use_case.invoker.AppInvoker.for_identity` binds a
             copy to one caller.
+        execution_observer: Optional execution observer the executor reports to.
     """
 
-    executor: RuntimeExecutor
+    container: LoomContainer
+    compiler: UseCaseCompiler
+    factory: UseCaseFactory
+    executor: UseCaseExecutor
     registry: UseCaseRegistry
-    app: AppInvoker
+    invoker: AppInvoker
+    execution_observer: ExecutionObserver | None = None
 
 
 def create_kernel(
@@ -65,15 +94,14 @@ def create_kernel(
     config: object,
     use_cases: Sequence[type[Compilable]],
     modules: Sequence[Callable[[LoomContainer], None]] = (),
-    logger: LoggerPort | None = None,
-    metrics: MetricsAdapter | None = None,
+    execution_observer: ExecutionObserver | None = None,
     coordinator: Coordinator | None = None,
     repo_resolver: Callable[[type[Any]], Any] | None = None,
     environment: Environment | str | None = None,
     agent_resolver: ExecutionResolver | None = None,
     mcp_resolver: ExecutionResolver | None = None,
-) -> KernelRuntime:
-    """Create a shared kernel runtime for application adapters.
+) -> Kernel:
+    """Create the kernel of an application: the one way to build its core.
 
     Registers *config* and the environment in a new container, runs
     *modules*, adds the kernel (:meth:`KernelRecipe.install`), validates
@@ -87,8 +115,7 @@ def create_kernel(
             scope under its concrete type.
         use_cases: Compilable classes to compile at startup.
         modules: Container registration modules, run in order.
-        logger: Optional logger override; defaults to ``loom.bootstrap``.
-        metrics: Optional metrics adapter.
+        execution_observer: Optional execution observer.
         coordinator: Coordinator of the application's stores, which runs
             each execution in their units of work; ``None`` runs without one.
         repo_resolver: Optional repository resolver used by marker-based loads.
@@ -99,12 +126,12 @@ def create_kernel(
             module's service or a use case can inject
             :class:`~loom.core.environment.Environment`.
         agent_resolver: An :class:`~loom.core.execution.ExecutionResolver`
-            bound as by :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_agent_resolver`.
+            bound as by :meth:`~loom.core.engine.executor.UseCaseExecutor.bind_agent_resolver`.
         mcp_resolver: An :class:`~loom.core.execution.ExecutionResolver`
-            bound as by :meth:`~loom.core.engine.executor.RuntimeExecutor.bind_mcp_resolver`.
+            bound as by :meth:`~loom.core.engine.executor.UseCaseExecutor.bind_mcp_resolver`.
 
     Returns:
-        Fully built :class:`KernelRuntime`.
+        Fully built :class:`Kernel`.
 
     Raises:
         ConfigError: When *environment* is not an environment; raised as is.
@@ -118,25 +145,23 @@ def create_kernel(
             directly, naming the module, when a module binds a key of
             :data:`KERNEL_KEYS`.
     """
-    log = logger or get_logger("loom.bootstrap")
     seeds = {type(config): config, Environment: resolve_environment(environment)}
     recipe = KernelRecipe(
         use_cases,
-        log,
-        metrics=metrics,
+        execution_observer=execution_observer,
         coordinator=coordinator,
         repo_resolver=repo_resolver,
         agent_resolver=agent_resolver,
         mcp_resolver=mcp_resolver,
     )
     with seeded_container(
-        KernelRecipe.container(), seeds, modules=modules, logger=log, reserved=KERNEL_KEYS
+        KernelRecipe.container(), seeds, modules=modules, reserved=KERNEL_KEYS
     ) as container:
         kernel = recipe.install(container)
-        log.info("[BOOT] Validating container bindings")
         container.validate()
         kernel.factory.verify()
-    log.info("[BOOT] Bootstrap complete")
+        _log.info(BootstrapEvent.CONTAINER_VALIDATED)
+    _log.info(BootstrapEvent.KERNEL_COMPLETED)
     return kernel
 
 
@@ -151,7 +176,6 @@ def seeded_container(
     seeds: Mapping[BindingKey, object],
     *,
     modules: Sequence[Callable[[LoomContainer], None]],
-    logger: LoggerPort,
     reserved: Collection[BindingKey] = (),
     error: Callable[[Callable[..., object], BindingKey], BootstrapError] = _kernel_key_bound,
 ) -> Iterator[LoomContainer]:
@@ -165,33 +189,40 @@ def seeded_container(
         container: The container to fill.
         seeds: Instances bound under their key before any module runs.
         modules: DI modules run in order.
-        logger: Where each module's registration is logged.
         reserved: Keys no module may bind or replace.
         error: Builds the error raised for a module and the reserved key it bound.
 
     Raises:
         BootstrapError: Built by *error* when a module binds or replaces a
-            key of *reserved*; wrapping any other failure of a module or of
-            the ``with`` block, cause chained. A ``BootstrapError`` passes through.
+            key of *reserved*; wrapping any other failure of a module, naming
+            it, or of the ``with`` block, cause chained. A ``BootstrapError``
+            passes through.
     """
     try:
-        logger.info("[BOOT] Initialising DI container")
+        _log.info(BootstrapEvent.CONTAINER_BUILD_STARTED)
         for key, seed in seeds.items():
             container.register_instance(key, seed)
         view = container.bindings()
         for module in modules:
             name = getattr(module, "__qualname__", None) or repr(module)
-            logger.info(f"[BOOT] Registering module: {name}")
             before = {key: view.get(key) for key in reserved}
-            module(container)
+            try:
+                module(container)
+            except BootstrapError:
+                raise
+            except Exception as exc:
+                raise BootstrapError(
+                    f"Bootstrap failed in {name}: {ErrorSummary.message_for(exc)}"
+                ) from exc
             for key in reserved:
                 if view.get(key) is not before[key]:
                     raise error(module, key)
+            _log.info(BootstrapEvent.MODULE_REGISTERED, extra={BootstrapKey.MODULE: name})
         yield container
     except BootstrapError:
         raise
     except Exception as exc:
-        raise BootstrapError(f"Bootstrap failed: {exc}") from exc
+        raise BootstrapError(f"Bootstrap failed: {ErrorSummary.message_for(exc)}") from exc
 
 
 @dataclass(frozen=True)
@@ -200,8 +231,7 @@ class KernelRecipe:
 
     Args:
         use_cases: Compilable classes to compile.
-        logger: Logger of the compilation.
-        metrics: Optional metrics adapter.
+        execution_observer: Optional execution observer.
         coordinator: Coordinator of the application's stores; ``None`` runs without one.
         repo_resolver: Repository resolver of marker-based loads; defaults to
             the container's ``resolve_repo``.
@@ -210,8 +240,7 @@ class KernelRecipe:
     """
 
     use_cases: Sequence[type[Compilable]]
-    logger: LoggerPort
-    metrics: MetricsAdapter | None = None
+    execution_observer: ExecutionObserver | None = None
     coordinator: Coordinator | None = None
     repo_resolver: Callable[[type[Any]], Any] | None = None
     agent_resolver: ExecutionResolver | None = None
@@ -222,7 +251,7 @@ class KernelRecipe:
         """Return a new container that reads constructors as loom builds a use case.
 
         Annotations are classified with
-        :func:`~loom.core.repository.registration.classify_key`, a use case
+        :func:`~loom.core.stores.repository.registration.classify_key`, a use case
         built through ``UseCase.__init__`` gets its main repository
         (:func:`~loom.core.use_case.factory.main_repository`), and the kinds
         are declared (:func:`~loom.core.use_case.kinds.declare_kinds`) before
@@ -232,11 +261,11 @@ class KernelRecipe:
         declare_kinds(container.kinds)
         return container
 
-    def install(self, container: LoomContainer) -> KernelRuntime:
+    def install(self, container: LoomContainer) -> Kernel:
         """Compile the use cases and register the kernel's keys in the filled *container*.
 
         Registers :class:`~loom.core.use_case.factory.UseCaseFactory`, one
-        :class:`~loom.core.engine.executor.RuntimeExecutor` (whose elevation
+        :class:`~loom.core.engine.executor.UseCaseExecutor` (whose elevation
         sink is the bound :class:`~loom.core.authz.elevation.ElevationSink`,
         if any), :class:`~loom.core.use_case.registry.UseCaseRegistry` and
         :class:`~loom.core.use_case.invoker.ApplicationInvoker`. Gives the
@@ -247,48 +276,50 @@ class KernelRecipe:
         Raises:
             CompilationError: When a use case does not compile.
         """
-        kinds = container.kinds
-        base = self._install_use_cases(container)
-        executor = RuntimeExecutor(
-            base.compiler,
+        compiler, factory = self._install_use_cases(container)
+        executor = UseCaseExecutor(
+            compiler,
             coordinator=self.coordinator,
-            metrics=self.metrics,
+            execution_observer=self.execution_observer,
             repo_resolver=self.repo_resolver or container.resolve_repo,
-            resolvers=kinds,
-            builder=base.factory.build,
+            resolvers=container.kinds,
+            builder=factory.build,
             elevation_sink=container.resolve_or_none(ElevationSink),
             agent_resolver=self.agent_resolver,
             mcp_resolver=self.mcp_resolver,
         )
         registry = UseCaseRegistry.build(list(self.use_cases))
-        app = AppInvoker(factory=base.factory, executor=executor, registry=registry)
-        container.register_instance(RuntimeExecutor, executor)
+        invoker = AppInvoker(factory=factory, executor=executor, registry=registry)
+        container.register_instance(UseCaseExecutor, executor)
         container.register_instance(UseCaseRegistry, registry)
-        container.register_instance(ApplicationInvoker, app)
-        return KernelRuntime(
+        container.register_instance(ApplicationInvoker, invoker)
+        return Kernel(
             container=container,
-            compiler=base.compiler,
-            factory=base.factory,
-            metrics=self.metrics,
+            compiler=compiler,
+            factory=factory,
             executor=executor,
             registry=registry,
-            app=app,
+            invoker=invoker,
+            execution_observer=self.execution_observer,
         )
 
-    def _install_use_cases(self, container: LoomContainer) -> BootstrapResult:
+    def _install_use_cases(
+        self, container: LoomContainer
+    ) -> tuple[UseCaseCompiler, UseCaseFactory]:
         """Compile the use cases and register their :class:`UseCaseFactory` in *container*.
 
         Raises:
             CompilationError: When a use case does not compile.
         """
-        self.logger.info(f"[BOOT] Compiling {len(self.use_cases)} use case(s)")
-        compiler = UseCaseCompiler(logger=self.logger, metrics=self.metrics)
+        compiler = UseCaseCompiler(execution_observer=self.execution_observer)
         for use_case in self.use_cases:
             compiler.compile(use_case)
+        _log.info(
+            BootstrapEvent.USE_CASES_COMPILED,
+            extra={LogField.USE_CASE_COUNT: len(self.use_cases)},
+        )
         factory = UseCaseFactory(container)
         for use_case in self.use_cases:
             factory.register(use_case)
         container.register_instance(UseCaseFactory, factory)
-        return BootstrapResult(
-            container=container, compiler=compiler, factory=factory, metrics=self.metrics
-        )
+        return compiler, factory

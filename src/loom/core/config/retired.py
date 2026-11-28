@@ -15,8 +15,12 @@ _RETIRED_PERSISTENCE: Final = {
     "backend": "set stores.default.backend",
     "mongo": "move it to stores.default with backend: mongo",
     "dynamodb": "move it to stores.default with backend: dynamodb",
+    "cursors": "move it to stores.settings.cursors",
+    "rollback_timeout": "move it to stores.settings.rollback_timeout",
 }
-"""Keys of ``persistence`` that moved to ``stores``; ``persistence.cursors`` stays."""
+"""Keys of ``persistence`` that moved to ``stores``, each with where it went."""
+
+_PERSISTENCE_REMEDY: Final = "the shared store settings live under stores.settings"
 
 _OWN_DATABASE_MAPPINGS: Final = frozenset({"pool", "schema", "connect_args"})
 """Mapping keys of a relational ``database`` section, as opposed to a named database."""
@@ -51,12 +55,10 @@ def reject_retired_keys(data: object, path: str, connection: type[ConnectionSett
 def reject_retired_sections(ctx: ConfigContext) -> None:
     """Fail when the configuration *ctx* declares persistence outside ``stores``.
 
-    ``database``, ``database.<name>``, ``persistence.backend``,
-    ``persistence.mongo`` and ``persistence.dynamodb`` were replaced by the
-    ``stores.<name>`` sections. Reading them next to ``stores``
-    would mix two contracts, so every load refuses them and names the
-    replacement. ``persistence.cursors`` stays. The sections are read as
-    written: no placeholder resolves.
+    ``database``, ``database.<name>`` and ``persistence`` were replaced by the
+    ``stores.<name>`` sections and ``stores.settings``. Reading them next to
+    ``stores`` would mix two contracts, so every load refuses them and names
+    the replacement. The sections are read as written: no placeholder resolves.
 
     Args:
         ctx: The whole configuration.
@@ -94,13 +96,14 @@ def _is_own_database_key(key: object, value: object) -> bool:
 
 
 def _retired_persistence(persistence: object) -> list[str]:
-    """The retired keys of the ``persistence`` section *persistence*."""
-    if not isinstance(persistence, Mapping):
+    """The retired ``persistence`` keys of *persistence*, each with its replacement."""
+    if persistence is None:
         return []
+    if not isinstance(persistence, Mapping) or not persistence:
+        return [f"persistence was removed; {_PERSISTENCE_REMEDY}"]
     return [
-        f"persistence.{key} was removed; {remedy}"
-        for key, remedy in _RETIRED_PERSISTENCE.items()
-        if key in persistence
+        f"persistence.{key} was removed; {_RETIRED_PERSISTENCE.get(key, _PERSISTENCE_REMEDY)}"
+        for key in persistence
     ]
 
 

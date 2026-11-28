@@ -6,6 +6,8 @@ import logging
 from collections.abc import Mapping
 from typing import Any, NamedTuple
 
+from loom.etl.event import EtlEvent, EtlKey
+
 _log = logging.getLogger(__name__)
 
 _ENCRYPTION_KEYS = (
@@ -105,7 +107,7 @@ def checkpoint_options(storage_options: Mapping[str, str]) -> CheckpointOptions:
 
     dropped = sorted(set(storage_options) - consumed)
     if dropped:
-        _log.debug("checkpoint storage options ignored keys=%s", dropped)
+        _log.debug(EtlEvent.CHECKPOINT_OPTIONS_IGNORED, extra={EtlKey.OPTION_KEYS: dropped})
     return CheckpointOptions(fsspec_opts, object_store_opts, read_opts)
 
 

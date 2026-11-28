@@ -2,7 +2,7 @@
 
 Each snapshot ``bindings/<path>.json`` holds, per bound key, its scope and
 provider qualname, the resolved type of an ``APPLICATION`` binding, the
-container's model-to-repository mapping, the number of ``RuntimeExecutor``
+container's model-to-repository mapping, the number of ``UseCaseExecutor``
 constructions and which of them the container serves.
 """
 
@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from loom.core.di.container import LoomContainer
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from tests.unit.composition.phases import paths
 from tests.unit.composition.phases.components import AcmeLedgerEntry, AcmeRecord
 from tests.unit.composition.phases.snapshot import describe_container, matches_snapshot
@@ -26,8 +26,8 @@ _TWO_STORES = paths.Composition(
 _EVERY_PATH = {**paths.COMPOSED, "harness": paths.harness, **paths.STANDALONE}
 
 
-def _recorded(container: LoomContainer, executors: list[RuntimeExecutor]) -> dict[str, Any]:
-    served = container.resolve(RuntimeExecutor)
+def _recorded(container: LoomContainer, executors: list[UseCaseExecutor]) -> dict[str, Any]:
+    served = container.resolve(UseCaseExecutor)
     return {
         **describe_container(container),
         "executors": {
@@ -44,7 +44,7 @@ class TestPathBindings:
         name: str,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        executors: list[RuntimeExecutor],
+        executors: list[UseCaseExecutor],
     ) -> None:
         composition = (
             paths.Composition(use_cases=()) if name == "create_kernel" else paths.Composition()
@@ -59,7 +59,7 @@ class TestPathBindings:
         name: str,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        executors: list[RuntimeExecutor],
+        executors: list[UseCaseExecutor],
     ) -> None:
         container = paths.COMPOSED[name](_TWO_STORES, tmp_path, monkeypatch)
 

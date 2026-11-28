@@ -8,13 +8,13 @@ from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scop
 from loom.core.authz.elevation import elevated_scopes, elevation_scope
 from loom.core.authz.product import clear_authz_product, load_authz_product, register_authz_product
 from loom.core.config import ConfigError
-from loom.core.repository.sqlalchemy.rls import elevate
+from loom.stores.sqlalchemy.rls import elevate
 from tests.helpers.elevation import MANAGE, Product
 from tests.unit.core.authz._elevation_doubles import FakeSink
 
 WRITE = Permission("rows.write")
 CATALOG = RoleCatalog((WRITE, MANAGE), (Role("editor", (WRITE,)), Role("admin", (WRITE, MANAGE))))
-BOUNDARY = Scope.of("b1")
+BOUNDARY = Scope.from_segments("b1")
 
 
 @pytest.fixture(autouse=True)

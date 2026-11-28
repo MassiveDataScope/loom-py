@@ -7,7 +7,7 @@ from enum import StrEnum
 class EventKind(StrEnum):
     """Discriminator for runtime and compile-time events.
 
-    Used by ``MetricsAdapter`` and structured loggers to route events
+    Used by ``ExecutionObserver`` and structured loggers to route events
     without isinstance checks.
     """
 
@@ -20,8 +20,9 @@ class EventKind(StrEnum):
     JOB_DISPATCHED = "job_dispatched"
     JOB_STARTED = "job_started"
     JOB_SUCCEEDED = "job_succeeded"
-    JOB_RETRYING = "job_retrying"
-    JOB_EXHAUSTED = "job_exhausted"
+    JOB_POSTPONED = "job_postponed"
+    JOB_FAILED = "job_failed"
+    JOB_ABANDONED = "job_abandoned"
 
 
 class Status(StrEnum):
@@ -30,8 +31,23 @@ class Status(StrEnum):
     SUCCESS = "success"
     FAILURE = "failure"
     RULE_FAILURE = "rule_failure"
-    RETRYING = "retrying"
-    EXHAUSTED = "exhausted"
+    POSTPONED = "postponed"
+    ABANDONED = "abandoned"
+
+
+class AbandonReason(StrEnum):
+    """Why a job message will not run again.
+
+    ``SHUTDOWN``: a delayed inline job was cancelled when the process stopped.
+    ``STEP_CRASHED``: a delayed inline step raised outside the settle path.
+    """
+
+    ATTEMPTS_EXHAUSTED = "attempts_exhausted"
+    NOT_RETRYABLE = "not_retryable"
+    JOB_ASKED = "job_asked"
+    CANNOT_WAIT = "cannot_wait"
+    SHUTDOWN = "shutdown"
+    STEP_CRASHED = "step_crashed"
 
 
 class Phase(StrEnum):
@@ -46,10 +62,10 @@ class Phase(StrEnum):
 
 
 @dataclass(frozen=True)
-class RuntimeEvent:
+class ExecutionEvent:
     """Immutable event emitted by the compiler and runtime executor.
 
-    Consumed by ``MetricsAdapter`` and structured loggers. Carries no
+    Consumed by ``ExecutionObserver`` and structured loggers. Carries no
     transport-specific data — adapters translate to their own formats.
 
     Args:
@@ -65,10 +81,11 @@ class RuntimeEvent:
             the pipeline did not start.
         commit_ms: Time spent closing the unit of work, or ``None`` when no
             commit was attempted.
+        reason: Why the job was abandoned on ``JOB_ABANDONED``, or ``None``.
 
     Example::
 
-        event = RuntimeEvent(
+        event = ExecutionEvent(
             kind=EventKind.EXEC_DONE,
             use_case_name="UpdateUserUseCase",
             duration_ms=12.4,
@@ -86,3 +103,4 @@ class RuntimeEvent:
     error_kind: Phase | None = None
     pipeline_ms: float | None = None
     commit_ms: float | None = None
+    reason: AbandonReason | None = None

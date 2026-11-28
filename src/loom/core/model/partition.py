@@ -14,6 +14,7 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from loom.core.errors import InvalidValue
 from loom.core.schema_names import MAX_IDENTIFIER_LENGTH
 
 Interval = Literal["day", "month", "year"]
@@ -45,7 +46,7 @@ def range_partitions(
     A ``datetime`` bound is read as its date.
 
     Raises:
-        ValueError: When ``interval`` is unknown or a partition name would be
+        InvalidValue: When ``interval`` is unknown or a partition name would be
             longer than Postgres keeps.
     """
     period = _floor(as_date(start), validate_interval(interval))
@@ -63,12 +64,12 @@ def partition_name(table: str, period: dt.date, interval: Interval) -> str:
     """The name of the partition of ``table`` holding the period that starts on ``period``.
 
     Raises:
-        ValueError: When the name would be longer than Postgres keeps.
+        InvalidValue: When the name would be longer than Postgres keeps.
     """
     name = f"{table}_p{period.strftime(_SUFFIX[interval])}"
     if len(name.encode()) > MAX_IDENTIFIER_LENGTH:
-        raise ValueError(
-            f"partition name {name!r} is longer than the {MAX_IDENTIFIER_LENGTH} bytes "
+        raise InvalidValue(
+            f"a partition name is longer than the {MAX_IDENTIFIER_LENGTH} bytes "
             "Postgres keeps; shorten the table name"
         )
     return name
@@ -78,11 +79,11 @@ def validate_interval(interval: str) -> Interval:
     """Return ``interval`` when it is one partitions are created by.
 
     Raises:
-        ValueError: When it is not ``day``, ``month`` or ``year``.
+        InvalidValue: When it is not ``day``, ``month`` or ``year``.
     """
     known = _INTERVALS.get(interval)
     if known is None:
-        raise ValueError(f"interval {interval!r} is not one of {tuple(_INTERVALS)}")
+        raise InvalidValue(f"interval is not one of {tuple(_INTERVALS)}")
     return known
 
 

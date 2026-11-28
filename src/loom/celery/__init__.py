@@ -5,7 +5,7 @@ considered part of the public API of the optional ``loom[celery]`` extra.
 
 The names load on first access: the composition imports
 :mod:`loom.celery.config` and :mod:`loom.celery.service` to dispatch jobs,
-and must not load the worker (its adapter, bootstrap and Celery signals)
+and must not load the worker (its runtime, bootstrap and Celery signals)
 by doing so.
 
 Install with::
@@ -21,20 +21,20 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from loom.celery.auto import create_app
     from loom.celery.bootstrap import WorkerBootstrapResult, bootstrap_worker
-    from loom.celery.service import CeleryJobService
+    from loom.celery.service import CeleryJobTransport
 
 _EXPORTS = {
     "create_app": "loom.celery.auto",
     "bootstrap_worker": "loom.celery.bootstrap",
     "WorkerBootstrapResult": "loom.celery.bootstrap",
-    "CeleryJobService": "loom.celery.service",
+    "CeleryJobTransport": "loom.celery.service",
 }
 
 __all__ = [
     "create_app",
     "bootstrap_worker",
     "WorkerBootstrapResult",
-    "CeleryJobService",
+    "CeleryJobTransport",
 ]
 
 

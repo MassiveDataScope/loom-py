@@ -269,6 +269,66 @@ class ETLErrorCode(IssueCode):
             field="delete_marker",
         ),
     )
+    MODEL_COLUMN_TYPE_REFUSED = (
+        "MODEL_COLUMN_TYPE_REFUSED",
+        Template(
+            "{component}: model {model} (table {table!r}) cannot be a lake table. {reason}",
+            field="{field}",
+        ),
+    )
+    JSON_LEAF_UNSUPPORTED = (
+        "JSON_LEAF_UNSUPPORTED",
+        Template(
+            "{component}: {where} declares {reason}. "
+            "Declare the leaf with a type a JSON value can hold (a list, array or struct "
+            "needs its inner type or fields), or read the column as text and decode it "
+            "in the step.",
+            field="{path}",
+        ),
+    )
+    MODEL_COLUMN_UNKNOWN = (
+        "MODEL_COLUMN_UNKNOWN",
+        Template(
+            "{component}: {role} names column {field!r}, which model {model} does not "
+            "declare for table {table!r}. Use one of {known}, or add the field to {model}.",
+            field="{field}",
+        ),
+    )
+    MODEL_KEY_NOT_IN_FRAME = (
+        "MODEL_KEY_NOT_IN_FRAME",
+        Template(
+            "{component}: model {model} (table {table!r}) {reason}, so its key cannot come "
+            "from the frame and no default keys exist. Pass keys=(...) naming columns the "
+            "frame carries; surrogate keys supplied by the frame are not supported yet.",
+            field="{field}",
+        ),
+    )
+    MODEL_SCHEMA_MODE_UNSUPPORTED = (
+        "MODEL_SCHEMA_MODE_UNSUPPORTED",
+        Template(
+            "{component}: model {model} (table {table!r}) is written with schema={mode}, "
+            "but a model target only allows STRICT. Use schema=SchemaMode.STRICT; EVOLVE and "
+            "OVERWRITE are not supported on a model target yet.",
+            field="{field}",
+        ),
+    )
+    MODEL_BOUNDARY_NOT_TEMPORAL = (
+        "MODEL_BOUNDARY_NOT_TEMPORAL",
+        Template(
+            "{component}: model {model} (table {table!r}) declares valid_from column "
+            "{field!r} with a type that holds no dates. Declare it as a date or a datetime.",
+            field="{field}",
+        ),
+    )
+    MODEL_DATE_TYPE_MISMATCH = (
+        "MODEL_DATE_TYPE_MISMATCH",
+        Template(
+            "{component}: IntoHistory date_type={declared!r} contradicts model {model} "
+            "(table {table!r}), whose {column!r} column holds {actual!r} values. Drop "
+            "date_type= to follow the model, or change the column type.",
+            field="{field}",
+        ),
+    )
 
 
 class ETLCompilationError(Exception):

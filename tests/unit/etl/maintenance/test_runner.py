@@ -14,6 +14,7 @@ from loom.etl.storage._config import (
     MaintenanceVacuumConfig,
     StorageConfig,
 )
+from loom.etl.storage._locator import MappingLocator, TableLocation
 from tests.unit.etl.maintenance.conftest import StubMaintainer
 
 # ---------------------------------------------------------------------------
@@ -165,26 +166,23 @@ class TestRunnerErrorIsolation:
 
 
 class TestMissingTablePolicy:
-    def test_skip_returns_result_without_error(self, simple_config: StorageConfig) -> None:
+    def test_skip_returns_an_empty_result_for_an_unlocatable_table(
+        self, simple_config: StorageConfig
+    ) -> None:
         stub = StubMaintainer()
-        runner = _make_runner(simple_config, stub, missing_table_policy="skip")
+        locator = MappingLocator(mapping={}, default=None)
+        runner = MaintenanceRunner(stub, locator, simple_config, missing_table_policy="skip")
 
         class Step(MaintenanceStep[None]):
-            # "nonexistent.table" has no route in simple_config
             operations = [MaintainTable("nonexistent.table").vacuum()]
 
-        # simple_config has PrefixLocator, so it will construct a URI
-        # even for unknown tables — this tests the error policy against
-        # a DeltaTable that doesn't exist (RuntimeError from stub)
-        # We verify the runner handles it gracefully when policy is skip.
         report = runner.run(Step)
-        assert report is not None
+
+        assert [(r.table_ref, r.error) for r in report.results] == [("nonexistent.table", None)]
+        assert stub.vacuum_calls == []
 
     def test_error_policy_propagates_locator_miss(self, simple_config: StorageConfig) -> None:
         stub = StubMaintainer()
-        # MappingLocator with no default + missing table → raises on locate()
-        from loom.etl.storage._locator import MappingLocator, TableLocation
-
         locator = MappingLocator(
             mapping={"raw.events": TableLocation(uri="/lake/raw/events")},
             default=None,

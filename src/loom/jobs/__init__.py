@@ -1,1 +1,1 @@
-"""Job backends of loom beyond the in-process and Celery ones."""
+"""Job transports of loom beyond the in-process and Celery ones."""

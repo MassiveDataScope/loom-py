@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from loom.core.errors import DomainError
+from loom.core.errors import DomainError, InvalidValue
 from loom.core.errors.codes import ErrorCode
 from loom.etl.declarative._format import Format
 
 __all__ = ["UnsupportedFormatError"]
 
 
-class UnsupportedFormatError(DomainError, ValueError):
+class UnsupportedFormatError(DomainError, InvalidValue):
     """Raised when no handler of the backend implements a declared file format.
 
     Args:

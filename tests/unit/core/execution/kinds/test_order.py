@@ -1,4 +1,4 @@
-"""``loom.core.di``, ``loom.core.execution`` and ``loom.core.repository`` import in any order."""
+"""The DI, execution and repository-port packages import in any order."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import subprocess
 import sys
 from itertools import permutations
 
-_PACKAGES = ("loom.core.di", "loom.core.execution", "loom.core.repository")
+_PACKAGES = ("loom.core.di", "loom.core.execution", "loom.core.stores.repository")
 
 
 class TestCoreImportOrder:

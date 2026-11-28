@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -10,12 +11,13 @@ from typing import Any, Literal
 import polars as pl
 
 from loom.core.connections import ClickHouseConnection
-from loom.core.logger import get_logger
+from loom.core.errors import InternalError, InvalidUse, InvalidValue
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._client import ClientSpec
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io._clickhouse_connection import open_client, resolve_connection
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -96,7 +98,7 @@ class ClickHouseTargetWriter:
 
     Raises:
         ImportError: If ``clickhouse-connect`` is not installed.
-        ValueError: When neither or both of *url* and *connection* are given.
+        InvalidValue: When neither or both of *url* and *connection* are given.
     """
 
     def __init__(
@@ -104,7 +106,7 @@ class ClickHouseTargetWriter:
     ) -> None:
         resolved = resolve_connection(url, connection, owner="ClickHouseTargetWriter")
         if resolved is None:
-            raise ValueError("ClickHouseTargetWriter requires 'url' or 'connection'")
+            raise InvalidValue("ClickHouseTargetWriter requires 'url' or 'connection'")
         self._client = open_client(resolved)
 
     def write(
@@ -134,13 +136,13 @@ class ClickHouseTargetWriter:
                        in ClickHouse targets).
         """
         if isinstance(spec, ClientSpec):
-            raise TypeError(
+            raise InternalError(
                 "ClickHouseTargetWriter.write() does not handle ClientSpec. "
                 "ClientStep execution is routed by ETLExecutor before write() is called. "
                 "This is an internal error — ClientSpec should never reach write()."
             )
         if not isinstance(spec, ClickHouseTableSpec):
-            raise TypeError(
+            raise InternalError(
                 f"ClickHouseTargetWriter.write() does not handle {type(spec).__qualname__}. "
                 "The writer registry dispatches a spec to this writer by its 'clickhouse' "
                 "kind, so this is an internal error."
@@ -151,22 +153,23 @@ class ClickHouseTargetWriter:
             frame.collect(engine=engine) if isinstance(frame, pl.LazyFrame) else frame
         )
         if df.is_empty():
-            _log.warning("write_produced_no_rows", target=spec.table)
+            _log.warning(EtlEvent.WRITE_PRODUCED_NO_ROWS, extra={EtlKey.TABLE: spec.table})
             return
 
         qualified = f"{spec.database}.{spec.table}" if spec.database else spec.table
 
         if spec.write_mode == "replace":
-            _log.debug("clickhouse_truncate_table", table=qualified)
             self._client.command(f"TRUNCATE TABLE IF EXISTS {qualified}")
+            _log.debug(EtlEvent.CLICKHOUSE_TABLE_TRUNCATED, extra={EtlKey.TABLE: qualified})
 
         column_names = df.columns
         data = [df[col].to_list() for col in column_names]
         _log.debug(
-            "clickhouse_insert",
-            rows=len(df),
-            cols=len(column_names),
-            table=qualified,
+            EtlEvent.CLICKHOUSE_INSERT_STARTED,
+            extra={
+                EtlKey.ROWS: len(df),
+                EtlKey.TABLE: qualified,
+            },
         )
         self._client.insert(
             qualified,
@@ -179,7 +182,7 @@ class ClickHouseTargetWriter:
 class ClickHouseClientExecutor:
     """Provides a ClickHouse client to :class:`~loom.etl.ClientStep` instances.
 
-    Implements :class:`~loom.etl.runtime.contracts.ClientCommandExecutor`.
+    Implements :class:`~loom.etl.ports.contracts.ClientCommandExecutor`.
     Inject into :class:`~loom.etl.executor.ETLExecutor` (or
     :class:`~loom.etl.ETLRunner`) to enable ``ClientStep`` execution against
     ClickHouse.
@@ -196,7 +199,8 @@ class ClickHouseClientExecutor:
     Raises:
         ImportError: If ``clickhouse-connect`` is not installed and *client*
             is not provided.
-        ValueError: When both *url* and *connection* are given, or when none
+        InvalidValue: When both *url* and *connection* are given.
+        InvalidUse: When none
             of the three is provided and :meth:`command` is called.
 
     Example::
@@ -230,7 +234,7 @@ class ClickHouseClientExecutor:
                 ``clickhouse_connect`` client and executes the step logic.
 
         Raises:
-            ValueError: If neither a connection nor a pre-built client was provided.
+            InvalidUse: If neither a connection nor a pre-built client was provided.
             ImportError: If ``clickhouse-connect`` is not installed.
         """
         fn(self._client or self._get_client())
@@ -240,7 +244,7 @@ class ClickHouseClientExecutor:
             if self._client is not None:
                 return self._client
             if self._connection is None:
-                raise ValueError(
+                raise InvalidUse(
                     "ClickHouseClientExecutor requires 'url', 'connection' or 'client' "
                     "at construction time."
                 )

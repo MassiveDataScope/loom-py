@@ -1,0 +1,191 @@
+from __future__ import annotations
+
+import logging
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
+from functools import wraps
+from typing import Any, ClassVar, Generic, TypeVar, cast
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from loom.core.errors import ForeignSessionError
+from loom.core.stores.repository import (
+    BulkCreatable,
+    Countable,
+    Creatable,
+    CursorCodec,
+    Deletable,
+    FieldReadable,
+    IdT,
+    Listable,
+    OutputT,
+    Readable,
+    Updatable,
+)
+from loom.core.stores.repository.mutation import MutationEvent
+from loom.stores.sqlalchemy.event import SqlalchemyEvent, SqlalchemyKey
+from loom.stores.sqlalchemy.mixins import (
+    SQLAlchemyBulkCreateMixin,
+    SQLAlchemyCreateMixin,
+    SQLAlchemyDeleteMixin,
+    SQLAlchemyReadMixin,
+    SQLAlchemyUpdateMixin,
+)
+from loom.stores.sqlalchemy.session_manager import SessionManager, bare_url
+
+R = TypeVar("R")
+
+
+_log = logging.getLogger(__name__)
+
+
+def with_session_scope(
+    *, write: bool
+) -> Callable[[Callable[..., Awaitable[R]]], Callable[..., Awaitable[R]]]:
+    """Inject repository-managed session into a custom repository method.
+
+    The method joins its store's session when the store is enlisted in the
+    invocation, and runs in a session of its own otherwise, as the
+    repository's own operations do.
+
+    Args:
+        write: Whether the method writes. A write is checked like the
+            repository's own: refused with ``UndeclaredStoreWrite`` before the
+            driver is called when the running execution did not declare its
+            store, and recorded for the commit order. A method declared
+            ``write=False`` that writes anyway, to a store the invocation did
+            not enlist, persists nothing: its own transaction is never committed
+            (:meth:`SessionManager.operation_session`).
+
+    Example::
+
+        class OrderRepository(SQLAlchemyRepository[Order, int]):
+            @with_session_scope(write=True)
+            async def archive(self, session: AsyncSession, order_id: int) -> None: ...
+    """
+
+    def decorate(method: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
+        @wraps(method)
+        async def wrapper(
+            self: SQLAlchemyRepository[Any, Any],
+            *args: Any,
+            session: AsyncSession | None = None,
+            **kwargs: Any,
+        ) -> R:
+            async with self._session_scope(session, write=write) as scoped_session:
+                return await method(self, scoped_session, *args, **kwargs)
+
+        return cast(Callable[..., Awaitable[R]], wrapper)
+
+    return decorate
+
+
+class SQLAlchemyRepository(  # type: ignore[misc]
+    SQLAlchemyCreateMixin[OutputT, IdT],
+    SQLAlchemyBulkCreateMixin[OutputT, IdT],
+    SQLAlchemyReadMixin[OutputT, IdT],
+    SQLAlchemyUpdateMixin[OutputT, IdT],
+    SQLAlchemyDeleteMixin[OutputT, IdT],
+    Readable[OutputT],
+    FieldReadable[OutputT],
+    Creatable[OutputT],
+    BulkCreatable[OutputT],
+    Updatable[OutputT],
+    Deletable[OutputT],
+    Listable[OutputT],
+    Countable[OutputT],
+    Generic[OutputT, IdT],
+):
+    """Base SQLAlchemy repository with context-aware session management.
+
+    Pass ``model`` (a Struct-based ``BaseModel``) to ``__init__``; the
+    repository uses the compiled SA class for queries and returns the
+    Struct directly.
+
+    Args:
+        session_manager: Shared session manager.
+        model: Model the repository serves.
+        cursor_codec: Codec that issues and verifies cursor tokens; the
+            backend builds one from ``stores.settings.cursors`` and shares it;
+            a disabled codec refuses a cursor page.
+            Cursors are bound to the row-level-security scope values of the
+            caller when the session manager has them, to no scope otherwise.
+            A codec passed here by hand skips the deployed-environment
+            refusal of an opt-out that ``register_cursor_codec`` applies; a
+            custom builder passes ``context.container.resolve(CursorCodec)``.
+    """
+
+    backend_name: ClassVar[str] = "sqlalchemy"
+
+    def __init__(
+        self,
+        session_manager: SessionManager,
+        model: type,
+        *,
+        cursor_codec: CursorCodec,
+    ) -> None:
+        self.session_manager = session_manager
+        self.model = model
+        self.cursor_codec = cursor_codec
+        self._init_struct_model()
+
+    def has_caller_scoped_session(self) -> bool:
+        """Whether a read would run inside the session of its store's participant.
+
+        True while the store is enlisted in the current invocation: the
+        session was opened by the caller, dies when the caller unwinds, and
+        holds writes only that caller can see.  False when the repository
+        would open and close a session of its own for the call.
+
+        Implements
+        :class:`~loom.core.stores.repository.session_scope.SupportsCallerScopedSession`.
+
+        Returns:
+            ``True`` when the store's participant holds a session.
+
+        Raises:
+            ScopeOwnershipError: See :attr:`SessionManager.active_session`.
+        """
+        return self.session_manager.active_session is not None
+
+    async def on_transaction_committed(self, events: tuple[MutationEvent, ...]) -> None:
+        """Handle post-commit mutation events (cache invalidation hook)."""
+        _log.debug(
+            SqlalchemyEvent.REPOSITORY_TRANSACTION_COMMITTED,
+            extra={SqlalchemyKey.MUTATION_COUNT: len(events)},
+        )
+
+    def _require_own(self, session: AsyncSession, joined: AsyncSession | None) -> None:
+        """Refuse *session* unless it is *joined*, or, with no participant, runs on this engine."""
+        engine = session.get_bind().engine
+        manager = self.session_manager
+        if session is joined or (joined is None and engine is manager.engine.sync_engine):
+            return
+        raise ForeignSessionError.between(
+            ForeignSessionError.side(manager.store, manager.target),
+            ForeignSessionError.side(manager.store, "a session this invocation did not open")
+            if joined is not None
+            else f"another engine ({bare_url(engine.url)})",
+        )
+
+    def _session_scope(
+        self, session: AsyncSession | None = None, *, write: bool
+    ) -> AbstractAsyncContextManager[AsyncSession]:
+        """Return *session*, checked, or else :meth:`SessionManager.operation_session`.
+
+        Args:
+            session: A session the caller already holds.
+            write: Whether the operation writes; a write is checked and
+                recorded for the commit order (:meth:`SessionManager.joined_session`).
+
+        Raises:
+            ScopeOwnershipError: See :meth:`SessionManager.joined_session`.
+            ForeignSessionError: When *session* is not the participant's or,
+                with no participant, comes from another engine; or see
+                :meth:`SessionManager.joined_session`.
+            UndeclaredStoreWrite: See :meth:`SessionManager.joined_session`.
+        """
+        if session is None:
+            return self.session_manager.operation_session(write=write)
+        self._require_own(session, self.session_manager.joined_session(write=write))
+        return nullcontext(session)

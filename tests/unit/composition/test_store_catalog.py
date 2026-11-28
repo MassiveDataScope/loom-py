@@ -12,14 +12,14 @@ from typing import Any
 
 import pytest
 
-import loom.core.persistence.stores as stores_module
-import loom.core.repository.mongo.backend as mongo_backend_module
-from loom.celery.adapter import CeleryAdapter
-from loom.composition import AppConfig, build_application, compose_application
+import loom.core.stores.catalog as stores_module
+import loom.stores.mongo.plugin as mongo_backend_module
+from loom.celery.runtime import CeleryRuntime
+from loom.composition import AppConfig, Project
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, StoreSpec
-from loom.rest.fastapi.adapter import FastAPIAdapter
-from tests.helpers.composition import ProjectFactory, composition_source
+from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog, StoreSpec
+from loom.rest.fastapi.runtime import FastAPIRuntime
+from tests.helpers.composition import ProjectFactory, composition_project
 from tests.helpers.persistence import record_catalogs
 from tests.unit.composition.doubles import AcmePingJob
 from tests.unit.core.repository.mongo._fake import FakeMongoClient
@@ -42,8 +42,8 @@ class _CountingResolver:
         return self.values[key]
 
 
-def _worker_source(stores: dict[str, Any]) -> Any:
-    return composition_source(
+def _worker_project(stores: dict[str, Any]) -> Any:
+    return composition_project(
         ConfigContext.from_dict({"stores": stores, "celery": _CELERY}),
         app=AppConfig(name="worker"),
     )
@@ -71,8 +71,8 @@ class TestStoreCatalog:
     def test_the_api_builds_its_catalog_once_and_binds_that_one(
         self, fixture_project: ProjectFactory, catalogs: list[StoreCatalog]
     ) -> None:
-        application = build_application(
-            fixture_project("catalog_api"), adapter=FastAPIAdapter(), environment="test"
+        application = Project.load(fixture_project("catalog_api"), environment="test").compose(
+            FastAPIRuntime()
         )
 
         assert len(catalogs) == 1
@@ -82,23 +82,23 @@ class TestStoreCatalog:
         self,
         catalogs: list[StoreCatalog],
     ) -> None:
-        source = _worker_source(
+        project = _worker_project(
             {DEFAULT_STORE: {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}}
         )
 
-        application = compose_application(source, CeleryAdapter(jobs=[AcmePingJob]))
+        application = project.compose(CeleryRuntime(jobs=[AcmePingJob]))
 
         assert len(catalogs) == 1
-        assert application.kernel.container.resolve(StoreCatalog) is source.catalog is catalogs[0]
+        assert application.kernel.container.resolve(StoreCatalog) is project.catalog is catalogs[0]
 
     def test_a_connection_only_default_store_fails_the_composition(self) -> None:
-        source = _worker_source(
+        project = _worker_project(
             {DEFAULT_STORE: {"backend": "clickhouse", "url": "clickhouse://ch"}}
         )
 
-        adapter = CeleryAdapter(jobs=[AcmePingJob])
+        adapter = CeleryRuntime(jobs=[AcmePingJob])
         with pytest.raises(ConfigError, match=r"stores\.default\.backend is 'clickhouse'"):
-            compose_application(source, adapter)
+            project.compose(adapter)
 
     def test_a_sqlalchemy_store_resolves_its_section_once_per_composition(
         self, fixture_project: ProjectFactory, store_resolutions: Counter[str]
@@ -108,7 +108,7 @@ class TestStoreCatalog:
             "resolved_sqlalchemy", store={"backend": "sqlalchemy", "url": "${count:url}"}
         )
 
-        build_application(path, adapter=FastAPIAdapter(), environment="test", resolvers=[counter])
+        Project.load(path, environment="test", resolvers=[counter]).compose(FastAPIRuntime())
 
         assert counter.calls == Counter({"url": 1})
         assert store_resolutions == Counter({"stores.default": 1})
@@ -130,10 +130,10 @@ class TestStoreCatalog:
             id_field=UUID4_ID_FIELD,
         )
 
-        build_application(path, adapter=FastAPIAdapter(), environment="test", resolvers=[counter])
+        Project.load(path, environment="test", resolvers=[counter]).compose(FastAPIRuntime())
 
         assert counter.calls == Counter({"url": 1, "database": 1})
-        # settings() for the retired keys and decode() share the one resolution.
+        # section() for the retired keys and decode() share the one resolution.
         assert store_resolutions == Counter({"stores.default": 1})
 
     def test_a_store_spec_resolves_once_for_settings_and_decode(
@@ -143,7 +143,7 @@ class TestStoreCatalog:
         ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "none", "url": "u"}}})
         spec = StoreSpec(key=DEFAULT_STORE, backend="none", config=ctx)
 
-        settings = spec.settings()
+        settings = spec.section()
         settings["url"] = "changed"
 
         assert spec.decode(dict) == {"url": "u"}
@@ -165,4 +165,4 @@ class TestStoreCatalog:
 
         stores_module.load_catalog(ConfigContext.from_dict({"stores": stores}))
 
-        assert scans == ["loom.persistence.backends"]
+        assert scans == ["loom.stores.plugins"]

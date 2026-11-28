@@ -20,11 +20,10 @@ import pytest
 
 from loom.composition import Application, phases
 from loom.composition.errors import ReservedBindingError
-from loom.composition.source import CompositionSource
+from loom.composition.project import Project
 from loom.core.bootstrap import BootstrapError
 from loom.core.di import ContainerSealed
 from loom.core.di.container import ResolutionError
-from loom.core.logger import get_logger
 from tests.helpers.composition import Serving
 from tests.unit.composition.phases.components import (
     AcmeJob,
@@ -52,9 +51,9 @@ _WRAPPED = {
 
 _RAW = {
     "reserved-binding": "ReservedBindingError",
-    "job-backend": "JobBackendError",
-    "job-backend-celery-extra": "JobBackendError",
-    "job-backend-celery-section": "JobBackendError",
+    "job-transport": "JobTransportError",
+    "job-transport-celery-extra": "JobTransportError",
+    "job-transport-celery-section": "JobTransportError",
     "sqs-queue": "SQSQueueConfigError",
     "sql-invalid-section": "ConfigError",
     "sql-retired-key": "ConfigError",
@@ -115,7 +114,9 @@ class TestStartupErrors:
             cause = recorded["cause"]
             assert recorded["wrapped"], path
             assert _type(cause["type"]) == _WRAPPED[refusal], path
-            assert recorded["message"] == f"Bootstrap failed: {cause['message']}", path
+            assert recorded["message"].startswith("Bootstrap failed"), path
+            if not cause["type"].startswith("loom."):
+                assert cause["message"] not in recorded["message"], path
 
     @pytest.mark.parametrize("refusal", list(_RAW))
     def test_a_raw_refusal_keeps_its_type(self, refusal: str) -> None:
@@ -134,11 +135,11 @@ class TestStartupErrors:
             assert _type(compilation["type"]) == "CompilationError", path
 
     @pytest.mark.parametrize(
-        ("overrides", "setup"),
+        ("overrides", "setup", "message"),
         [
-            ((raises_at_registration,), _unchanged),
-            ((), _failing_repositories),
-            ((), _failing_cache),
+            ((raises_at_registration,), _unchanged, "failed in raises_at_registration"),
+            ((), _failing_repositories, "failed"),
+            ((), _failing_cache, "failed"),
         ],
         ids=["override", "repository-module", "cache-module"],
     )
@@ -146,29 +147,31 @@ class TestStartupErrors:
         self,
         overrides: tuple[Callable[..., None], ...],
         setup: Callable[[pytest.MonkeyPatch], None],
+        message: str,
         overridden: Callable[..., Application],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         setup(monkeypatch)
 
-        with pytest.raises(BootstrapError, match="Bootstrap failed: acme module failed") as caught:
+        with pytest.raises(BootstrapError) as caught:
             overridden(*overrides)
 
         assert type(caught.value) is BootstrapError
+        assert str(caught.value) == f"Bootstrap {message}: RuntimeError"
         assert isinstance(caught.value.__cause__, RuntimeError)
+        assert str(caught.value.__cause__) == "acme module failed"
 
-    def test_seal_validates_the_container_it_seals(self, source: CompositionSource) -> None:
+    def test_seal_validates_the_container_it_seals(self, project: Project) -> None:
         adapter = Serving(AcmeRecord, use_cases=(AcmePing,), jobs=(AcmeJob,))
-        recipe = phases.plan(source, adapter)
-        stores = phases.build_stores(source, recipe)
-        kernel, _sql, _jobs = phases.register(
-            source, recipe, stores, modules=(binds_unbuildable,), logger=get_logger("tests.acme")
-        )
+        recipe = replace(phases.plan(project, adapter), overrides=(binds_unbuildable,))
+        stores = phases.build_stores(project, recipe)
+        installers = phases.build_installers(project.config, recipe.discovered.installers)
+        kernel, _sql, _jobs = phases.register(project, recipe, stores, installers)
         analysis = recipe.analysed(kernel.factory.graph)
 
         with pytest.raises(BootstrapError, match="AcmeUnbuildable") as caught:
             phases.seal(
-                kernel, analysis, recipe, catalog=source.catalog, factories=stores.factories
+                kernel, analysis, recipe, catalog=project.catalog, factories=stores.factories
             )
 
         assert isinstance(caught.value.__cause__, ResolutionError)

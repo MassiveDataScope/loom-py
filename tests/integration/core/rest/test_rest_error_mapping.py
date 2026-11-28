@@ -1,6 +1,6 @@
 """Integration tests — REST layer error mapping.
 
-Verifies that every ``LoomError`` subclass is mapped to the correct HTTP
+Verifies that every ``CodedError`` subclass is mapped to the correct HTTP
 status code and that the response body contains the expected fields, without
 requiring a database or external service.
 
@@ -40,7 +40,7 @@ def _error_detail(resp):  # type: ignore[no-untyped-def]
 
 
 # ---------------------------------------------------------------------------
-# Validation errors (RuleViolations → 422)
+# Validation errors (RuleViolationsError → 422)
 # ---------------------------------------------------------------------------
 
 

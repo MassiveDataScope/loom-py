@@ -1,7 +1,7 @@
 # Celery worker
 
 `loom-kernel` bootstraps Celery workers from the same config, discovery and
-composition used by the REST API: the worker gets the same persistence backends,
+composition used by the REST API: the worker gets the same store backends,
 row-level security and startup checks. Jobs are first-class citizens — they
 support `Input()`, `LoadById()`, `Rule`, and full DI injection just like use cases.
 
@@ -20,11 +20,11 @@ pip install "loom-kernel[celery]"
 | Concept | Purpose |
 |---------|---------|
 | `Job` | Background unit of work — runs asynchronously on a worker |
-| `JobService.dispatch()` | Enqueue a job after the current UoW commits (fire-and-forget) |
+| `JobService.dispatch_after_commit()` | Enqueue a job after the current UoW commits (fire-and-forget) |
 | `JobService.run()` | Execute a job immediately in the calling process |
 | `JobCallback` | Hook invoked by the broker on task success or failure |
 | `bootstrap_worker()` | Single entry point to start a Celery worker |
-| `CeleryAdapter` | The worker's adapter over the shared composition (`loom.celery.adapter`) |
+| `CeleryRuntime` | The worker's runtime over the shared composition (`loom.celery.runtime`) |
 | `WorkerNotOpenError` | Raised by every task of a worker process whose application failed to open |
 | `CeleryConfig` | YAML-driven broker and worker settings |
 | `JobConfig` | Per-job routing and retry overrides from YAML |
@@ -55,7 +55,7 @@ class SendRestockEmailJob(Job[bool]):
     """Send a restock notification email. Returns True when email was sent."""
 
     __queue__ = "notifications"
-    __retries__ = 2
+    __retry__ = Backoff(first_s=10, factor=3, max_s=600)
     __timeout__ = 30  # soft time limit in seconds
 
     async def execute(
@@ -75,7 +75,7 @@ class SendRestockEmailJob(Job[bool]):
 | ClassVar | Type | Default | Description |
 |----------|------|---------|-------------|
 | `__queue__` | `str` | `"default"` | Target Celery queue |
-| `__retries__` | `int` | `3` | Max automatic retries on failure |
+| `__retry__` | `Backoff \| None` | `None` | Delay between attempts; `None` takes the loom default `Backoff(5, 2, 300)` |
 | `__countdown__` | `int` | `0` | Delay in seconds before first execution |
 | `__timeout__` | `int \| None` | `None` | Soft time limit in seconds |
 | `__priority__` | `int` | `0` | Task priority (broker-dependent) |
@@ -87,7 +87,7 @@ see {ref}`per-job-overrides-from-yaml`.
 
 ## Dispatch a job
 
-Use `JobService.dispatch()` inside a use case to enqueue a job after the current
+Use `JobService.dispatch_after_commit()` inside a use case to enqueue a job after the current
 Unit of Work commits. The job is **not sent** if the UoW rolls back — dispatch is
 transactionally safe:
 
@@ -112,7 +112,7 @@ class DispatchRestockEmailUseCase(UseCase[Product, DispatchRestockEmailResponse]
         cmd: DispatchRestockEmailCommand = Input(),
         product: Product = LoadById(Product, by="product_id"),
     ) -> DispatchRestockEmailResponse:
-        handle = self._jobs.dispatch(
+        handle = self._jobs.dispatch_after_commit(
             SendRestockEmailJob,
             params={"product_id": int(product_id)},
             payload={
@@ -126,10 +126,10 @@ class DispatchRestockEmailUseCase(UseCase[Product, DispatchRestockEmailResponse]
         return DispatchRestockEmailResponse(job_id=handle.job_id, queue=handle.queue)
 ```
 
-`dispatch()` returns a `JobHandle` immediately — the broker call happens after the
+`dispatch_after_commit()` returns a `JobHandle` immediately — the broker call happens after the
 UoW commits. The HTTP response does not wait for the job to complete.
 
-### dispatch() parameters
+### dispatch_after_commit() parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -137,11 +137,10 @@ UoW commits. The HTTP response does not wait for the job to complete.
 | `params` | `dict \| None` | Path/query params for `execute()` signature |
 | `payload` | `dict \| None` | JSON body passed as `Input()` command |
 | `on_success` | `type[Callback] \| None` | Callback invoked by the broker on success |
-| `on_failure` | `type[Callback] \| None` | Callback invoked by the broker on failure |
+| `on_failure` | `type[Callback] \| None` | Callback invoked by the worker on every terminal failure of the job task |
 | `queue` | `str \| None` | Override the job's `__queue__` for this dispatch only |
-| `countdown` | `int \| None` | Delay in seconds before execution |
+| `countdown` | `int \| None` | Delay in seconds before execution, 0 through 900 inclusive |
 | `priority` | `int \| None` | Override the job's `__priority__` |
-| `eta` | `datetime \| None` | Absolute datetime for first execution |
 
 ---
 
@@ -165,28 +164,45 @@ class BuildProductSummaryUseCase(UseCase[Product, ProductSummaryResponse]):
         return ProductSummaryResponse(product_id=int(product_id), summary=summary)
 ```
 
-`run()` works identically in both `InlineJobService` (development / tests) and
-`CeleryJobService` (production). When Celery is configured, it bypasses the broker
+`run()` works identically in both `JobService with InlineJobTransport` (development / tests) and
+`JobService with CeleryJobTransport` (production). When Celery is configured, it bypasses the broker
 entirely — the job runs in the API process via the same DI container.
 
-Use `dispatch()` for fire-and-forget work; use `run()` when you need the result now.
+Use `dispatch_after_commit()` for fire-and-forget work; use `run()` when you need the result now.
+
+### Delays inline
+
+`JobService with InlineJobTransport` honours `countdown`, `JobPostponement` and failure backoff: a
+delayed job waits in the memory of the process on a `JobTimer` and runs again
+with its attempt and postponements carried. Exhausted attempts abandon the job and
+call `on_failure`. A job delayed this way is lost when the process stops (the
+timer logs them, by job and task id, in one line at shutdown), so the service logs a warning at
+start-up: use Celery or SQS in production. A Lambda function cannot hold a
+delay: its inline service refuses a countdown above zero with `JobDelayRefusedError`,
+abandons a `JobPostponement`, and abandons a failing job at its first attempt with its own error.
 
 ---
 
 ## Callbacks
 
-Callbacks are injected by the DI container and can interact with the application
-via `ApplicationInvoker`. Implement `on_success` and/or `on_failure` — both can be
-sync or async:
+A callback is a subclass of `JobCallback` defined in a package listed in
+`app.packages`: the scan finds it, and Celery registers a success and a failure
+task for it. Both hooks do nothing until overridden, so override `on_success`,
+`on_failure` or both, each as `def` or `async def`. The DI container builds the
+callback, so it can interact with the application via `ApplicationInvoker`.
+A `dispatch_after_commit(..., on_success=X)` naming a class the scan did not find is refused
+with a `ValueError`, by every job service the composition builds, before anything is
+sent:
 
 ```python
 # app/product/callbacks.py
 from typing import Any
+from loom.core.job.callback import JobCallback
 from loom.core.use_case.invoker import ApplicationInvoker
 from app.product.model import Product
 
 
-class RestockEmailSuccessCallback:
+class RestockEmailSuccessCallback(JobCallback):
     """Tags the product category when a restock email is sent successfully."""
 
     def __init__(self, app: ApplicationInvoker) -> None:
@@ -204,11 +220,11 @@ class RestockEmailSuccessCallback:
                 payload={"category": f"{product.category}-restock-notified"},
             )
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
+    def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None:
         pass  # log or send alert
 
 
-class RestockEmailFailureCallback:
+class RestockEmailFailureCallback(JobCallback):
     """Tags the product category when restock email dispatch fails."""
 
     def __init__(self, app: ApplicationInvoker) -> None:
@@ -217,9 +233,7 @@ class RestockEmailFailureCallback:
     def on_success(self, job_id: str, result: Any, **context: Any) -> None:
         pass
 
-    async def on_failure(
-        self, job_id: str, exc_type: str, exc_msg: str, **context: Any
-    ) -> None:
+    async def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None:
         product_id = context.get("product_id")
         entity = self._app.entity(Product)
         product = await entity.get(params={"id": product_id})
@@ -236,23 +250,36 @@ class RestockEmailFailureCallback:
 # called on task success — result is the value returned by Job.execute()
 async def on_success(self, job_id: str, result: Any, **context: Any) -> None: ...
 
-# called on task failure — exc_type / exc_msg describe the exception
-async def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None: ...
+
+# called on task failure — exc_type is the exception's fully qualified class name
+# (app.billing.PaymentDeclined; a builtin bare: ValueError), exc_code its loom code
+async def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None: ...
 ```
 
-`**context` contains the raw `payload` dict passed to `dispatch()` — use it to
+`**context` contains the raw `payload` dict passed to `dispatch_after_commit()` — use it to
 recover entity IDs and other parameters the callback needs.
 
-> **Fire-and-forget**: when a job dispatched via `dispatch()` fails, the failure
+> **Fire-and-forget**: when a job dispatched via `dispatch_after_commit()` fails, the failure
 > callback is invoked and the exception is **silenced**. The HTTP layer is not affected.
 > Use `run()` when you need the exception to propagate synchronously.
 
+> **Delivery of the failure callback**: the worker that ends the job with an error sends the
+> failure callback task itself, with the error's class and message, before it stores the failure.
+> Every terminal failure notifies, including a job refused because the worker could not open its
+> application and a soft time limit; a retried failure does not. The callback is delivered *at
+> least once*: a worker that dies between the send and the acknowledgement of the job repeats
+> it. A hard kill (hard time limit, out of memory, `SIGKILL`) cannot notify. Deploy workers before
+> dispatchers: a worker older than the dispatcher refuses the `failure_callback` argument.
+>
+> The soft time limit equals the job's timeout, which the runner already enforces on the event
+> loop, so Celery's own soft limit fires only when a job blocks that loop.
+
 ---
 
-## Pick the job backend
+## Pick the job transport
 
 `app.job_service` names the backend of every queue `celery.queues` does not
-list, and of Celery's default queue; see [Pick the job backend](../rest/celery.md#pick-the-job-backend).
+list, and of Celery's default queue; see [Pick the job transport](../rest/celery.md#pick-the-job-transport).
 
 ---
 
@@ -321,16 +348,16 @@ In `config/worker.yaml`:
 jobs:
   SendRestockEmailJob:
     queue: notifications
-    retries: 2
+    retry: {max_attempts: 4}
     timeout: 30
 
   BuildProductSummaryJob:
     queue: analytics
-    retries: 1
+    retry: {first_s: 1, max_attempts: 2}
 
   SyncProductToErpJob:
     queue: erp
-    retries: 3
+    retry: {factor: 1.5, jitter: false}
     countdown: 5
     priority: 5
 ```
@@ -338,135 +365,94 @@ jobs:
 | Field | Job ClassVar | Description |
 |-------|-------------|-------------|
 | `queue` | `__queue__` | Target Celery queue |
-| `retries` | `__retries__` | Max automatic retries |
+| `retry` | `__retry__` | Retry policy, see below |
 | `countdown` | `__countdown__` | Delay in seconds before execution |
 | `timeout` | `__timeout__` | Soft time limit in seconds |
 | `priority` | `__priority__` | Task priority |
+
+### Retry policy
+
+A job is attempted at most `max_attempts` times (3 by default). After a failed
+attempt it waits `Backoff(first_s, factor, max_s, jitter)`: `first_s * factor ** (attempt - 1)`
+seconds, capped at `max_s` (never above 900) and, with `jitter` (the default), drawn
+uniformly from zero to that value. A job may raise `JobPostponement(reason, delay_s=None)`
+to run again later without using an attempt, or `JobAbandonment(reason)` to give up at
+once; a loom error whose `is_retryable` is `False` is abandoned at its first attempt, and any other exception is retried.
+
+The most specific layer wins, and a section that sets only some fields inherits the
+rest from the layer below: `jobs.<Job>.retry`, then `jobs.defaults.retry`, then the
+job's `__retry__`, then the loom default. `max_attempts` is only set in YAML.
+A job reads the delivery it runs under by declaring `delivery: JobDelivery | None =
+Delivery()` on `execute` (its `attempt` and `postponements`); a job run by another job gets
+`None`.
+
+```yaml
+jobs:
+  defaults:
+    retry: {max_attempts: 5}
+  SyncProductToErpJob:
+    retry: {first_s: 30}
+```
+
+Start-up logs one line with each job's effective policy and the layer it came from.
 
 ---
 
 (worker-bootstrap)=
 ## Worker bootstrap
 
-### Option 1: Discovery from YAML (recommended)
+### Package discovery
 
-Declare `app.discovery` in `worker.yaml` and let the framework discover jobs,
-use cases, and interfaces automatically. This is the most production-friendly option:
-
-In `config/worker.yaml`:
+Declare application packages in `config/worker.yaml`. The worker recursively
+scans their modules for jobs, use cases, and models:
 
 ```yaml
-includes:
-  - celery.yaml
-
 app:
-  name: billing-worker
-  discovery:
-    mode: modules
-    modules:
-      include:
-        - app.product.model
-        - app.product.jobs
-        - app.product.use_cases
-        - app.product.interface
-        - app.product.callbacks
-
-persistence:
-  cursors:
-    signing: ephemeral
+  name: acme-worker
+  packages: [acme]
 
 stores:
+  settings:
+    cursors:
+      signing: ephemeral
   default:
     backend: sqlalchemy
     url: ${oc.env:DATABASE_URL}
 ```
 
-| Key | Meaning |
-| --- | --- |
-| `celery.yaml` | broker settings |
-| `name` | required: names the worker and its metrics |
-| `signing` | `signing: ephemeral` is for `development.yaml` only; `production.yaml` configures keys |
-
 ```python
-# src/app/worker_main.py
 from loom.celery.bootstrap import bootstrap_worker
-from app.runtime_config import worker_config_paths
 
-result = bootstrap_worker(*worker_config_paths())
+result = bootstrap_worker("config/worker.yaml")
 celery_app = result.celery_app
 ```
 
-Discovery automatically includes all use cases — callbacks can call
-`ApplicationInvoker.entity(...)` without any extra configuration.
-
-### Option 2: Manifest (explicit, deterministic)
-
-Define a manifest module that lists all jobs and callbacks explicitly.
-Ideal for production when you want full control over what is registered:
-
-```python
-# app/manifest.py
-from app.product.jobs import SendRestockEmailJob, BuildProductSummaryJob, SyncProductToErpJob
-from app.product.callbacks import RestockEmailSuccessCallback, RestockEmailFailureCallback
-from app.product.use_cases import DispatchRestockEmailUseCase, BuildProductSummaryUseCase
-from app.product.model import Product
-
-MODELS = [Product]
-JOBS = [SendRestockEmailJob, BuildProductSummaryJob, SyncProductToErpJob]
-CALLBACKS = [RestockEmailSuccessCallback, RestockEmailFailureCallback]
-USE_CASES = [DispatchRestockEmailUseCase, BuildProductSummaryUseCase]
-```
-
-In `config/worker.yaml`:
-
-```yaml
-includes:
-  - celery.yaml
-
-app:
-  name: billing-worker
-  discovery:
-    mode: manifest
-    manifest:
-      module: app.manifest
-
-persistence:
-  cursors:
-    signing: ephemeral
-
-stores:
-  default:
-    backend: sqlalchemy
-    url: ${oc.env:DATABASE_URL}
-```
-
-`name` is required: it names the worker and its metrics.
-
-`signing: ephemeral` is for `development.yaml` only; `production.yaml` configures keys.
+The scanner sorts classes by defining module and qualname. Job callbacks, the
+`JobCallback` subclasses of those packages, are found the same way: no
+`callbacks=` argument exists.
 
 ### Option 3: Explicit jobs in code
 
 For simple workers or micro-services with a single job, pass jobs directly.
-If `app.discovery` is also present in the YAML (e.g. inherited from a shared
+If `app.packages` is also present in the YAML (e.g. inherited from a shared
 `base.yaml`), use cases discovered there are automatically added to the registry —
-callbacks can use `ApplicationInvoker` without any extra parameter:
+callbacks, found in the same packages, can use `ApplicationInvoker` without any
+extra parameter:
 
 ```python
 # src/app/worker_main.py
 from loom.celery.bootstrap import bootstrap_worker
 from app.product.jobs import SendRestockEmailJob
-from app.product.callbacks import RestockEmailSuccessCallback
 
 result = bootstrap_worker(
-    "config/worker.yaml",   # includes base.yaml → app.discovery auto-supplements registry
+    "config/worker.yaml",  # includes base.yaml → app.packages supplements registry
     jobs=[SendRestockEmailJob],
-    callbacks=[RestockEmailSuccessCallback],
 )
 celery_app = result.celery_app
 ```
 
-If `app.discovery` is **not** in the YAML and callbacks need `ApplicationInvoker`,
-pass the interfaces whose routes the callbacks interact with:
+A callback is found only through `app.packages`. Without it, a worker whose jobs
+need `ApplicationInvoker` passes the interfaces whose routes they interact with:
 
 ```python
 from app.product.interface import ProductInterface
@@ -474,8 +460,7 @@ from app.product.interface import ProductInterface
 result = bootstrap_worker(
     "config/worker.yaml",
     jobs=[SendRestockEmailJob],
-    interfaces=[ProductInterface],     # auto-extracts use-cases from routes (including AutoCRUD)
-    callbacks=[RestockEmailSuccessCallback],
+    interfaces=[ProductInterface],  # auto-extracts use-cases from routes (including AutoCRUD)
 )
 ```
 
@@ -488,7 +473,6 @@ result = bootstrap_worker(
     "config/worker.yaml",
     jobs=[SendRestockEmailJob],
     use_cases=[GetProductUseCase, UpdateProductUseCase],
-    callbacks=[RestockEmailSuccessCallback],
 )
 ```
 
@@ -521,7 +505,7 @@ The built-in resolvers use boto3's default region and credential chain, and
 create their client only when a placeholder resolves: a YAML with no
 `${secrets:...}` or `${ssm:...}` never touches AWS and boots without boto3.
 When a placeholder does resolve and boto3 is missing, the error names the extra
-to install, `loom-kernel[config-ssm]`.
+to install, `loom-kernel[aws]`.
 
 `resolvers=` adds your own prefixes or overrides a built-in by name. Any object
 with a `name` and a `resolve(key) -> object` works:
@@ -529,11 +513,13 @@ with a `name` and a `resolve(key) -> object` works:
 ```python
 from loom.celery.auto import create_app
 
+
 class VaultResolver:
     name = "vault"
 
     def resolve(self, key: str) -> str:
         return read_vault_secret(key)
+
 
 celery_app = create_app("config/worker.yaml", resolvers=[VaultResolver()])
 ```
@@ -562,7 +548,7 @@ The three ways to ensure this are described in {ref}`worker-bootstrap`:
 3. Pass `use_cases=` — declare use cases explicitly
 
 When using the `jobs=` explicit bootstrap **and** `worker.yaml` inherits
-`app.discovery` from a base config, the framework supplements the registry
+`app.packages` from a base config, the framework supplements the registry
 automatically from the discovery config — no code change needed.
 
 ---
@@ -592,7 +578,7 @@ uv run celery -A app.worker_main:celery_app worker \
 The worker composes on the same recipe as the API
 ([Composition and lifecycle](../getting-started/composition.md)):
 `bootstrap_worker`, `loom.celery.auto.create_app` and
-`loom.composition.create_app(..., adapter=CeleryAdapter(...))` build the same
+`loom.composition.create_app(..., runtime=CeleryRuntime(...))` build the same
 application. What stays specific to the worker is its discovery, its pool
 profile (`WORKER_PROFILE`), the agent markers it refuses, and which Celery
 signal checks, opens and closes the application:
@@ -604,10 +590,10 @@ signal checks, opens and closes the application:
 
 ```python
 # src/app/worker_main.py
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.composition import create_app
 
-celery_app = create_app("config/worker.yaml", adapter=CeleryAdapter())
+celery_app = create_app("config/worker.yaml", runtime=CeleryRuntime())
 ```
 
 - The startup checks — `create_all`, or with `schema.mode: external` the
@@ -639,7 +625,7 @@ celery_app = create_app("config/worker.yaml", adapter=CeleryAdapter())
 ### Persistence
 
 The worker resolves its backend like the API, through the
-`loom.persistence.backends` entry points:
+`loom.stores.plugins` entry points:
 
 1. `stores.default.backend`, when the `stores.default` section is declared —
    `sqlalchemy`, `mongo`, `dynamodb`, `none` or a backend of your own;
@@ -650,7 +636,7 @@ With `sqlalchemy` the worker applies row-level security exactly as the API
 does: session settings per transaction, the pool reset, and the
 `schema.mode: external` checks. A backend whose extra is not installed stops
 startup with a `ConfigError` naming `loom-kernel[<backend>]`. Agent and MCP
-markers are still refused at startup: the worker hosts no agent runtime.
+markers are still refused at startup: the worker hosts no agent host.
 
 A worker that discovers no model runs connection-only: no repository and no
 cursor codec, and its startup check is a single `SELECT 1` that, on Postgres,
@@ -685,6 +671,7 @@ Or patch it in a pytest fixture:
 ```python
 import pytest
 from app.worker_main import celery_app
+
 
 @pytest.fixture(autouse=True)
 def celery_eager(monkeypatch):

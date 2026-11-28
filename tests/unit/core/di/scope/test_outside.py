@@ -9,7 +9,7 @@ import pytest
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.execution import ExecutionRequired, ExecutionScope, execution_identity
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.use_case import Agent
@@ -31,7 +31,7 @@ class AcmeIdentityResolver:
 def _bound(scope: Scope) -> LoomContainer:
     container = LoomContainer()
     declare_kinds(container.kinds)
-    RuntimeExecutor(
+    UseCaseExecutor(
         UseCaseCompiler(), resolvers=container.kinds, agent_resolver=AcmeIdentityResolver()
     )
     container.register(AcmeTriage, AcmeTriage, scope=scope)

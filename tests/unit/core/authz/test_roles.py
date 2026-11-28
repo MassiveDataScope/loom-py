@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from loom.core.authz import Permission, Role, RoleCatalog, UnknownPermission, UnknownRole
+from loom.core.authz import Permission, Role, RoleCatalog, UnknownPermissionError, UnknownRoleError
 
 READ = Permission("catalog.read")
 OPERATE = Permission("etl.operate")
@@ -21,15 +21,15 @@ class TestRoleCatalog:
         catalog = RoleCatalog([READ], [Role("viewer", {READ})])
 
         assert catalog.permissions_of("ghost") is None
-        with pytest.raises(UnknownRole, match="ghost"):
+        with pytest.raises(UnknownRoleError, match="ghost"):
             catalog.role("ghost")
 
     def test_rejects_an_undeclared_permission(self) -> None:
-        with pytest.raises(ValueError, match="etl.operate"):
+        with pytest.raises(ValueError, match="undeclared permission"):
             RoleCatalog([READ], [Role("operator", {READ, OPERATE})])
 
     def test_rejects_a_duplicate_role(self) -> None:
-        with pytest.raises(ValueError, match="viewer"):
+        with pytest.raises(ValueError, match="declared twice"):
             RoleCatalog([READ], [Role("viewer", {READ}), Role("viewer", set())])
 
     @pytest.mark.parametrize("name", ["", "has space", " lead", "tab\tname"])
@@ -57,7 +57,7 @@ class TestRoleCatalog:
         catalog = RoleCatalog([READ], [])
 
         catalog.require(READ)
-        with pytest.raises(UnknownPermission, match="etl.operate"):
+        with pytest.raises(UnknownPermissionError, match="etl.operate"):
             catalog.require(OPERATE)
 
     def test_roles_with_names_every_role_that_includes_the_permission(self) -> None:
@@ -67,5 +67,5 @@ class TestRoleCatalog:
 
         assert catalog.roles_with(READ) == frozenset({"viewer", "operator"})
         assert catalog.roles_with(OPERATE) == frozenset({"operator"})
-        with pytest.raises(UnknownPermission):
+        with pytest.raises(UnknownPermissionError):
             catalog.roles_with(Permission("billing.pay"))

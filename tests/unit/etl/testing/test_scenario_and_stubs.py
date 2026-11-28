@@ -12,7 +12,12 @@ from loom.etl.declarative.target._table import ReplaceSpec
 from loom.etl.lineage._records import EventName, RunContext, RunStatus
 from loom.etl.schema._schema import ColumnSchema, LoomDtype
 from loom.etl.testing._scenario import ETLScenario, StepRunnerProto
-from loom.etl.testing._stubs import StubCatalog, StubRunObserver, StubSourceReader, StubTargetWriter
+from loom.etl.testing._stubs import (
+    InMemoryCatalog,
+    InMemorySourceReader,
+    InMemoryTargetWriter,
+    RecordingRunObserver,
+)
 
 
 class _Runner:
@@ -28,6 +33,9 @@ class _Runner:
         schema: Any = None,
     ) -> Any:
         self.calls.append((ref, data, columns))
+        return None
+
+    def seed_rows(self, *instances: Any) -> Any:
         return None
 
     def seed_temp(
@@ -59,23 +67,23 @@ class TestScenario:
         assert isinstance(runner, StepRunnerProto)
 
 
-class TestStubCatalog:
+class TestInMemoryCatalog:
     def test_prefers_explicit_schema_over_table_columns(self) -> None:
         schemas: dict[str, tuple[ColumnSchema, ...]] = {
             "raw.orders": (ColumnSchema("id", LoomDtype.INT64),)
         }
-        catalog = StubCatalog(tables={"raw.orders": ("legacy",)}, schemas=schemas)
+        catalog = InMemoryCatalog(tables={"raw.orders": ("legacy",)}, schemas=schemas)
 
         assert catalog.exists(TableRef("raw.orders")) is True
         assert catalog.columns(TableRef("raw.orders")) == ("id",)
         assert catalog.schema(TableRef("raw.orders")) == schemas["raw.orders"]
 
 
-class TestStubIO:
-    def test_stub_reader_and_writer_capture_data_flow(self) -> None:
+class TestInMemoryIO:
+    def test_in_memory_reader_and_writer_capture_data_flow(self) -> None:
         frame = {"id": [1]}
-        reader = StubSourceReader({"orders": frame})
-        writer = StubTargetWriter()
+        reader = InMemorySourceReader({"orders": frame})
+        writer = InMemoryTargetWriter()
 
         src_spec = TableSourceSpec(alias="orders", table_ref=TableRef("raw.orders"))
         target_spec = ReplaceSpec(table_ref=TableRef("staging.out"))
@@ -85,9 +93,9 @@ class TestStubIO:
         assert writer.written == [(frame, target_spec)]
 
 
-class TestStubObserver:
-    def test_stub_run_observer_records_full_lifecycle_and_status_helpers(self) -> None:
-        observer = StubRunObserver()
+class TestRecordingRunObserver:
+    def test_recording_run_observer_records_full_lifecycle_and_status_helpers(self) -> None:
+        observer = RecordingRunObserver()
         ctx = RunContext(
             run_id="run-1",
             correlation_id="corr-1",
@@ -136,7 +144,7 @@ class TestStubObserver:
                 name="MyStep",
                 id="step-1",
                 correlation_id=ctx.correlation_id,
-                error="boom",
+                error=ValueError(),
                 meta={
                     "run_id": ctx.run_id,
                     "attempt": ctx.attempt,

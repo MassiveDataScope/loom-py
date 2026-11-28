@@ -8,15 +8,17 @@ Internal module — import from :mod:`loom.etl.declarative.target`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from loom.core.schema import SchemaMode
+from loom.etl.declarative._declared_table import ModelBoundSpec
 from loom.etl.declarative.expr._predicate import PredicateNode
-from loom.etl.declarative.expr._refs import TableRef
+from loom.etl.declarative.expr._predicate_dialect import columns_in
 
 
 @dataclass(frozen=True)
-class AppendSpec:
+class AppendSpec(ModelBoundSpec):
     """Append rows to an existing Delta table.
 
     Args:
@@ -28,13 +30,12 @@ class AppendSpec:
                      accept the flag but still materialise the frame.
     """
 
-    table_ref: TableRef
     schema_mode: SchemaMode = SchemaMode.STRICT
     streaming: bool = False
 
 
 @dataclass(frozen=True)
-class ReplaceSpec:
+class ReplaceSpec(ModelBoundSpec):
     """Full overwrite of a Delta table.
 
     Args:
@@ -50,14 +51,13 @@ class ReplaceSpec:
                      writing a frame with no rows.
     """
 
-    table_ref: TableRef
     schema_mode: SchemaMode = SchemaMode.STRICT
     streaming: bool = False
     allow_empty: bool = True
 
 
 @dataclass(frozen=True)
-class ReplacePartitionsSpec:
+class ReplacePartitionsSpec(ModelBoundSpec):
     """Overwrite only the partitions present in the source frame.
 
     The writer collects distinct partition-column combinations from the
@@ -73,7 +73,6 @@ class ReplacePartitionsSpec:
                         the spool, bounding peak memory.
     """
 
-    table_ref: TableRef
     partition_cols: tuple[str, ...]
     schema_mode: SchemaMode = SchemaMode.STRICT
     streaming: bool = False
@@ -83,9 +82,14 @@ class ReplacePartitionsSpec:
     partition-replace, where the predicate maps to whole-partition file
     pruning instead of a row-level rewrite."""
 
+    @property
+    def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
+        """The model columns this spec names, by the argument that names them."""
+        return {"partition_cols": self.partition_cols}
+
 
 @dataclass(frozen=True)
-class ReplaceWhereSpec:
+class ReplaceWhereSpec(ModelBoundSpec):
     """Overwrite rows matching a static predicate (Delta ``replaceWhere``).
 
     The predicate is resolved from run params at write time and passed
@@ -102,19 +106,33 @@ class ReplaceWhereSpec:
                            accept the flag but still materialise the frame.
     """
 
-    table_ref: TableRef
     replace_predicate: PredicateNode
     schema_mode: SchemaMode = SchemaMode.STRICT
     streaming: bool = False
 
+    @property
+    def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
+        """The model columns this spec names, by the argument that names them."""
+        return {"replace_where": columns_in(self.replace_predicate)}
+
+
+def _merge_roles(spec: UpsertSpec | UpdateSpec) -> Mapping[str, tuple[str, ...]]:
+    return {
+        "keys": spec.upsert_keys,
+        "partition_cols": spec.partition_cols,
+        "exclude": spec.upsert_exclude,
+        "include": spec.upsert_include,
+    }
+
 
 @dataclass(frozen=True)
-class UpsertSpec:
+class UpsertSpec(ModelBoundSpec):
     """Merge rows into a Delta table using explicit merge keys (UPSERT).
 
     Args:
         table_ref:      Logical table reference.
-        upsert_keys:    Columns that uniquely identify a row (MERGE ON).
+        declared_keys:  Columns that uniquely identify a row (MERGE ON); ``None``
+                        follows the model's conflict key at compile time.
         schema_mode:    Schema evolution strategy.
         partition_cols: Partition columns added to the MERGE ON predicate
                         for file-level pruning.  Strongly recommended for
@@ -131,37 +149,37 @@ class UpsertSpec:
                         and does not appear in the update or insert maps.
     """
 
-    table_ref: TableRef
-    upsert_keys: tuple[str, ...]
+    declared_keys: tuple[str, ...] | None = None
     schema_mode: SchemaMode = SchemaMode.STRICT
     partition_cols: tuple[str, ...] = field(default_factory=tuple)
     upsert_exclude: tuple[str, ...] = field(default_factory=tuple)
     upsert_include: tuple[str, ...] = field(default_factory=tuple)
     delete_flag: str | None = None
 
+    @property
+    def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
+        """The model columns this spec names, by the argument that names them."""
+        return _merge_roles(self)
 
-def upsert_delete_flag_conflict(spec: UpsertSpec) -> str | None:
-    """Return the upsert option ``delete_flag`` names, or ``None`` when it is usable.
+    @property
+    def upsert_keys(self) -> tuple[str, ...]:
+        """The merge keys: declared, else the model's conflict key."""
+        return self._declared_or_model_keys(self.declared_keys)
 
-    The option is ``keys``, ``partition_cols``, ``exclude``, or ``include``.
-    ``None`` when ``delete_flag`` is unset or names none of those options.
-    """
-    flag = spec.delete_flag
-    if flag is None:
-        return None
-    if flag in spec.upsert_keys:
-        return "keys"
-    if flag in spec.partition_cols:
-        return "partition_cols"
-    if flag in spec.upsert_exclude:
-        return "exclude"
-    if flag in spec.upsert_include:
-        return "include"
-    return None
+    @property
+    def delete_flag_conflict(self) -> str | None:
+        """The option ``delete_flag`` also names, ``None`` when it is unset or usable.
+
+        The option is ``keys``, ``partition_cols``, ``exclude`` or ``include``.
+        """
+        return next(
+            (role for role, names in self.declared_columns.items() if self.delete_flag in names),
+            None,
+        )
 
 
 @dataclass(frozen=True)
-class UpdateSpec:
+class UpdateSpec(ModelBoundSpec):
     """Merge rows into a Delta table updating matches only (matched-only MERGE).
 
     Same MERGE machinery as :class:`UpsertSpec`, minus the insert branch:
@@ -172,7 +190,8 @@ class UpdateSpec:
 
     Args:
         table_ref:      Logical table reference.
-        keys:           Columns that uniquely identify a row (MERGE ON).
+        declared_keys:  Columns that uniquely identify a row (MERGE ON); ``None``
+                        follows the model's conflict key at compile time.
         schema_mode:    Schema evolution strategy.
         partition_cols: Partition columns added to the MERGE ON predicate
                         for file-level pruning.  Strongly recommended for
@@ -183,12 +202,21 @@ class UpdateSpec:
                         Mutually exclusive with *exclude*.
     """
 
-    table_ref: TableRef
-    keys: tuple[str, ...]
+    declared_keys: tuple[str, ...] | None = None
     schema_mode: SchemaMode = SchemaMode.STRICT
     partition_cols: tuple[str, ...] = field(default_factory=tuple)
     exclude: tuple[str, ...] = field(default_factory=tuple)
     include: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
+        """The model columns this spec names, by the argument that names them."""
+        return _merge_roles(self)
+
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """The merge keys: declared, else the model's conflict key."""
+        return self._declared_or_model_keys(self.declared_keys)
 
     @property
     def upsert_keys(self) -> tuple[str, ...]:

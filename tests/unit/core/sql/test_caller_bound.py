@@ -12,12 +12,15 @@ import pytest
 
 from loom.core.config.errors import ConfigError
 from loom.core.identity import ANONYMOUS, Identity
+from loom.core.log_names import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql.abc import RolesNotBoundError, UnknownConnectionError
-from loom.core.sql.caller_bound import CallerBoundSql
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig
-from loom.core.sql.service import NullSqlQueryService, SqlQueryService
+from loom.core.observability.observability import Observability
+from loom.core.stores.event import StoresEvent
+from loom.core.stores.sql.abc import RolesNotBoundError, UnknownConnectionError
+from loom.core.stores.sql.caller_bound import CallerBoundSql
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig
+from loom.core.stores.sql.service import NullSqlQueryService, SqlQueryService
+from tests.helpers.loggers import CapturedLog, install_subject_key, user_hash
 from tests.unit.core.sql._fakes import FakeSqlExecutor, make_connection_config, make_sql_config
 
 
@@ -35,7 +38,7 @@ def _caller_bound(
     executor: FakeSqlExecutor,
     connection: SqlConnectionConfig,
     *,
-    observability: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
 ) -> CallerBoundSql:
     """Build a ``CallerBoundSql`` over a fake 'analytics' connection."""
     config = make_sql_config(analytics=connection)
@@ -70,15 +73,17 @@ class TestCallerBoundRoles:
         assert fake_executor.calls[0].options.roles == ("role_viz_sales",)
 
     async def test_rejects_an_identity_holding_no_allowlisted_role_before_the_backend(
-        self,
-        fake_executor: FakeSqlExecutor,
+        self, fake_executor: FakeSqlExecutor, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """The caller's own entitlements decide, and the refusal precedes execution."""
+        """The caller's entitlements decide before execution; the denial names the caller."""
+        install_subject_key()
         sql = _caller_bound(fake_executor, make_connection_config())
         identity = _identity("role_intruder")
         with pytest.raises(RolesNotBoundError):
             await sql.execute("SELECT 1", connection="analytics", identity=identity)
         assert fake_executor.calls == []
+        denials = CapturedLog(caplog).named(StoresEvent.ROLE_AUTHORIZATION_DENIED)
+        assert [fields[LogField.USER_HASH] for fields in denials] == [user_hash(identity.subject)]
 
     async def test_rejects_an_identity_carrying_no_role(
         self, fake_executor: FakeSqlExecutor
@@ -177,21 +182,21 @@ class TestCallerBoundRoles:
             await sql.execute("SELECT 1", connection="analytics", identity=identity)
         assert fake_executor.calls == []
 
-    async def test_an_accepted_query_emits_a_span_labelled_with_roles_and_subject(
+    async def test_an_accepted_query_emits_a_span_labelled_with_roles_never_the_subject(
         self,
         fake_executor: FakeSqlExecutor,
     ) -> None:
         """The bound path records the labels the REST endpoint guarantees, on its own span."""
         observer = AcmeSqlRecordingObserver()
         sql = _caller_bound(
-            fake_executor, make_connection_config(), observability=ObservabilityRuntime([observer])
+            fake_executor, make_connection_config(), observability=Observability([observer])
         )
         await sql.execute("SELECT 1", connection="analytics", identity=_identity("role_viz_sales"))
         started = next(e for e in observer.events if e.kind == EventKind.START)
         assert started.scope == Scope.READ
         assert started.name == "sql:analytics"
         assert started.meta["roles"] == "role_viz_sales"
-        assert started.meta["subject"] == "user-1"
+        assert "subject" not in started.meta
         assert started.meta["mechanism"] == "jwt"
 
     async def test_the_span_names_only_the_roles_the_query_runs_with(
@@ -201,7 +206,7 @@ class TestCallerBoundRoles:
         """A dropped role must not appear in the audit trail as if it had applied."""
         observer = AcmeSqlRecordingObserver()
         sql = _caller_bound(
-            fake_executor, make_connection_config(), observability=ObservabilityRuntime([observer])
+            fake_executor, make_connection_config(), observability=Observability([observer])
         )
         await sql.execute(
             "SELECT 1",
@@ -215,21 +220,21 @@ class TestCallerBoundRoles:
         """No query ran, so there is nothing to attribute to any set of roles."""
         observer = AcmeSqlRecordingObserver()
         sql = _caller_bound(
-            fake_executor, make_connection_config(), observability=ObservabilityRuntime([observer])
+            fake_executor, make_connection_config(), observability=Observability([observer])
         )
         identity = _identity("role_intruder")
         with pytest.raises(RolesNotBoundError):
             await sql.execute("SELECT 1", connection="analytics", identity=identity)
         assert observer.events == []
 
-    async def test_without_an_observability_runtime_the_query_runs_and_records_nothing(
+    async def test_without_observability_the_query_runs_and_records_nothing(
         self,
         fake_executor: FakeSqlExecutor,
     ) -> None:
         """The span is an addition, never a requirement of the bound path.
 
         The twin of this case with a runtime is
-        ``test_an_accepted_query_emits_a_span_labelled_with_roles_and_subject``;
+        ``test_an_accepted_query_emits_a_span_labelled_with_roles_never_the_subject``;
         what this one pins is that dropping the runtime costs the caller nothing
         but the record, so the observer built here must stay empty.
         """

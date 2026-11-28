@@ -6,15 +6,15 @@ registration or inheritance.
 
 Supported backends
 ------------------
-- ``Backend.SQLALCHEMY``: bulk-inserts rows using SQLAlchemy async sessions.
+- ``TableEngine.SQLALCHEMY``: bulk-inserts rows using SQLAlchemy async sessions.
   Requires an async bridge and a shared SQLAlchemy session manager from the
   Bytewax runtime.
   Install: ``pip install sqlalchemy``.
-- ``Backend.DELTA``: stages rows as a PyArrow IPC stream in a spooled
+- ``TableEngine.DELTA``: stages rows as a PyArrow IPC stream in a spooled
   temporary file and appends it to Delta via delta-rs.
   Requires a ``uri`` key in the resolved config section.
   Install: ``pip install deltalake polars``.
-- ``Backend.CLICKHOUSE``: bulk-inserts rows via ``clickhouse-connect``.
+- ``TableEngine.CLICKHOUSE``: bulk-inserts rows via ``clickhouse-connect``.
   Requires a ``store`` reference to a ``stores.<name>`` section with
   ``backend: clickhouse``: a connection-only store holding the ClickHouse
   connection (``url``, optional credentials and timeouts).
@@ -51,8 +51,8 @@ Config example (streaming.sinks.<name>)::
 SQLAlchemy example::
 
     from loom.core.config import ConfigContext
-    from loom.core.persistence import STREAMING_PROFILE, load_database_config
-    from loom.core.repository.sqlalchemy import build_session_manager
+    from loom.core.stores import STREAMING_PROFILE, load_database_config
+    from loom.stores.sqlalchemy import build_session_manager
     from loom.streaming.nodes._table import SqlAlchemySinkConfig
 
     ctx = ConfigContext.from_yaml("config.yaml")
@@ -96,13 +96,13 @@ import msgspec
 
 from loom.core.async_bridge import AsyncBridge
 from loom.core.connections import ClickHouseConnection
-from loom.core.errors import BoundaryValidationError
+from loom.core.errors import BoundaryValidationError, InvalidType, InvalidUse, InvalidValue
 from loom.core.errors.codes import ErrorCode
 from loom.core.model.convert import to_column_value
 from loom.core.model.introspection import get_column_fields
 from loom.core.model.redaction import Dsn, RedactedMap
-from loom.core.persistence.database import DatabaseConfig
 from loom.core.plugins.optional import import_optional
+from loom.core.stores.database import DatabaseConfig
 from loom.streaming.core._message import StreamPayload
 from loom.streaming.nodes._sink import SinkPartition
 
@@ -124,7 +124,7 @@ _DEFAULT_BUFFER_MAX_AGE_S = 60.0
 _DEFAULT_FLUSH_ON_SHUTDOWN = True
 
 
-class Backend(StrEnum):
+class TableEngine(StrEnum):
     """Storage backend used by :class:`IntoTable` to write epoch batches.
 
     Args:
@@ -179,7 +179,7 @@ class IntoTable(Generic[EventT]):
         payload: Concrete event type written by this sink.
         table:   Target table name.  May be overridden by the resolved config
                  section or left empty when the config supplies it.
-        backend: Storage backend.  Defaults to :attr:`Backend.SQLALCHEMY`.
+        engine: Table engine.  Defaults to :attr:`TableEngine.SQLALCHEMY`.
         name:    Config section key (``streaming.sinks.<name>``).  Required
                  when the sink is resolved from ``ConfigContext``.
         router_branch_safe: Always ``True`` — IntoTable may appear inside
@@ -208,7 +208,7 @@ class IntoTable(Generic[EventT]):
 
     payload: type[EventT]
     table: str = ""
-    backend: Backend = Backend.SQLALCHEMY
+    engine: TableEngine = TableEngine.SQLALCHEMY
     name: str = ""
     router_branch_safe: ClassVar[bool] = True
 
@@ -219,7 +219,6 @@ class IntoTable(Generic[EventT]):
         worker_count: int,
         bridge: AsyncBridge | None = None,
         session_manager: _SessionManagerLike | None = None,
-        logger: Any = None,
     ) -> SinkPartition[EventT]:
         """Build the per-worker partition for this sink.
 
@@ -235,22 +234,22 @@ class IntoTable(Generic[EventT]):
             ``write_batch`` and ``close`` calls.
 
         Raises:
-            TypeError: If the provided config does not match the selected backend.
-            RuntimeError: If required runtime resources are missing.
-            ValueError: If the resolved backend is not supported, or a Delta
+            InvalidType: If the provided config does not match the selected backend.
+            InvalidUse: If required runtime resources are missing.
+            InvalidValue: If the resolved backend is not supported, or a Delta
                 payload type has no fields.
         """
         del worker_index, worker_count
-        if self.backend is Backend.SQLALCHEMY:
+        if self.engine is TableEngine.SQLALCHEMY:
             if not isinstance(config, SqlAlchemySinkConfig):
-                raise TypeError("IntoTable backend=sqlalchemy requires a SqlAlchemySinkConfig.")
+                raise InvalidType("IntoTable engine=sqlalchemy requires a SqlAlchemySinkConfig.")
             if bridge is None:
-                raise RuntimeError(
-                    "IntoTable backend=sqlalchemy requires an AsyncBridge from the Bytewax runtime."
+                raise InvalidUse(
+                    "IntoTable engine=sqlalchemy requires an AsyncBridge from the Bytewax runtime."
                 )
             if session_manager is None:
-                raise RuntimeError(
-                    "IntoTable backend=sqlalchemy requires a shared "
+                raise InvalidUse(
+                    "IntoTable engine=sqlalchemy requires a shared "
                     "SessionManager from the Bytewax runtime."
                 )
             sqlalchemy = cast(
@@ -263,15 +262,14 @@ class IntoTable(Generic[EventT]):
                     self.payload,
                     bridge,
                     session_manager,
-                    logger=logger,
                 ),
             )
-        if self.backend is Backend.DELTA:
+        if self.engine is TableEngine.DELTA:
             if not isinstance(config, DeltaSinkConfig):
-                raise TypeError("IntoTable backend=delta requires a DeltaSinkConfig.")
+                raise InvalidType("IntoTable engine=delta requires a DeltaSinkConfig.")
             if not _column_names(self.payload):
-                raise ValueError(
-                    f"IntoTable backend=delta requires a payload type with fields; "
+                raise InvalidValue(
+                    f"IntoTable engine=delta requires a payload type with fields; "
                     f"{self.payload.__name__} has none, so it has no row to write."
                 )
             delta = cast(
@@ -279,19 +277,21 @@ class IntoTable(Generic[EventT]):
             )
             return cast(
                 SinkPartition[EventT],
-                delta._DeltaTablePartition(config, self.payload, logger=logger),
+                delta._DeltaTablePartition(config, self.payload),
             )
-        if self.backend is Backend.CLICKHOUSE:
+        if self.engine is TableEngine.CLICKHOUSE:
             if not isinstance(config, ClickHouseSinkConfig):
-                raise TypeError("IntoTable backend=clickhouse requires a ClickHouseSinkConfig.")
+                raise InvalidType("IntoTable engine=clickhouse requires a ClickHouseSinkConfig.")
             clickhouse = cast(
                 Any, import_optional("loom.streaming.nodes._table._clickhouse", extra="clickhouse")
             )
             return cast(
                 SinkPartition[EventT],
-                clickhouse._ClickHouseTablePartition(config, self.payload, logger=logger),
+                clickhouse._ClickHouseTablePartition(config, self.payload),
             )
-        raise ValueError(f"Unsupported backend: {self.backend!r}")
+        raise InvalidValue(
+            f"IntoTable engine must be one of {[engine.value for engine in TableEngine]}."
+        )
 
 
 def _optional_int(value: Any, default: int) -> int:
@@ -330,13 +330,13 @@ def _mapping_section(config: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     """Return the nested section *key* of a Delta sink config, ``{}`` when unset.
 
     Raises:
-        ValueError: If *key* is set to something other than a mapping.
+        InvalidType: If *key* is set to something other than a mapping.
     """
     value = config.get(key)
     if value is None:
         return {}
     if not isinstance(value, Mapping):
-        raise ValueError(
+        raise InvalidType(
             f"Delta sink config '{key}' must be a mapping, got {type(value).__name__}."
         )
     return value
@@ -348,14 +348,14 @@ def _refuse_unknown_keys(
     """Raise when *config* carries a key the sink does not read.
 
     Raises:
-        ValueError: Naming every unknown key, sorted.
+        InvalidValue: Naming every unknown key, sorted.
     """
     unknown = sorted(f"{prefix}{key}" for key in config if key not in known)
     if not unknown:
         return
     noun = "key" if len(unknown) == 1 else "keys"
     names = ", ".join(repr(key) for key in unknown)
-    raise ValueError(f"{sink} sink config has unknown {noun} {names}.")
+    raise InvalidValue(f"{sink} sink config has unknown {noun} {names}.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -382,7 +382,7 @@ class SqlAlchemySinkConfig:
         """Build SQLAlchemy sink settings from a resolved sink config.
 
         Raises:
-            ValueError: If the config carries a key the sink does not read,
+            InvalidValue: If the config carries a key the sink does not read,
                 or names no table.
         """
         table = str(config.get("table") or default_table).strip()
@@ -396,7 +396,7 @@ class SqlAlchemySinkConfig:
         )
         _refuse_unknown_keys(config, known, sink="SQLAlchemy")
         if not table:
-            raise ValueError("SQLAlchemy sink config requires a non-empty table name.")
+            raise InvalidValue("SQLAlchemy sink config requires a non-empty table name.")
         return cls(
             store=store,
             url=url,
@@ -443,14 +443,14 @@ class DeltaSinkConfig:
         most 10 000 rows.
 
         Raises:
-            ValueError: If ``uri`` is empty, a value is invalid, or the config
+            InvalidValue: If ``uri`` is empty, a value is invalid, or the config
                 or its ``staging`` carries a key the sink does not read.
         """
         _refuse_unknown_keys(config, _DELTA_SINK_KEYS, sink="Delta")
         table = str(config.get("table") or default_table).strip()
         uri = str(config.get("uri") or "").strip()
         if not uri:
-            raise ValueError("Delta sink config requires a non-empty 'uri'.")
+            raise InvalidValue("Delta sink config requires a non-empty 'uri'.")
         raw_partition_by = config.get("partition_by") or []
         staging_config = _mapping_section(config, "staging")
         _refuse_unknown_keys(staging_config, _DELTA_STAGING_KEYS, sink="Delta", prefix="staging.")
@@ -517,13 +517,13 @@ class ClickHouseSinkConfig:
             connection: The ClickHouse connection of the sink's store.
 
         Raises:
-            ValueError: If the table is empty or the config carries a key the
+            InvalidValue: If the table is empty or the config carries a key the
                 sink does not read.
         """
         _refuse_unknown_keys(config, _CLICKHOUSE_SINK_KEYS, sink="ClickHouse")
         table = str(config.get("table") or default_table).strip()
         if not table:
-            raise ValueError("ClickHouse sink config requires a non-empty table name.")
+            raise InvalidValue("ClickHouse sink config requires a non-empty table name.")
         timeout_raw = config.get("insert_timeout")
         return cls(
             connection=connection,
@@ -536,9 +536,8 @@ class ClickHouseSinkConfig:
 def _validate_ipc_compression(value: object) -> Literal["uncompressed", "lz4", "zstd"]:
     compression = str(value or "uncompressed").strip().lower()
     if compression not in {"uncompressed", "lz4", "zstd"}:
-        raise ValueError(
-            "Invalid IPC compression "
-            f"{compression!r}. Must be one of: ['lz4', 'uncompressed', 'zstd']"
+        raise InvalidValue(
+            "Invalid IPC compression. Must be one of: ['lz4', 'uncompressed', 'zstd']"
         )
     return cast(Literal["uncompressed", "lz4", "zstd"], compression)
 
@@ -560,7 +559,7 @@ def _set_column_values(item: Any, column_names: Sequence[str], target: str) -> l
     """Return the column values of *item*'s attributes named by *column_names*, in that order.
 
     Each value is converted by :func:`~loom.core.model.convert.to_column_value`,
-    as ``Backend.SQLALCHEMY`` converts it: an ``Enum`` becomes its value and a
+    as ``TableEngine.SQLALCHEMY`` converts it: an ``Enum`` becomes its value and a
     struct a dict, while ``bytes``, ``datetime``, ``date``, ``time``,
     ``Decimal`` and ``UUID`` are kept.
 
@@ -593,15 +592,13 @@ def _set_column_values(item: Any, column_names: Sequence[str], target: str) -> l
 def _validate_delta_mode(value: object) -> Literal["error", "append", "ignore"]:
     mode = str(value)
     if mode not in _DELTA_MODES:
-        raise ValueError(
-            f"Invalid Delta write mode {mode!r}. Must be one of: {sorted(_DELTA_MODES)}"
-        )
+        raise InvalidValue(f"Invalid Delta write mode. Must be one of: {sorted(_DELTA_MODES)}")
     return mode  # type: ignore[return-value]
 
 
 __all__ = [
     "SQLALCHEMY_INLINE_DATABASE_KEYS",
-    "Backend",
+    "TableEngine",
     "ClickHouseSinkConfig",
     "DeltaSinkConfig",
     "IntoTable",

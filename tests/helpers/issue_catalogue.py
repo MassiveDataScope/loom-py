@@ -42,7 +42,7 @@ INDIRECT_CALLS: Mapping[str, tuple[str, ...]] = {
         "tests/unit/ai/compiler/test_state_phase.py::"
         "test_an_invalid_deps_schema_reports_schema_invalid",
     ),
-    "ai/runtime/_lifecycle.py::_refuse_plans_needing_an_invoker": (
+    "ai/execution/_lifecycle.py::_refuse_plans_needing_an_invoker": (
         "tests/integration/ai/test_conversation.py::"
         "test_reports_both_codes_when_the_plan_declares_a_hook_and_a_loader",
         "tests/integration/ai/test_capabilities.py::"
@@ -54,6 +54,12 @@ INDIRECT_CALLS: Mapping[str, tuple[str, ...]] = {
     ),
     "etl/compiler/_validators_agents.py::validate_step_agents": (
         "tests/unit/etl/test_with_agent.py::test_each_issue_kind_has_its_own_code",
+    ),
+    "etl/compiler/_validators_model.py::_refusal": (
+        "tests/unit/etl/compiler/test_model_targets.py::"
+        "test_a_target_naming_a_column_the_model_lacks_is_refused_naming_the_role",
+        "tests/unit/etl/compiler/test_model_targets.py::"
+        "test_a_target_the_model_contradicts_is_refused_naming_the_field_and_the_fix",
     ),
 }
 """Each ``.issue(...)`` call on a code held in a variable, keyed by

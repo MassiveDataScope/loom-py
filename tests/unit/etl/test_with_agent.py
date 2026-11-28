@@ -31,11 +31,11 @@ from loom.etl import (
 )
 from loom.etl.compiler import ETLCompilationError, ETLCompiler, ETLErrorCode
 from loom.etl.executor import ETLExecutor
+from loom.etl.ports import AgentIssue, AgentIssueKind
 from loom.etl.runner import ETLRunner
 from loom.etl.runner._wiring import agents_for_engine, make_agent_runner
-from loom.etl.runtime import AgentIssue, AgentIssueKind
 from loom.etl.storage._config import StorageConfig
-from loom.etl.testing import StubSourceReader, StubTargetWriter
+from loom.etl.testing import InMemorySourceReader, InMemoryTargetWriter
 from tests.unit.ai.etl._types import Reply as StrictReply
 from tests.unit.etl.doubles import RunDateIgnoredParams
 
@@ -267,8 +267,8 @@ class TestCompileThroughThePort:
 class TestExecutorInjection:
     def test_the_step_receives_a_mapper_bound_to_its_declaration(self) -> None:
         agents = _FakeAgents()
-        writer = StubTargetWriter()
-        executor = ETLExecutor(StubSourceReader({"messages": "frame"}), writer, agents=agents)
+        writer = InMemoryTargetWriter()
+        executor = ETLExecutor(InMemorySourceReader({"messages": "frame"}), writer, agents=agents)
 
         executor.run_step(ETLCompiler().compile_step(LabelStep), _PARAMS)
 
@@ -285,7 +285,7 @@ class TestExecutorInjection:
         ]
 
     def test_without_a_runner_fails_clearly(self) -> None:
-        executor = ETLExecutor(StubSourceReader({"messages": "frame"}), StubTargetWriter())
+        executor = ETLExecutor(InMemorySourceReader({"messages": "frame"}), InMemoryTargetWriter())
         plan = ETLCompiler().compile_step(LabelStep)
 
         with pytest.raises(RuntimeError, match=r"WithAgent.*ai:"):

@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final
 
 from loom.core.checks import Finding, deploy_check
+from loom.core.config.keys import INTERPOLATION
 from loom.core.model.redaction import mask_dsn
 
 if TYPE_CHECKING:
@@ -16,8 +17,6 @@ if TYPE_CHECKING:
 
 EMBEDDED_PASSWORD_CHECK: Final = "loom.config.W001"
 """Id of the check warning about a password embedded in a configuration URL."""
-
-_PLACEHOLDER: Final = "${"
 
 
 @deploy_check(EMBEDDED_PASSWORD_CHECK)
@@ -34,7 +33,7 @@ def _embedded_password(config: ConfigContext) -> Finding | None:
 
 def _password_urls(node: object, path: str) -> list[str]:
     if isinstance(node, str):
-        if _PLACEHOLDER in node or not path:
+        if INTERPOLATION in node or not path:
             return []
         if mask_dsn(node) != node:
             return [path]

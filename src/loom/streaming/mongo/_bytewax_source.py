@@ -9,10 +9,13 @@ from typing import Protocol, cast
 from bytewax.inputs import FixedPartitionedSource, StatefulSourcePartition
 from pymongo.errors import OperationFailure
 
-from loom.core.connections.mongo import mongo_island
+from loom.connections.mongo import mongo_island
+from loom.core.errors import InvalidType, InvalidUse, UnknownKey
+from loom.core.log_names import LogField
 from loom.core.model.redaction import reveal_for_driver
 from loom.streaming.compiler._plan import CompiledMongoCDCSource
 from loom.streaming.core._message import Message
+from loom.streaming.event import StreamingEvent
 from loom.streaming.mongo._event import MongoCDCEvent
 from loom.streaming.mongo._normalize import build_mongo_cdc_message
 
@@ -85,27 +88,17 @@ class MongoCDCPartition(StatefulSourcePartition[Message[MongoCDCEvent], dict[str
                     raise
                 change = self._restart_from_now()
             except Exception as exc:
-                _logger.warning(
-                    "mongo_cdc_event_skipped resume_token=%s error_type=%s reason=%s",
-                    self._resume_token,
-                    type(exc).__name__,
-                    str(exc),
-                )
+                _logger.warning(StreamingEvent.MONGO_CDC_EVENT_SKIPPED, exc_info=exc)
                 self._skip_count += 1
                 break
             if change is None:
                 break
             if not isinstance(change, Mapping):
-                raise TypeError("Mongo change stream yielded a non-mapping event.")
+                raise InvalidType("Mongo change stream yielded a non-mapping event.")
             try:
                 message = build_mongo_cdc_message(change)
             except Exception as exc:
-                _logger.warning(
-                    "mongo_cdc_message_build_skipped resume_token=%s error_type=%s reason=%s",
-                    self._resume_token,
-                    type(exc).__name__,
-                    str(exc),
-                )
+                _logger.warning(StreamingEvent.MONGO_CDC_MESSAGE_SKIPPED, exc_info=exc)
                 self._skip_count += 1
                 continue
             self._resume_token = message.payload.resume_token
@@ -123,14 +116,12 @@ class MongoCDCPartition(StatefulSourcePartition[Message[MongoCDCEvent], dict[str
     def _restart_from_now(self) -> object | None:
         self._restart_count += 1
         _logger.error(
-            "Mongo CDC oplog expired; restarting from now (attempt %d/%d)",
-            self._restart_count,
-            _MAX_RESTART_ATTEMPTS,
+            StreamingEvent.MONGO_CDC_OPLOG_EXPIRED, extra={LogField.ATTEMPT: self._restart_count}
         )
         if self._restart_count > _MAX_RESTART_ATTEMPTS:
-            raise RuntimeError(
-                f"MongoCDC stream restarted {self._restart_count} times due to oplog expiry;"
-                " manual intervention required"
+            raise InvalidUse(
+                f"MongoCDC stream restarted more than {_MAX_RESTART_ATTEMPTS} times due to "
+                "oplog expiry; manual intervention required"
             )
         self._stream.close()
         self._resume_token = None
@@ -159,7 +150,9 @@ class MongoCDCSource(FixedPartitionedSource[Message[MongoCDCEvent], dict[str, ob
         """Build the single Mongo CDC source partition."""
         del step_id
         if for_part != self._PARTITION_KEY:
-            raise KeyError(f"Unknown Mongo CDC partition {for_part!r}.")
+            raise UnknownKey(
+                f"Unknown Mongo CDC partition; the only partition is {self._PARTITION_KEY!r}."
+            )
         return MongoCDCPartition(self._source, resume_state)
 
 

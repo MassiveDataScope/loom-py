@@ -13,10 +13,10 @@ import pytest
 from sqlalchemy import text
 
 from loom.core.model.redaction import Dsn
-from loom.core.persistence.database import DatabaseConfig
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.sqlalchemy.session_manager import build_session_manager
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.database import DatabaseConfig
+from loom.core.stores.profile import SERVER_PROFILE
+from loom.stores.sqlalchemy.session_manager import build_session_manager
 
 _READ_TIMEOUT = 1
 _SLEEP_SECONDS = 4
@@ -36,7 +36,7 @@ class TestDriverTimeouts:
                 async with manager.engine.connect() as connection:
                     await connection.execute(text("SELECT pg_sleep(:s)"), {"s": _SLEEP_SECONDS})
         finally:
-            await manager.dispose()
+            await manager.close()
         elapsed = time.perf_counter() - started
 
         assert "timeout" in f"{type(raised.value).__name__} {raised.value}".lower()

@@ -13,8 +13,9 @@ from typing import Any, cast
 import msgspec
 
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.config.keys import ConfigKey
-from loom.core.persistence.stores import StoreCatalog
+from loom.core.config.keys import ConfigSection
+from loom.core.errors import InvalidType
+from loom.core.stores.catalog import StoreCatalog
 from loom.streaming.compiler._errors import CompilationIssue, StreamingErrorCode
 from loom.streaming.core._typing import StreamPayload
 from loom.streaming.graph._flow import StreamFlow
@@ -38,7 +39,7 @@ from loom.streaming.nodes._router import Router
 from loom.streaming.nodes._shape import CollectBatch, Drain, ForEach, StreamShape, WindowStrategy
 from loom.streaming.nodes._sink import IntoSink
 from loom.streaming.nodes._step import BatchExpandStep, BatchStep, ExpandStep, RecordStep, Step
-from loom.streaming.nodes._table import Backend, IntoTable
+from loom.streaming.nodes._table import IntoTable, TableEngine
 from loom.streaming.nodes._table.config import (
     resolve_clickhouse_table_config,
     resolve_delta_table_config,
@@ -67,7 +68,7 @@ def validate_kafka(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> list[Compi
     if not _uses_kafka(flow):
         return []
     try:
-        ctx.section(ConfigKey.KAFKA, KafkaSettings)
+        ctx.section(ConfigSection.KAFKA, KafkaSettings)
         return []
     except ConfigError as exc:
         return [StreamingErrorCode.KAFKA_CONFIG_INVALID.issue(exc=exc)]
@@ -165,7 +166,7 @@ def _resolve_consumer_settings(
 ) -> ConsumerSettings | None:
     """Resolve the consumer settings for one Kafka source, or None if unresolvable."""
     try:
-        kafka = ctx.section(ConfigKey.KAFKA, KafkaSettings)
+        kafka = ctx.section(ConfigSection.KAFKA, KafkaSettings)
         return kafka.consumer_for(source.logical_ref)
     except (ConfigError, KeyError):
         return None
@@ -301,15 +302,15 @@ def _validate_storage_sink_node(
     """Validate backend-specific config for one storage sink."""
     if not isinstance(node, IntoTable):
         return []
-    if node.backend is Backend.SQLALCHEMY:
+    if node.engine is TableEngine.SQLALCHEMY:
         return _validate_storage_sink_resolution(
             node, lambda: resolve_sqlalchemy_table_config(node, ctx, catalog)
         )
-    if node.backend is Backend.DELTA:
+    if node.engine is TableEngine.DELTA:
         return _validate_storage_sink_resolution(
             node, lambda: resolve_delta_table_config(node, ctx)
         )
-    if node.backend is Backend.CLICKHOUSE:
+    if node.engine is TableEngine.CLICKHOUSE:
         return _validate_storage_sink_resolution(
             node, lambda: resolve_clickhouse_table_config(node, ctx, catalog)
         )
@@ -322,12 +323,13 @@ def _validate_storage_sink_resolution(
 ) -> list[CompilationIssue]:
     """Resolve one IntoTable config and return validation errors.
 
-    A sink section that is invalid (``ValueError``) or names a store the
-    catalog does not hold as it needs (``ConfigError``) is one issue.
+    A sink section that is invalid (``InvalidValue``), holds a key of the
+    wrong type (``InvalidType``) or names a store the catalog does not hold as
+    it needs (``ConfigError``) is one issue.
     """
     try:
         resolve()
-    except (ValueError, ConfigError) as exc:
+    except (ValueError, InvalidType, ConfigError) as exc:
         component = node.name or type(node).__name__
         return [StreamingErrorCode.SINK_CONFIG_INVALID.issue(component=component, exc=exc)]
     return []

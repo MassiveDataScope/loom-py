@@ -14,7 +14,7 @@ from loom.etl.compiler._plan import (
     iter_all_steps,
     iter_steps_in_process,
 )
-from loom.etl.runtime._config_values import ConfigValueError, resolve_config_value
+from loom.etl.ports._config_values import ConfigValueError, resolve_config_value
 
 
 def validate_step_config(plan: StepPlan, context: ConfigContext) -> None:

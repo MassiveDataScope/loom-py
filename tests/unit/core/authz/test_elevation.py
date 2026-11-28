@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
-from loom.core.authz.elevation import elevate_scope, elevated_scopes, elevation_scope
+from loom.core.authz.elevation import (
+    ElevationEvent,
+    ElevationKey,
+    elevate_scope,
+    elevated_scopes,
+    elevation_scope,
+)
 from tests.unit.core.authz._elevation_doubles import FakeSink
 
 WRITE = Permission("rows.write")
 READ = Permission("rows.read")
 CATALOG = RoleCatalog((WRITE, READ), (Role("editor", (WRITE, READ)), Role("viewer", (READ,))))
-BOUNDARY = Scope.of("b1")
+BOUNDARY = Scope.from_segments("b1")
 
 
 def _allowed(role: str = "editor", scope: Scope = BOUNDARY) -> Decision:
@@ -104,7 +111,7 @@ class TestElevationClearing:
 
     async def test_a_grant_that_does_not_cover_the_boundary_cannot_elevate(self) -> None:
         sink = FakeSink()
-        narrow = _allowed(scope=Scope.of("b1", "dept", "x"))
+        narrow = _allowed(scope=Scope.from_segments("b1", "dept", "x"))
         async with elevation_scope(owns_transaction=True, sink=sink):
             with pytest.raises(PermissionError, match="cover"):
                 await _elevate(narrow, at=BOUNDARY)
@@ -237,7 +244,14 @@ class TestElevationFailure:
             await _nested_elevation(sink)
 
         assert isinstance(raised.value.__cause__, RuntimeError)
-        assert "could not be invalidated" in caplog.text
+        assert [
+            (record.msg, record.levelno, record.exc_info and record.exc_info[1])
+            for record in caplog.records
+        ] == [
+            (ElevationEvent.FLAGS_CLEAR_FAILED, logging.ERROR, raised.value.__cause__),
+            (ElevationEvent.INVALIDATION_FAILED, logging.ERROR, raised.value),
+        ]
+        assert caplog.records[0].__dict__[ElevationKey.SCOPES] == ["editor"]
         assert elevated_scopes() == frozenset()
 
     async def test_a_failed_invalidation_is_raised_over_a_cancellation(self) -> None:
@@ -257,7 +271,7 @@ class TestElevationFailure:
         self,
     ) -> None:
         from loom.core.authz.product import clear_authz_product
-        from loom.core.repository.sqlalchemy.rls import elevate
+        from loom.stores.sqlalchemy.rls import elevate
 
         clear_authz_product()
 

@@ -5,9 +5,10 @@ from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Self, cast
 
+from loom.core.errors import InvalidType
 from loom.core.execution import ExecutionBinding
-from loom.core.persistence.stores import DEFAULT_STORE, StoreCapabilities, StoreCatalog, StoreKey
-from loom.core.uow.scope import Frame
+from loom.core.stores.catalog import DEFAULT_STORE, StoreCapabilities, StoreCatalog, StoreKey
+from loom.core.stores.uow.scope import Frame
 from loom.core.use_case.compute import ComputeFn
 from loom.core.use_case.errors import JoinedAutocommitStore, UncomposedWriteStore, UseCaseErrorCode
 from loom.core.use_case.factory import ModelRead
@@ -16,7 +17,7 @@ from loom.core.use_case.markers import LookupKind, OnMissing, SourceKind
 from loom.core.use_case.rule import RuleFn
 
 if TYPE_CHECKING:
-    from loom.core.uow.coordinator import Participant
+    from loom.core.stores.uow.coordinator import Participant
 
 
 class ParameterBindingError(ValueError):
@@ -106,6 +107,17 @@ class CallerBinding:
 
 
 @dataclass(frozen=True)
+class DeliveryBinding:
+    """The job-delivery parameter marked with ``Delivery()``.
+
+    Args:
+        name: Parameter name as declared in the signature.
+    """
+
+    name: str
+
+
+@dataclass(frozen=True)
 class AgentBinding:
     """One ``Agent(name)`` marker parameter declared in ``execute``.
 
@@ -182,16 +194,14 @@ class LookupStep:
         """The lookup value among the arguments *bound* so far.
 
         Raises:
-            RuntimeError: When the command has no field named ``source_name``.
+            InvalidType: When the command has no field named ``source_name``.
         """
         if self.command is None:
             return bound[self.source_name]
         command = bound[self.command]
         found = getattr(command, self.source_name, _ABSENT)
         if found is _ABSENT:
-            raise RuntimeError(
-                f"Command '{type(command).__name__}' has no field '{self.source_name}'"
-            )
+            raise InvalidType(f"Command '{type(command).__name__}' has no field to bind from")
         return found
 
 
@@ -223,13 +233,13 @@ class LoadStep(LookupStep):
         """The entity *repo* holds under *value*, by id or by ``against``; ``None`` if none.
 
         Raises:
-            RuntimeError: When a field lookup's repository has no ``get_by``.
+            InvalidType: When a field lookup's repository has no ``get_by``.
         """
         if self.lookup_kind is LookupKind.BY_ID:
             return await repo.get_by_id(value, profile=self.profile)
         get_by = getattr(repo, "get_by", None)
         if not callable(get_by):
-            raise RuntimeError(
+            raise InvalidType(
                 f"Repository for '{self.entity_type.__name__}' must implement get_by(field, value)"
             )
         get_by_async = cast(Callable[..., Awaitable[Any | None]], get_by)
@@ -264,7 +274,7 @@ class CommandStep:
         object.__setattr__(self, "label", getattr(self.fn, "__name__", type(self.fn).__name__))
 
     @classmethod
-    def of(cls, fn: ComputeFn[Any] | RuleFn) -> CommandStep:
+    def from_callable(cls, fn: ComputeFn[Any] | RuleFn) -> CommandStep:
         """The step of *fn*, reading once whether it takes the bound arguments.
 
         A function taking three or more positional parameters, or ``*args``,
@@ -346,6 +356,7 @@ class ExecutionPlan:
     rule_steps: tuple[CommandStep, ...]
     read_only: bool = False
     caller_binding: CallerBinding | None = None
+    delivery_binding: DeliveryBinding | None = None
     execution_bindings: tuple[ExecutionBinding, ...] = ()
     query_binding: QueryBinding | None = None
     primary: StoreKey = DEFAULT_STORE
@@ -373,7 +384,7 @@ class ExecutionPlan:
             JoinedAutocommitStore: For the first joined store, by name, that cannot.
         """
         for key in self.frame.stores[1:]:
-            if not stores[key].transactional:
+            if not stores[key].is_transactional:
                 issue = UseCaseErrorCode.JOINED_AUTOCOMMIT_STORE.issue(
                     component=self.use_case_type, store=key
                 )

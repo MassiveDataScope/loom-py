@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, get_args, get
 
 from typing_extensions import TypeVar as TypeVarExt
 
+from loom.core.errors import InvalidType, InvalidUse
 from loom.core.model import LoomStruct
-from loom.core.repository.abc import RepoFor
+from loom.core.stores.repository import RepoFor
 from loom.core.use_case.compute import ComputeFn
 from loom.core.use_case.rule import RuleFn
 
@@ -90,7 +91,7 @@ class UseCase(ABC, Generic[ModelT, ResultT, RepoT]):
     def main_repo(self) -> RepoT:
         """Main repository injected by the factory."""
         if self._main_repo is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 f"{type(self).__qualname__} requires a main repository but it was not injected."
             )
         return self._main_repo
@@ -112,7 +113,7 @@ class UseCase(ABC, Generic[ModelT, ResultT, RepoT]):
                 continue
             args = get_args(base)
             if len(args) not in {2, 3}:
-                raise TypeError(
+                raise InvalidType(
                     f"{cls.__qualname__} must declare UseCase[TModel, TResult] or "
                     f"UseCase[TModel, TResult, TRepo]. Got {len(args)} generic parameter(s)."
                 )
@@ -121,7 +122,7 @@ class UseCase(ABC, Generic[ModelT, ResultT, RepoT]):
             if model in {Any, object}:
                 return None, RepoFor[Any]
             if not isinstance(model, type) or not issubclass(model, LoomStruct):
-                raise TypeError(f"{cls.__qualname__}: TModel must be a LoomStruct subclass.")
+                raise InvalidType(f"{cls.__qualname__}: TModel must be a LoomStruct subclass.")
             if len(args) == 3:
                 return model, args[2]
             return model, RepoFor[Any]

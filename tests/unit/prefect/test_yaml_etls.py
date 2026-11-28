@@ -307,6 +307,13 @@ class TestDeclarationYamlAndTrigger:
         with pytest.raises(ConfigError, match=rf"{path}.*'run_day'.*OrdersParams"):
             read_declarations(str(path))
 
+    def test_a_negative_retry_delay_is_a_config_error_naming_the_file(
+        self, write_yaml: Callable[[str, str], Path]
+    ) -> None:
+        path = _single(write_yaml, "orders", retry="{flow_retry_delay_seconds: -1}")
+        with pytest.raises(ConfigError, match=rf"{path}.*'orders'.*negative"):
+            read_declarations(str(path))
+
     def test_trigger_inheriting_a_declared_parameter_is_accepted(
         self, write_yaml: Callable[[str, str], Path], tmp_path: Path
     ) -> None:

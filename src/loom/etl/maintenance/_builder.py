@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
+from loom.core.errors import InvalidValue
 from loom.etl.maintenance._ops import CompactSpec, MaintenanceSpec, VacuumSpec, ZOrderSpec
 
 if TYPE_CHECKING:
@@ -23,7 +24,7 @@ def _assert_no_conflicting_ops(
     has_compact = any(isinstance(op, CompactSpec) for op in ops)
     has_z_order = any(isinstance(op, ZOrderSpec) for op in ops)
     if has_compact and has_z_order:
-        raise TypeError(f"{owner}: compact() and z_order_by() are mutually exclusive")
+        raise InvalidValue(f"{owner}: compact() and z_order_by() are mutually exclusive")
 
 
 def _expand_for_schemas(
@@ -60,7 +61,7 @@ class MaintainTable:
 
     def __init__(self, table_ref: str) -> None:
         if not table_ref.strip():
-            raise ValueError("MaintainTable: table_ref must be a non-empty string")
+            raise InvalidValue("MaintainTable: table_ref must be a non-empty string")
         self._table_ref = table_ref
         self._ops: list[VacuumSpec | CompactSpec | ZOrderSpec] = []
 
@@ -108,7 +109,7 @@ class MaintainTable:
             columns: Columns to Z-Order by.  Must be non-empty.
         """
         if not columns:
-            raise ValueError(
+            raise InvalidValue(
                 f"MaintainTable({self._table_ref!r}): z_order_by requires at least one column"
             )
         self._ops.append(ZOrderSpec(columns=list(columns), target_size=target_size))
@@ -146,7 +147,7 @@ class MaintainSchema:
 
     def __init__(self, schema_prefix: str) -> None:
         if not schema_prefix.strip():
-            raise ValueError("MaintainSchema: schema_prefix must be a non-empty string")
+            raise InvalidValue("MaintainSchema: schema_prefix must be a non-empty string")
         self._schema_prefix = schema_prefix.strip()
         self._ops: list[VacuumSpec | CompactSpec | ZOrderSpec] = []
 
@@ -182,7 +183,7 @@ class MaintainSchema:
         Mutually exclusive with :meth:`compact`.
         """
         if not columns:
-            raise ValueError(
+            raise InvalidValue(
                 f"MaintainSchema({self._schema_prefix!r}): z_order_by requires at least one column"
             )
         self._ops.append(ZOrderSpec(columns=list(columns), target_size=target_size))

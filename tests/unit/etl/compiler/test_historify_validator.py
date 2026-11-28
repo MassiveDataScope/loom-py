@@ -30,6 +30,8 @@ from loom.etl.declarative.target._history import (
     HistorifySpec,
 )
 from loom.etl.declarative.target._table import AppendSpec
+from loom.etl.event import EtlEvent
+from tests.helpers.loggers import CapturedLog
 
 # ---------------------------------------------------------------------------
 # Params types for use in tests
@@ -298,14 +300,13 @@ class TestValidateHistorifySpecWarnNoPartitionScope:
         spec = _history_spec(partition_scope=None)
         with caplog.at_level(logging.WARNING, logger="loom.etl.compiler._validators_step"):
             validate_historify_spec(object, spec)  # type: ignore[arg-type]
-        assert any("partition_scope" in msg for msg in caplog.messages)
+        assert EtlEvent.HISTORIFY_SCOPE_MISSING in CapturedLog(caplog).messages
 
     def test_no_warning_when_partition_scope_set(self, caplog: pytest.LogCaptureFixture) -> None:
         spec = _history_spec(partition_scope=("season",))
         with caplog.at_level(logging.WARNING, logger="loom.etl.compiler._validators_step"):
             validate_historify_spec(object, spec)  # type: ignore[arg-type]
-        partition_warnings = [m for m in caplog.messages if "partition_scope" in m]
-        assert not partition_warnings
+        assert EtlEvent.HISTORIFY_SCOPE_MISSING not in CapturedLog(caplog).messages
 
 
 # ---------------------------------------------------------------------------
@@ -318,14 +319,13 @@ class TestValidateHistorifySpecWarnRerunWithoutScope:
         spec = _history_spec(allow_temporal_rerun=True, partition_scope=None)
         with caplog.at_level(logging.WARNING, logger="loom.etl.compiler._validators_step"):
             validate_historify_spec(object, spec)  # type: ignore[arg-type]
-        assert any("re-weave" in msg for msg in caplog.messages)
+        assert EtlEvent.HISTORIFY_RERUN_UNSCOPED in CapturedLog(caplog).messages
 
     def test_no_rerun_warning_when_scope_is_set(self, caplog: pytest.LogCaptureFixture) -> None:
         spec = _history_spec(allow_temporal_rerun=True, partition_scope=("season",))
         with caplog.at_level(logging.WARNING, logger="loom.etl.compiler._validators_step"):
             validate_historify_spec(object, spec)  # type: ignore[arg-type]
-        rerun_warnings = [m for m in caplog.messages if "re-weave" in m]
-        assert not rerun_warnings
+        assert EtlEvent.HISTORIFY_RERUN_UNSCOPED not in CapturedLog(caplog).messages
 
 
 # ---------------------------------------------------------------------------
@@ -338,14 +338,13 @@ class TestValidateHistorifySpecWarnTrackNone:
         spec = _history_spec(track=None)
         with caplog.at_level(logging.WARNING, logger="loom.etl.compiler._validators_step"):
             validate_historify_spec(object, spec)  # type: ignore[arg-type]
-        assert any("track=None" in msg or "inferred" in msg for msg in caplog.messages)
+        assert EtlEvent.HISTORIFY_TRACK_INFERRED in CapturedLog(caplog).messages
 
     def test_no_track_warning_when_track_is_set(self, caplog: pytest.LogCaptureFixture) -> None:
         spec = _history_spec(track=("team_id",), partition_scope=("season",))
         with caplog.at_level(logging.WARNING, logger="loom.etl.compiler._validators_step"):
             validate_historify_spec(object, spec)  # type: ignore[arg-type]
-        track_warnings = [m for m in caplog.messages if "track=None" in m or "inferred" in m]
-        assert not track_warnings
+        assert EtlEvent.HISTORIFY_TRACK_INFERRED not in CapturedLog(caplog).messages
 
 
 # ---------------------------------------------------------------------------
@@ -447,24 +446,24 @@ class TestValidateStepIntegration:
 
     def test_player_dim_step_compiles(self) -> None:
         from loom.etl.compiler import ETLCompiler
-        from loom.etl.testing import StubCatalog
+        from loom.etl.testing import InMemoryCatalog
 
-        catalog = StubCatalog(tables={"warehouse.dim_players": ()})
+        catalog = InMemoryCatalog(tables={"warehouse.dim_players": ()})
         compiler = ETLCompiler(catalog=catalog)
         compiler.compile_step(_PlayerDimStep)
 
     def test_loan_step_compiles(self) -> None:
         from loom.etl.compiler import ETLCompiler
-        from loom.etl.testing import StubCatalog
+        from loom.etl.testing import InMemoryCatalog
 
-        catalog = StubCatalog(tables={"warehouse.dim_contracts": ()})
+        catalog = InMemoryCatalog(tables={"warehouse.dim_contracts": ()})
         compiler = ETLCompiler(catalog=catalog)
         compiler.compile_step(_LoanStep)
 
     def test_log_mode_step_compiles(self) -> None:
         from loom.etl.compiler import ETLCompiler
-        from loom.etl.testing import StubCatalog
+        from loom.etl.testing import InMemoryCatalog
 
-        catalog = StubCatalog(tables={"warehouse.dim_subscriptions": ()})
+        catalog = InMemoryCatalog(tables={"warehouse.dim_subscriptions": ()})
         compiler = ETLCompiler(catalog=catalog)
         compiler.compile_step(_LogModeStep)

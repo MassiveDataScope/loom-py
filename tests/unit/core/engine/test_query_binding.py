@@ -8,7 +8,7 @@ import msgspec
 import pytest
 
 from loom.core.engine.compiler import CompilationError, UseCaseCompiler
-from loom.core.engine.executor import ParameterBindingError, RuntimeExecutor
+from loom.core.engine.executor import ParameterBindingError, UseCaseExecutor
 from loom.core.engine.plan import ParamBinding, QueryBinding
 from loom.core.errors import UnsupportedBoundaryType
 from loom.core.job.job import Job
@@ -78,7 +78,7 @@ class TestQueryBinding:
     async def test_a_query_that_is_not_an_instance_of_its_type_is_refused(self) -> None:
         compiler = UseCaseCompiler()
         compiler.compile(ListOrders)
-        executor = RuntimeExecutor(compiler)
+        executor = UseCaseExecutor(compiler)
         use_case = ListOrders()
 
         with pytest.raises(ParameterBindingError) as excinfo:

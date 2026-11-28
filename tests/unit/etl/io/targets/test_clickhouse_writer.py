@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import polars as pl
 import pytest
 
+from loom.core.errors import InternalError
 from loom.core.plugins.optional import MissingExtraError
 from loom.etl.io.targets._clickhouse import ClickHouseTableSpec, ClickHouseTargetWriter
 from tests.helpers.extras import CLICKHOUSE_ISLAND, without_extra
@@ -117,6 +118,6 @@ class TestSpecGuards:
     def test_a_spec_of_another_kind_is_refused(self) -> None:
         writer, client = _make_writer()
 
-        with pytest.raises(TypeError, match="does not handle _DeltaSpec"):
+        with pytest.raises(InternalError, match="does not handle _DeltaSpec"):
             writer.write(pl.DataFrame({"a": [1]}), _DeltaSpec(), _PARAMS)  # type: ignore[arg-type]
         client.insert_df.assert_not_called()

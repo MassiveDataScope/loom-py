@@ -5,12 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from loom.ai.abc import McpHandle
-from loom.ai.runtime._handle import McpMarkerResolver
+from loom.ai.execution._handle import McpMarkerResolver
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import Identity
-from loom.core.observability.event import EventKind, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.event import Scope
+from loom.core.observability.observability import Observability
 from loom.core.use_case import Caller, Mcp, UseCase
 from tests.integration.ai.conftest import RecordingMcpSession, RecordingObserver
 
@@ -33,28 +33,23 @@ class TestDuringAnAgentRun:
             return await holder[0].call_untyped(TOOL, {})
 
         engine = AcmeActingEngine(during=call_tool)
-        runtime = make_runtime(engine)
+        host = make_runtime(engine)
         holder.append(
-            McpMarkerResolver(runtime, observability=ObservabilityRuntime([recorder])).resolve(
+            McpMarkerResolver(host, observability=Observability([recorder])).resolve(
                 Mcp(SERVER, include=[TOOL]), McpHandle
             )
         )
 
-        async with runtime:
-            await runtime.run(AGENT, "p", identity=ALICE)
+        async with host:
+            await host.run(AGENT, "p", identity=ALICE)
 
-        subjects = {
-            event.meta["subject"]
-            for event in recorder.events
-            if event.scope is Scope.TOOL and event.kind is EventKind.START
-        }
-        assert subjects == {ALICE.subject}
+        assert set(recorder.acting_at_start(Scope.TOOL)) == {ALICE.subject}
         assert len(session.calls) == 2
 
     async def test_a_use_case_run_from_the_engine_acts_as_the_run_caller(
         self, make_runtime: Any
     ) -> None:
-        executor = RuntimeExecutor(UseCaseCompiler())
+        executor = UseCaseExecutor(UseCaseCompiler())
         seen: list[str] = []
 
         async def run_use_case() -> object:
@@ -63,7 +58,7 @@ class TestDuringAnAgentRun:
 
         engine = AcmeActingEngine(during=run_use_case)
 
-        async with make_runtime(engine) as runtime:
-            await runtime.run(AGENT, "p", identity=ALICE)
+        async with make_runtime(engine) as host:
+            await host.run(AGENT, "p", identity=ALICE)
 
         assert seen == [ALICE.subject, ALICE.subject]

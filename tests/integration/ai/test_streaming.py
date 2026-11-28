@@ -28,8 +28,10 @@ from loom.ai.abc import (
     ToolResultEvent,
 )
 from loom.ai.errors import AgentRunErrorCode
+from loom.ai.event import AiEvent
 from loom.ai.fastapi.streaming import HEARTBEAT_FRAME, encode_sse_event, stream_sse
 from loom.core.identity import Identity
+from tests.helpers.loggers import CapturedLog
 from tests.integration.ai.conftest import DEFAULT_USAGE, ScriptedEngine
 
 _USAGE = AgentUsage(
@@ -142,7 +144,7 @@ class TestFrameFormat:
         assert "type" not in _split_frame(encode_sse_event(event))[1]
 
     def test_emits_the_interaction_id_and_hook_result_when_the_final_carries_them(self) -> None:
-        """A ``final`` minted by the runtime carries the id and the hook's result verbatim."""
+        """A ``final`` minted by the host carries the id and the hook's result verbatim."""
         event = FinalEvent(
             output={"answer": "42"},
             usage=_USAGE,
@@ -220,6 +222,13 @@ class TestInBandFailure:
         names = [_split_frame(frame)[0] for frame in frames]
 
         assert "final" not in names
+
+    async def test_logs_the_failure_with_its_exception(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        await _collect(stream_sse(self._failing_stream(), heartbeat_ms=1000))
+
+        assert CapturedLog(caplog).exception_types(AiEvent.STREAM_FAILED) == [RuntimeError]
 
 
 class TestDispatchWithoutReflection:

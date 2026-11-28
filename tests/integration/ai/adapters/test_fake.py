@@ -42,10 +42,10 @@ class TestFakePorts:
         opened: list[str],
         built: list[str],
     ) -> None:
-        runtime = compose(quotes=quotes, advice=advice).ai.runtime
-        assert runtime is not None
+        host = compose(quotes=quotes, advice=advice).ai.agent_host
+        assert host is not None
 
-        async with runtime:
+        async with host:
             pass
 
         assert (sessions.calls, engines.calls) == (opened, built)
@@ -54,10 +54,10 @@ class TestFakePorts:
         self, compose: Compose, identity: Identity
     ) -> None:
         application = compose(quotes=AcmeFakeQuotes(), advice=AcmeFakeAdvice())
-        runtime = application.ai.runtime
-        assert runtime is not None
+        host = application.ai.agent_host
+        assert host is not None
 
-        async with runtime:
+        async with host:
             result = await application.kernel.executor.run(AcmeMarket, identity=identity)
 
         assert result == "fake"

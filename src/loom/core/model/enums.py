@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Final
 
 
 class OnDelete(StrEnum):
@@ -45,3 +46,23 @@ class ServerOnUpdate(StrEnum):
             ``True`` for ``ServerOnUpdate.NOW`` or ``"now"`` in any case.
         """
         return isinstance(value, str) and value.strip().lower() == cls.NOW.value
+
+
+class KeyFill(StrEnum):
+    """How a store fills a primary-key column the frame does not supply."""
+
+    AUTOINCREMENT = "autoincrement"
+    DERIVED = "derived"
+    SERVER_DEFAULT = "server_default"
+
+    @property
+    def description(self) -> str:
+        """The fill as a message reads it: ``autoincrement``, ``derived by the store``..."""
+        return _KEY_FILL_DESCRIPTIONS[self]
+
+
+_KEY_FILL_DESCRIPTIONS: Final = {
+    KeyFill.AUTOINCREMENT: "autoincrement",
+    KeyFill.DERIVED: "derived by the store",
+    KeyFill.SERVER_DEFAULT: "filled by the server",
+}

@@ -8,7 +8,7 @@ from typing import Any
 import msgspec
 import pytest
 
-from loom.core.config import load_config
+from loom.core.config import ConfigError, load_config
 from loom.core.model.redaction import RedactedMap
 from loom.etl.runner.core import ETLRunner
 from loom.etl.storage import (
@@ -122,7 +122,7 @@ class TestUnknownProfileNames:
         )
 
         with pytest.raises(
-            ValueError, match=r"storage\.tables\['orders'\]\.path\.profile='missing'"
+            ConfigError, match=r"storage\.tables\['orders'\]\.path\.profile is not defined"
         ):
             normalise_storage_section(raw)
 
@@ -131,13 +131,15 @@ class TestUnknownProfileNames:
             files={"daily": {"path": {"uri": "/out/{date}.csv", "profile": "missing"}}}
         )
 
-        with pytest.raises(ValueError, match=r"storage\.files\['daily'\]\.path\.profile='missing'"):
+        with pytest.raises(
+            ConfigError, match=r"storage\.files\['daily'\]\.path\.profile is not defined"
+        ):
             normalise_storage_section(raw)
 
     def test_profile_on_a_route_without_profiles_section_is_unknown(self) -> None:
         raw = {"tables": {"orders": {"path": {"uri": "/lake/orders", "profile": "large"}}}}
 
-        with pytest.raises(ValueError, match="'large' is not defined in storage.profiles"):
+        with pytest.raises(ConfigError, match="is not defined in storage.profiles"):
             normalise_storage_section(raw)
 
     def test_unknown_profile_on_a_list_form_table_names_route_and_profile(self) -> None:
@@ -146,7 +148,7 @@ class TestUnknownProfileNames:
         )
 
         with pytest.raises(
-            ValueError, match=r"storage\.tables\['orders'\]\.path\.profile='missing'"
+            ConfigError, match=r"storage\.tables\['orders'\]\.path\.profile is not defined"
         ):
             normalise_storage_section(raw)
 
@@ -169,7 +171,9 @@ class TestDefaultsTablePathProfile:
     def test_unknown_profile_on_defaults_names_the_defaults_path(self) -> None:
         raw = _with_profiles(defaults={"table_path": {"uri": "/lake", "profile": "missing"}})
 
-        with pytest.raises(ValueError, match=r"storage\.defaults\.table_path\.profile='missing'"):
+        with pytest.raises(
+            ConfigError, match=r"storage\.defaults\.table_path\.profile is not defined"
+        ):
             normalise_storage_section(raw)
 
 
@@ -255,7 +259,7 @@ class TestProfileValidation:
             "tables": {"orders": {"path": {"uri": "/lake/orders", "profile": "large"}}},
         }
 
-        with pytest.raises(ValueError, match="uri"):
+        with pytest.raises(ConfigError, match="uri"):
             normalise_storage_section(raw)
 
     def test_unknown_profile_on_a_nameless_list_route_names_the_index(self) -> None:
@@ -263,7 +267,9 @@ class TestProfileValidation:
             tables=[{"path": {"uri": "/x"}}, {"path": {"uri": "/y", "profile": "m"}}]
         )
 
-        with pytest.raises(ValueError, match=r"storage\.tables\[1\]\.path\.profile='m'"):
+        with pytest.raises(
+            ConfigError, match=r"storage\.tables\[1\]\.path\.profile is not defined"
+        ):
             normalise_storage_section(raw)
 
     def test_storage_profile_struct_forbids_unknown_fields(self) -> None:
@@ -344,3 +350,15 @@ class TestProfileEntryPoints:
 
         with pytest.raises(msgspec.ValidationError):
             ETLRunner.from_dict(raw)
+
+
+class TestMessagesOmitTheReceivedValue:
+    def test_unknown_profile_error_does_not_echo_the_profile_name(self) -> None:
+        raw = _with_profiles(
+            tables={"orders": {"path": {"uri": "/lake/orders", "profile": "secret_name"}}}
+        )
+
+        with pytest.raises(ConfigError, match="is not defined in storage.profiles") as excinfo:
+            normalise_storage_section(raw)
+
+        assert "secret_name" not in str(excinfo.value)

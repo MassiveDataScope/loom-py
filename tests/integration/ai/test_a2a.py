@@ -1,6 +1,6 @@
 """Inbound A2A surface: card, JSON-RPC methods and streaming parity (T135, T136).
 
-Drives ``bind_a2a_endpoints`` over a live :class:`AgentRuntime` backed by
+Drives ``mount_a2a_endpoints`` over a live :class:`AgentHost` backed by
 scripted engines, asserting ``specs/001-ai-agent-layer/contracts/a2a.md``:
 the published card validates against the A2A SDK, the streamed events are the
 same union the HTTP surface projects (FR-039a), the capability wiring never
@@ -9,7 +9,7 @@ and only the card is anonymous (FR-041b).
 
 The application is wired with the real
 :class:`~loom.rest.auth.middleware.AuthenticationMiddleware`, so the exclusion
-``bind_a2a_endpoints`` registers is exercised end to end instead of simulated.
+``mount_a2a_endpoints`` registers is exercised end to end instead of simulated.
 Nothing here touches the network: engines replay a script and every request
 goes through an in-process ASGI transport.
 """
@@ -29,7 +29,7 @@ from a2a.compat.v0_3.types import AgentCard
 from fastapi import FastAPI
 
 from loom.ai.a2a.card import card_path
-from loom.ai.a2a.server import bind_a2a_endpoints
+from loom.ai.a2a.server import mount_a2a_endpoints
 from loom.ai.abc import (
     AgentEvent,
     Conversation,
@@ -42,18 +42,26 @@ from loom.ai.abc import (
 )
 from loom.ai.compiler._plan import AgentPlan
 from loom.ai.config import A2AConfig, AgentEndpointConfig
-from loom.ai.errors import AgentCompilationError, AgentErrorCode, AgentRunErrorCode
-from loom.ai.fastapi.endpoints import bind_agent_endpoints
-from loom.ai.runtime import AgentRuntime
+from loom.ai.errors import (
+    AgentCompilationError,
+    AgentErrorCode,
+    AgentRunError,
+    AgentRunErrorCode,
+)
+from loom.ai.event import AiEvent, AiKey
+from loom.ai.execution import AgentHost
+from loom.ai.fastapi.endpoints import mount_agent_endpoints
 from loom.core.config.errors import ConfigError
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
+from loom.core.log_names import LogField
 from loom.core.model import loom_type
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import EventKind, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.rest.auth.abc import RequestCredentials
 from loom.rest.auth.middleware import AuthenticationMiddleware
+from tests.helpers.loggers import CapturedLog
 from tests.integration.ai.conftest import (
     DEFAULT_OUTPUT,
     DEFAULT_USAGE,
@@ -122,7 +130,7 @@ class ExplodingEngine:
         conversation: Conversation | None = None,
         state: object | None = None,
     ) -> object:
-        """Fail the same way the stream does; the runtime drives the stream."""
+        """Fail the same way the stream does; the host drives the stream."""
         del prompt, identity, conversation, state
         raise RuntimeError(_CATCH_ALL_CANARY)
 
@@ -177,13 +185,13 @@ async def _serving(
     declared_exclusions: Sequence[str] = (),
     max_prompt_bytes: int = 65536,
     with_http_endpoints: bool = False,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
 ) -> AsyncIterator[tuple[FastAPI, httpx.AsyncClient]]:
     """Serve an entered runtime behind the real authentication middleware.
 
     ``mounted_exclusions`` are the exclusions the deployment really mounts on
     the middleware; ``declared_exclusions`` are the ones the caller repeats in
-    the ``exclude_paths`` argument of ``bind_a2a_endpoints``. They are separate
+    the ``exclude_paths`` argument of ``mount_a2a_endpoints``. They are separate
     on purpose: the guard must fail on the mounted list alone.
     """
     plans = list(plans if plans is not None else (make_plan(_AGENT),))
@@ -192,15 +200,15 @@ async def _serving(
         a2a=a2a if a2a is not None else A2AConfig(base_url=Dsn(_BASE_URL), expose=(_AGENT,)),
         max_prompt_bytes=max_prompt_bytes,
     )
-    runtime = AgentRuntime(
+    host = AgentHost(
         plans=plans,
         config=config,
-        engine_provider=CountingEngineProvider(engines=engines),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(engines=engines),  # type: ignore[arg-type]
         deps=deps,
         container=container,
     )
     authenticator = HeaderAuthenticator()
-    async with runtime:
+    async with host:
         app = FastAPI()
         app.add_middleware(
             AuthenticationMiddleware,
@@ -208,21 +216,21 @@ async def _serving(
             exclude_paths=tuple(mounted_exclusions),
         )
         if with_http_endpoints:
-            bind_agent_endpoints(
+            mount_agent_endpoints(
                 app,
-                runtime=runtime,
+                host=host,
                 config=config,
                 authenticator=authenticator,  # type: ignore[arg-type]
                 prefix=_AGENTS_PREFIX,
             )
-        bind_a2a_endpoints(
+        mount_a2a_endpoints(
             app,
-            runtime=runtime,
+            host=host,
             config=config,
             plans=plans,
             authenticator=authenticator,  # type: ignore[arg-type]
             exclude_paths=tuple(declared_exclusions),
-            observability_runtime=observability_runtime,
+            observability=observability,
             prefix=_PREFIX,
         )
         transport = httpx.ASGITransport(app=app)
@@ -230,18 +238,18 @@ async def _serving(
             yield app, client
 
 
-def _runtime(
+def _host(
     *,
     deps: DepsFactory,
     container: LoomContainer,
     config: Any,
     plans: Sequence[AgentPlan],
-) -> AgentRuntime:
+) -> AgentHost:
     """Build a runtime over scripted engines for one configuration."""
-    return AgentRuntime(
+    return AgentHost(
         plans=list(plans),
         config=config,
-        engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
         deps=deps,
         container=container,
     )
@@ -261,17 +269,17 @@ async def _bind_a2a(
     )
     plans = [make_plan(_AGENT)]
     authenticator = HeaderAuthenticator()
-    runtime = _runtime(deps=deps, container=container, config=config, plans=plans)
-    async with runtime:
+    host = _host(deps=deps, container=container, config=config, plans=plans)
+    async with host:
         app = FastAPI()
         app.add_middleware(
             AuthenticationMiddleware,
             authenticator=authenticator,  # type: ignore[arg-type]
             exclude_paths=tuple(mounted_exclusions),
         )
-        bind_a2a_endpoints(
+        mount_a2a_endpoints(
             app,
-            runtime=runtime,
+            host=host,
             config=config,
             plans=plans,
             authenticator=authenticator,  # type: ignore[arg-type]
@@ -298,10 +306,10 @@ async def _serving_anonymously(
         a2a=A2AConfig(base_url=Dsn(_BASE_URL), expose=(_AGENT,)),
     )
     plans = [make_plan(_AGENT)]
-    runtime = _runtime(deps=deps, container=container, config=config, plans=plans)
-    async with runtime:
+    host = _host(deps=deps, container=container, config=config, plans=plans)
+    async with host:
         app = FastAPI()
-        bind_a2a_endpoints(app, runtime=runtime, config=config, plans=plans, prefix=_PREFIX)
+        mount_a2a_endpoints(app, host=host, config=config, plans=plans, prefix=_PREFIX)
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://agents.test") as client:
             yield client
@@ -415,17 +423,17 @@ class TestOptionality:
         """No section means no card route and no invocation route."""
         config = make_ai_config(endpoints={_AGENT: make_endpoint()})
         plans = [make_plan(_AGENT)]
-        runtime = AgentRuntime(
+        host = AgentHost(
             plans=plans,
             config=config,
-            engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
             deps=deps,
             container=container,
         )
 
-        async with runtime:
+        async with host:
             app = FastAPI()
-            bind_a2a_endpoints(app, runtime=runtime, config=config, plans=plans)
+            mount_a2a_endpoints(app, host=host, config=config, plans=plans)
 
         assert not [path for path in _route_paths(app) if path.startswith(_PREFIX)]
 
@@ -735,7 +743,7 @@ class TestUsageOnTheAgentSpan:
         async with _serving(
             deps=deps,
             container=container,
-            observability_runtime=ObservabilityRuntime([recorder]),
+            observability=Observability([recorder]),
         ) as (_app, client):
             response = await client.post(
                 f"{_PREFIX}/{_AGENT}", json=_rpc("message/send"), headers=_auth()
@@ -782,7 +790,7 @@ class TestFailureRedaction:
         assert "usecase_pricing" not in response.text
 
     async def test_returns_the_stable_code_when_the_run_fails(
-        self, deps: StubDepsFactory, container: LoomContainer
+        self, deps: StubDepsFactory, container: LoomContainer, caplog: pytest.LogCaptureFixture
     ) -> None:
         """The caller still gets the code, plus a fixed catalogue detail."""
         engines = {_AGENT: ScriptedEngine(script=error_script(_FAILING_CODE, _RUN_CANARY))}
@@ -797,6 +805,7 @@ class TestFailureRedaction:
             "code": str(_FAILING_CODE),
             "detail": "a capability call exceeded its time limit",
         }
+        assert CapturedLog(caplog).exception_types(AiEvent.RUN_FAILED) == [AgentRunError]
 
     async def test_does_not_return_the_exception_text_when_the_failure_is_unexpected(
         self, deps: StubDepsFactory, container: LoomContainer
@@ -814,6 +823,15 @@ class TestFailureRedaction:
 
         assert _CATCH_ALL_CANARY not in response.text
         assert response.json()["error"]["data"]["detail"] == "An unexpected error occurred"
+
+    async def test_logs_a_stream_that_fails_with_its_exception(
+        self, deps: StubDepsFactory, container: LoomContainer, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        engines = cast("Mapping[str, ScriptedEngine]", {_AGENT: ExplodingEngine()})
+        async with _serving(deps=deps, container=container, engines=engines) as (_app, client):
+            await client.post(f"{_PREFIX}/{_AGENT}", json=_rpc("message/stream"), headers=_auth())
+
+        assert CapturedLog(caplog).exception_types(AiEvent.STREAM_FAILED) == [RuntimeError]
 
 
 class TestConversations:
@@ -937,7 +955,7 @@ class TestConversations:
             container=container,
             plans=(conversational_plan(_AGENT),),
             engines={_AGENT: engine},
-            observability_runtime=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         ) as (_app, client):
             response = await client.post(
                 f"{_PREFIX}/{_AGENT}", json=_rpc(method, context_id=context_id), headers=_auth()
@@ -967,7 +985,7 @@ class TestConversations:
             container=container,
             plans=(conversational_plan(_AGENT),),
             engines={_AGENT: engine},
-            observability_runtime=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         ) as (_app, client):
             response = await client.post(
                 f"{_PREFIX}/{_AGENT}", json=_rpc(method, task_id="t-1"), headers=_auth()
@@ -1134,64 +1152,46 @@ class TestAnonymousOptOut:
 class TestPublicationAnnouncement:
     """Start-up says exactly which agents are reachable from outside."""
 
-    @staticmethod
-    async def _publication_warning(
-        *,
-        deps: DepsFactory,
+    @pytest.mark.parametrize(
+        ("anonymous", "enabled", "conversational", "admitted_anonymously"),
+        [
+            (False, True, False, False),
+            (False, True, True, False),
+            (True, True, False, True),
+            (True, True, True, True),
+            (True, False, False, False),
+        ],
+        ids=["authenticated", "authenticated-conv", "anonymous", "anonymous-conv", "disabled"],
+    )
+    async def test_the_one_event_names_the_route_and_how_callers_are_admitted(
+        self,
+        deps: StubDepsFactory,
         container: LoomContainer,
         caplog: pytest.LogCaptureFixture,
-        endpoints: Mapping[str, AgentEndpointConfig] | None = None,
-        plans: Sequence[AgentPlan] | None = None,
-    ) -> str:
-        """Return the WARNING text emitted while publishing one agent."""
+        request: pytest.FixtureRequest,
+        anonymous: bool,
+        enabled: bool,
+        conversational: bool,
+        admitted_anonymously: bool,
+    ) -> None:
+        """A disabled stanza is not anonymous; a conversation makes the id the credential."""
+        endpoints = {_AGENT: make_endpoint(enabled=enabled, allow_anonymous=anonymous)}
+        plans = (conversational_plan(_AGENT, loader=True),) if conversational else None
+        serving_deps = request.getfixturevalue("conversation_deps" if conversational else "deps")
         with caplog.at_level(logging.WARNING):
             async with _serving(
-                deps=deps, container=container, endpoints=endpoints, plans=plans
-            ) as (_app, _client):
+                deps=serving_deps, container=container, endpoints=endpoints, plans=plans
+            ):
                 pass
-        return caplog.text
 
-    async def test_names_the_agent_when_publishing_it(
-        self, deps: StubDepsFactory, container: LoomContainer, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """The announcement names the agent and the URL a stranger reaches."""
-        text = await self._publication_warning(deps=deps, container=container, caplog=caplog)
-
-        assert _AGENT in text
-        assert f"{_BASE_URL}{_PREFIX}/{_AGENT}" in text
-        assert card_path(_AGENT, prefix=_PREFIX) in text
-
-    async def test_does_not_announce_anonymity_when_the_stanza_is_disabled(
-        self, deps: StubDepsFactory, container: LoomContainer, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A disabled stanza is announced as what it is: not an anonymous mount."""
-        endpoints = {_AGENT: make_endpoint(enabled=False, allow_anonymous=True)}
-        text = await self._publication_warning(
-            deps=deps, container=container, caplog=caplog, endpoints=endpoints
-        )
-
-        assert "allow_anonymous=False" in text
-        assert "NOT authenticated" not in text
-
-    async def test_warns_the_context_id_is_the_credential_when_an_anonymous_mount_converses(
-        self,
-        conversation_deps: RecordingDepsFactory,
-        container: LoomContainer,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """AC6: an anonymous mount of a conversational agent says the id is the credential."""
-        endpoints = {_AGENT: make_endpoint(allow_anonymous=True)}
-        text = await self._publication_warning(
-            deps=conversation_deps,
-            container=container,
-            caplog=caplog,
-            endpoints=endpoints,
-            plans=(conversational_plan(_AGENT, loader=True),),
-        )
-
-        assert "allow_anonymous=True" in text
-        assert "contextId" in text
-        assert "credential" in text
+        assert CapturedLog(caplog).named(AiEvent.A2A_AGENT_PUBLISHED) == [
+            {
+                AiKey.AGENT: _AGENT,
+                LogField.HTTP_ROUTE: f"{_PREFIX}/{_AGENT}",
+                AiKey.ANONYMOUS: admitted_anonymously,
+                AiKey.CONVERSATIONAL: conversational,
+            }
+        ]
 
 
 class TestBodyLimit:

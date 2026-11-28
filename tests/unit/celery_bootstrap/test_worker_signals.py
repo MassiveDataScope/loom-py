@@ -13,8 +13,9 @@ import inspect
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from functools import partial
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import Any, cast
 
 import pytest
 from celery.concurrency.prefork import TaskPool as PreforkPool
@@ -26,20 +27,24 @@ from celery.signals import (
     worker_shutdown,
 )
 
-import loom.celery.adapter as adapter_module
-from loom.celery.adapter import CeleryAdapter, _connect_lifecycle_signals, _WorkerLifecycle
+import loom.celery.runtime as adapter_module
 from loom.celery.constants import (
     TASK_CALLBACK_ERROR_PREFIX,
     TASK_CALLBACK_PREFIX,
     TASK_JOB_PREFIX,
 )
 from loom.celery.errors import WorkerNotOpenError
-from loom.celery.runner import _CeleryAsyncRuntime
-from loom.composition import AppConfig, Application, ApplicationHost, compose_application
-from loom.core.config import ConfigContext
+from loom.celery.event import CeleryEvent
+from loom.celery.runner import _CeleryProcessBridge
+from loom.celery.runtime import CeleryRuntime, _connect_lifecycle_signals, _WorkerLifecycle
+from loom.composition import AppConfig, Application, ApplicationHost
+from loom.core.config import ConfigContext, ConfigError
 from loom.core.job.job import Job
+from tests.helpers import acme_callbacks
+from tests.helpers.acme_callbacks import AcmeSyncCallback
 from tests.helpers.celery import WorkerDouble, isolated_signals
-from tests.helpers.composition import TaskAffine, application_of, composition_source
+from tests.helpers.composition import TaskAffine, application_of, composition_project
+from tests.helpers.loggers import CapturedLog
 
 _SIGNALS = (worker_init, worker_process_init, worker_process_shutdown, worker_shutdown)
 
@@ -114,12 +119,58 @@ class _RuntimeSpy:
 
 
 def _connect(application: _ApplicationSpy, runtime: Any | None = None) -> Any:
-    bridge = runtime if runtime is not None else _CeleryAsyncRuntime()
+    bridge = runtime if runtime is not None else _CeleryProcessBridge()
     _connect_lifecycle_signals(_WorkerLifecycle(cast(Any, application), bridge))
     return bridge
 
 
+@pytest.fixture(autouse=True)
+def start_methods(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, bool]]:
+    """Record the start methods the lifecycle sets instead of changing billiard's."""
+    chosen: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        adapter_module, "set_start_method", lambda method, force: chosen.append((method, force))
+    )
+    return chosen
+
+
 class TestPrefork:
+    def test_worker_init_pins_fork_for_the_children(
+        self, start_methods: list[tuple[str, bool]]
+    ) -> None:
+        _connect(_ApplicationSpy())
+
+        worker_init.send(sender=WorkerDouble("prefork"))
+
+        assert start_methods == [("fork", True)]
+
+    @pytest.mark.parametrize("start_method", ["spawn", "forkserver"])
+    def test_a_prefork_worker_refuses_a_pool_that_does_not_fork(
+        self, start_method: str, start_methods: list[tuple[str, bool]]
+    ) -> None:
+        application = _ApplicationSpy()
+        _connect(application)
+
+        with pytest.raises(WorkerTerminate) as caught:
+            worker_init.send(sender=WorkerDouble("prefork", start_method=start_method))
+
+        cause = caught.value.__cause__
+        assert isinstance(cause, ConfigError)
+        message = str(cause)
+        assert "loom registers tasks in the parent" in message
+        assert "worker_pool_start_method: fork" in message
+        assert start_methods == []
+        assert application.events == []
+
+    def test_a_single_process_pool_changes_no_start_method(
+        self, start_methods: list[tuple[str, bool]]
+    ) -> None:
+        _connect(_ApplicationSpy())
+
+        worker_init.send(sender=WorkerDouble("solo"))
+
+        assert start_methods == []
+
     @pytest.mark.parametrize("pool", ["prefork", "processes", PreforkPool])
     def test_worker_init_checks_once_and_opens_nothing(self, pool: object) -> None:
         application = _ApplicationSpy()
@@ -206,30 +257,16 @@ class TestSingleProcessPools:
 
 
 class _PingJob(Job[int]):
-    __retries__ = 0
-
     def execute(self) -> int:
         return 1
-
-
-class _SyncCallback:
-    """Sync hooks run in the task thread, not on the bridge: they must still refuse."""
-
-    calls: ClassVar[list[str]] = []
-
-    def on_success(self, job_id: str, result: Any, **context: Any) -> None:
-        self.calls.append("success")
-
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
-        self.calls.append("failure")
 
 
 class TestFailedChildOpen:
     """Celery swallows a failure in ``worker_process_init``; the child must not serve."""
 
     def _worker(self, tmp_path: Path) -> Any:
-        adapter = CeleryAdapter(jobs=[_PingJob], callbacks=[_SyncCallback])
-        source = composition_source(
+        adapter = CeleryRuntime(jobs=[_PingJob])
+        project = composition_project(
             ConfigContext.from_dict(
                 {
                     "celery": {
@@ -239,11 +276,11 @@ class TestFailedChildOpen:
                     }
                 }
             ),
-            app=AppConfig(name="worker"),
+            app=AppConfig(name="worker", packages=[acme_callbacks.MODULE]),
             code_path=tmp_path,
             config_root=tmp_path,
         )
-        application = compose_application(source, adapter)
+        application = project.compose(adapter)
 
         @asynccontextmanager
         async def _failing(*, check: bool = True) -> AsyncIterator[Application]:
@@ -252,22 +289,23 @@ class TestFailedChildOpen:
             yield application
 
         cast(Any, application).running = _failing
-        return adapter.bind(application)
+        return adapter.mount(application)
 
     def test_every_task_fails_fast_naming_the_failure_to_open(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         task = self._worker(tmp_path).tasks[f"{TASK_JOB_PREFIX}.{_PingJob.__qualname__}"]
 
-        with caplog.at_level(logging.ERROR, logger="loom.celery.adapter"):
+        with caplog.at_level(logging.ERROR, logger="loom.celery.runtime"):
             worker_process_init.send(sender=None)
             failures = [task.apply().result for _ in range(2)]
 
         for failure in failures:
             assert isinstance(failure, WorkerNotOpenError)
             assert isinstance(failure.__cause__, RuntimeError)
-            assert "RuntimeError: clickhouse unreachable" in str(failure)
-        opening = [r for r in caplog.records if "failed to open its application" in r.message]
+            assert "(RuntimeError)" in str(failure)
+            assert "clickhouse unreachable" not in str(failure)
+        opening = [r for r in caplog.records if r.message == CeleryEvent.WORKER_PROCESS_OPEN_FAILED]
         assert len(opening) == 1
 
     @pytest.mark.parametrize(
@@ -282,14 +320,14 @@ class TestFailedChildOpen:
         self, tmp_path: Path, prefix: str, kwargs: dict[str, Any]
     ) -> None:
         celery_app = self._worker(tmp_path)
-        task = celery_app.tasks[f"{prefix}.{_SyncCallback.__qualname__}"]
-        _SyncCallback.calls.clear()
+        task = celery_app.tasks[f"{prefix}.{AcmeSyncCallback.__qualname__}"]
+        AcmeSyncCallback.calls.clear()
 
         worker_process_init.send(sender=None)
         failure = task.apply(**kwargs, kwargs={"job_id": "job-1", "context": {}}).result
 
         assert isinstance(failure, WorkerNotOpenError)
-        assert _SyncCallback.calls == []
+        assert AcmeSyncCallback.calls == []
 
 
 class TestClosing:
@@ -311,10 +349,10 @@ class TestClosing:
         bridge = _connect(application)
         worker_process_init.send(sender=None)
 
-        with caplog.at_level(logging.WARNING, logger="loom.celery.adapter"):
+        with caplog.at_level(logging.WARNING, logger="loom.celery.runtime"):
             worker_process_shutdown.send(sender=None)
 
-        assert "pool gone" in caplog.text
+        assert "pool gone" in CapturedLog(caplog).exception_text
         assert bridge._bridge is None
 
     def test_a_bridge_that_cannot_run_the_close_still_shuts_down(self) -> None:
@@ -337,8 +375,8 @@ class TestTaskAffineResources:
     @pytest.mark.parametrize(
         ("pool", "opening", "closing"),
         [
-            ("prefork", worker_process_init, worker_process_shutdown),
-            ("solo", worker_init, worker_shutdown),
+            ("prefork", partial(worker_process_init.send, sender=None), worker_process_shutdown),
+            ("solo", lambda: None, worker_shutdown),
         ],
     )
     def test_a_task_affine_resource_closes_cleanly(
@@ -349,14 +387,14 @@ class TestTaskAffineResources:
         bridge = _connect(cast(Any, application))
         worker_init.send(sender=WorkerDouble(pool))
 
-        with caplog.at_level(logging.WARNING, logger="loom.celery.adapter"):
-            opening.send(sender=None)
+        with caplog.at_level(logging.WARNING, logger="loom.celery.runtime"):
+            opening()
             assert application.is_open
             closing.send(sender=None)
 
         assert affine.exited_in is not None
         assert not application.is_open
-        assert "failed to close" not in caplog.text
+        assert CeleryEvent.WORKER_CLOSE_FAILED not in caplog.text
         assert bridge._bridge is None
 
 

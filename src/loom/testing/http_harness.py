@@ -18,33 +18,53 @@ Usage::
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.types import ASGIApp, Receive, Scope, Send
 
-from loom.composition import compose_application
 from loom.composition.application import Application
+from loom.composition.project import AppConfig, Project
 from loom.composition.recipe import Recipe
-from loom.composition.source import AppConfig, CompositionSource
+from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
-from loom.core.di.scope import Scope
-from loom.core.discovery.base import DiscoveryResult
 from loom.core.environment import resolve_environment
+from loom.core.errors import InvalidUse
+from loom.core.job.service import JobService
 from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence import SERVER_PROFILE
-from loom.core.repository.registration import capability_keys
+from loom.core.observability.observability import Observability
+from loom.core.stores import SERVER_PROFILE
 from loom.rest.compiler import RouteSources
 from loom.rest.fastapi.app import create_fastapi_app
 from loom.rest.model import RestInterface
 from loom.testing.golden import _ErrorProxy
+from loom.testing.overrides import Override
 
 
-class _HarnessAdapter:
+class _JobsIdleAfterRequest:
+    """ASGI middleware that returns from a request once the inline jobs it dispatched have run.
+
+    Args:
+        app: The application serving the request.
+        jobs: The job service whose inline jobs are waited for.
+    """
+
+    def __init__(self, app: ASGIApp, *, jobs: JobService) -> None:
+        self._app = app
+        self._jobs = jobs
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        await self._app(scope, receive, send)
+        if scope["type"] == "http":
+            await self._jobs.wait_until_idle()
+
+
+class _HarnessRuntime:
     """Compose the use cases *routes* serve, with *overrides*, leniently; mount *routes*.
 
     Discovers no model, so no store registers a repository: *overrides* bind
@@ -53,6 +73,7 @@ class _HarnessAdapter:
     Args:
         routes: The interfaces to serve; their routes' use cases are composed.
         overrides: DI modules binding the fake repositories.
+        aws: The AWS clients the composition uses; a fresh set without it.
         **fastapi_kwargs: Forwarded to the ``FastAPI`` constructor.
     """
 
@@ -61,20 +82,22 @@ class _HarnessAdapter:
         routes: RouteSources,
         *,
         overrides: tuple[Callable[[LoomContainer], None], ...],
+        aws: AwsClients | None = None,
         **fastapi_kwargs: Any,
     ) -> None:
         self._routes = routes
         self._overrides = overrides
+        self._aws = AwsClients() if aws is None else aws
         self._fastapi_kwargs = fastapi_kwargs
 
-    def source(self) -> CompositionSource:
+    def project(self) -> Project:
         """The ``test-harness`` application, its jobs inline, in the ``LOOM_ENV`` environment.
 
         Raises:
             ConfigError: When ``LOOM_ENV`` is not an environment.
         """
         app = AppConfig(name="test-harness", job_service="inline")
-        return CompositionSource(
+        return Project(
             config=ConfigContext.from_dict(
                 {"app": {"name": app.name, "job_service": app.job_service}}
             ),
@@ -82,25 +105,27 @@ class _HarnessAdapter:
             code_path=Path.cwd(),
             config_root=Path.cwd(),
             app=app,
-            observability=ObservabilityRuntime.noop(),
+            observability=Observability.noop(),
             observability_config=ObservabilityConfig(),
         )
 
-    def recipe(self, source: CompositionSource) -> Recipe:
+    def recipe(self, project: Project) -> Recipe:
         """The routes' use cases over no model, leniently."""
-        del source
         interfaces = (*self._routes.python, *self._routes.config)
         use_cases = dict.fromkeys(route.use_case for iface in interfaces for route in iface.routes)
         return Recipe(
             profile=SERVER_PROFILE,
-            discovered=DiscoveryResult(models=(), use_cases=tuple(use_cases), interfaces=()),
+            discovered=project.discovered.with_changes(models=(), use_cases=tuple(use_cases)),
+            aws=self._aws,
             overrides=self._overrides,
             lenient=True,
         )
 
-    def bind(self, application: Application) -> FastAPI:
-        """Mount the routes on *application*'s kernel."""
-        return create_fastapi_app(application.kernel, self._routes, **self._fastapi_kwargs)
+    def mount(self, application: Application) -> FastAPI:
+        """Mount the routes on *application*'s kernel; each request returns once its jobs ran."""
+        app = create_fastapi_app(application.kernel, self._routes, **self._fastapi_kwargs)
+        app.add_middleware(_JobsIdleAfterRequest, jobs=application.jobs)
+        return app
 
 
 class HttpTestHarness:
@@ -116,8 +141,15 @@ class HttpTestHarness:
     the correct binding automatically by scanning the use cases declared in
     the REST interfaces.
 
+    Its jobs run inline, and each request returns once the jobs it
+    dispatched, and the jobs those dispatch, have run: a test asserts their
+    effects right after the call. A job with a countdown is waited for too; bind
+    a :class:`~loom.testing.ManualTimer` to hold it until the test moves the clock.
+
     Args:
-        None
+        overrides: Substitutions applied while the application is composed.
+        aws: Recording or fake AWS clients; the stores, the job transports and
+            the container's ``AwsClients`` all use this one object.
 
     Example::
 
@@ -130,9 +162,33 @@ class HttpTestHarness:
         assert resp.status_code == 404
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self, *, overrides: Sequence[Override] = (), aws: AwsClients | None = None
+    ) -> None:
         self._repos: dict[type[Any], Any] = {}
         self._error_overrides: dict[tuple[type[Any], str], Exception] = {}
+        self._overrides = tuple(overrides)
+        self._aws = aws
+        self.application: Application | None = None
+
+    @contextmanager
+    def overriding(self, *overrides: Override) -> Iterator[HttpTestHarness]:
+        """Apply substitutions to the built application until the block exits.
+
+        Args:
+            *overrides: The substitutions; they exit in reverse order.
+
+        Yields:
+            This harness.
+
+        Raises:
+            RuntimeError: When the application is not built yet.
+            ResolutionError: As :meth:`Override.apply` raises it.
+        """
+        if self.application is None:
+            raise InvalidUse("Build the harness application before overriding dependencies")
+        with Override.apply_all(self.application.kernel.container, overrides):
+            yield self
 
     def inject_repo(self, model: type[Any], fake: Any) -> None:
         """Register a fake repository for a domain model type.
@@ -160,7 +216,7 @@ class HttpTestHarness:
     def force_error(self, model: type[Any], method: str, error: Exception) -> None:
         """Force a repository method to raise a specific error on every call.
 
-        Errors that are :class:`~loom.core.errors.LoomError` subclasses are
+        Errors that are :class:`~loom.core.errors.CodedError` subclasses are
         mapped to the corresponding HTTP status code by the router.
 
         Args:
@@ -192,23 +248,15 @@ class HttpTestHarness:
         repos = dict(self._repos)
         error_overrides = dict(self._error_overrides)
 
-        def _make_provider(instance: Any) -> Callable[[], Any]:
-            def _provider() -> Any:
-                return instance
-
-            return _provider
-
         def _module(container: LoomContainer) -> None:
+            for override in self._overrides:
+                override.install(container)
             for model, fake in repos.items():
                 overrides = {
                     method: err for (m, method), err in error_overrides.items() if m is model
                 }
                 effective = _ErrorProxy(fake, overrides) if overrides else fake
-                token = ("repo", model)
-                provider = _make_provider(effective)
-                for key in (token, *capability_keys(type(fake), model)):
-                    container.register(key, provider, scope=Scope.APPLICATION)
-                container.register_repo(model, token)
+                Override.repository(model, effective).install(container)
 
         return _module
 
@@ -253,10 +301,12 @@ class HttpTestHarness:
             resp = client.post("/products/", json={"name": "Widget"})
             assert resp.status_code == 201
         """
-        adapter = _HarnessAdapter(
+        runtime = _HarnessRuntime(
             RouteSources(python=interfaces, config=config_interfaces, disabled=disable_routes),
             overrides=(self._build_module(),),
+            aws=self._aws,
             **fastapi_kwargs,
         )
-        app = adapter.bind(compose_application(adapter.source(), adapter))
+        self.application = runtime.project().compose(runtime)
+        app = runtime.mount(self.application)
         return TestClient(app, raise_server_exceptions=False)

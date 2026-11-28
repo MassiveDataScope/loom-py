@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Generic, TypeVar
 
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct
 from loom.streaming.core._message import StreamPayload
 from loom.streaming.nodes._expr_eval import (
@@ -66,9 +67,9 @@ class Router(Generic[InT, OutT]):
         default: Process[InT, OutT] | None = None,
     ) -> None:
         if selector is None and not predicate_routes:
-            raise ValueError("Router requires a selector or at least one predicate route.")
+            raise InvalidValue("Router requires a selector or at least one predicate route.")
         if selector is not None and not routes:
-            raise ValueError("Router.by requires at least one keyed route.")
+            raise InvalidValue("Router.by requires at least one keyed route.")
         self._selector = selector
         self._routes = dict(routes or {})
         self._predicate_routes = tuple(predicate_routes)

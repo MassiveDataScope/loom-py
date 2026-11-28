@@ -67,8 +67,6 @@ def runner(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     runner = MagicMock()
     monkeypatch.setattr(_backfill_body.ETLRunner, "from_yaml", lambda *a, **k: runner)
     monkeypatch.setattr(_backfill_body, "prefect_flow_run_id", lambda: None)
-    monkeypatch.setattr(_backfill_body, "install_log_bridge", lambda *a, **k: None)
-    monkeypatch.setattr(_backfill_body, "uninstall_log_bridge", lambda *a, **k: None)
     monkeypatch.setattr(_backfill_body, "maybe_delete_manifest", lambda *a, **k: None)
     return runner
 

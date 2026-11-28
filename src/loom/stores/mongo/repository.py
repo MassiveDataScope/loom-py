@@ -1,0 +1,701 @@
+"""MongoDB implementation of the repository contract.
+
+The repository speaks to one ``AsyncCollection`` through pymongo's native
+async client, so every driver call is awaited directly. The model's primary
+key is stored as ``_id`` and mapped back on read, so a model declaring
+``slug`` as its key never sees ``_id``. The key is minted by an
+:class:`~loom.stores.mongo.ids.IdPolicy` when the input carries
+none.
+
+Values cross the wire in their storage form
+(:mod:`loom.stores.mongo.values`): ``datetime`` native as aware UTC
+at millisecond precision, ``date``, ``time``, ``Decimal`` and ``UUID`` as
+strings restored by the output struct's annotation on read. A
+``DateTime(tz=False)`` column reads back naive (UTC), so the output of
+``create`` equals a later read whatever the column declares. Only the model's
+column fields are written.
+
+``pymongo`` is an optional extra (``loom-kernel[mongo]``) imported at module
+level: this module is only reached through the Mongo backend, and the
+persistence registry turns an ``ImportError`` at entry-point load into a
+``ConfigError`` naming the extra.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from datetime import UTC, datetime
+from typing import Any, ClassVar, Generic, Protocol, cast
+
+import msgspec
+from pymongo import ReturnDocument
+from pymongo.asynchronous.client_session import AsyncClientSession
+from pymongo.errors import BulkWriteError, DuplicateKeyError, PyMongoError
+from pymongo.results import DeleteResult, InsertManyResult, InsertOneResult
+
+from loom.core.errors import Conflict, InternalError
+from loom.core.model.convert import to_struct
+from loom.core.model.introspection import (
+    column_annotations,
+    get_column_fields,
+    get_table_name,
+)
+from loom.core.model.types import ColumnKind
+from loom.core.stores.repository import (
+    BulkCreatable,
+    Countable,
+    Creatable,
+    Cursor,
+    CursorCodec,
+    CursorResult,
+    Deletable,
+    FieldReadable,
+    FilterGroup,
+    FilterOp,
+    FilterParams,
+    FilterSpec,
+    IdT,
+    Listable,
+    OnConflict,
+    OutputT,
+    PageParams,
+    PageResult,
+    PaginationMode,
+    QuerySpec,
+    Readable,
+    SortSpec,
+    Updatable,
+    build_page_result,
+)
+from loom.core.stores.repository.cursor import require_cursor_sort
+from loom.core.stores.repository.record import (
+    ServerStamps,
+    creation_values,
+    refuse_key_change,
+    single_id_attribute,
+)
+from loom.stores.mongo.event import MongoEvent, MongoKey
+from loom.stores.mongo.ids import IdPolicy, Uuid4IdPolicy
+from loom.stores.mongo.query_compiler import MongoFilter, MongoQueryCompiler, MongoSort
+from loom.stores.mongo.values import to_storage_datetime, to_storage_value
+
+Document = dict[str, Any]
+SessionProvider = Callable[[bool], AsyncClientSession | None]
+"""Returns the client session a driver call runs in, given whether the call writes."""
+
+_log = logging.getLogger(__name__)
+
+_ID = "_id"
+_ID_ASCENDING: tuple[str, int] = (_ID, 1)
+_DUPLICATE_KEY = 11000
+_NATIVE_TYPES = (datetime,)
+
+
+def _no_session(write: bool) -> AsyncClientSession | None:
+    """Default ``session_provider``: every driver call runs outside a session."""
+    del write
+    return None
+
+
+class MongoFindCursor(Protocol):
+    """The subset of ``AsyncCursor`` the repository drives."""
+
+    def sort(self, key_or_list: list[tuple[str, int]]) -> MongoFindCursor: ...
+
+    def skip(self, skip: int) -> MongoFindCursor: ...
+
+    def limit(self, limit: int) -> MongoFindCursor: ...
+
+    async def to_list(self) -> list[Document]: ...
+
+
+class MongoCollection(Protocol):
+    """The subset of ``AsyncCollection`` the repository drives.
+
+    ``session`` is keyword-only so pymongo's real signatures, which place
+    other optional parameters before it, satisfy the protocol structurally.
+    """
+
+    async def insert_one(
+        self, document: Document, *, session: AsyncClientSession | None = None
+    ) -> InsertOneResult: ...
+
+    async def insert_many(
+        self,
+        documents: Iterable[Document],
+        *,
+        ordered: bool = True,
+        session: AsyncClientSession | None = None,
+    ) -> InsertManyResult: ...
+
+    async def find_one(
+        self, filter: Mapping[str, Any], *, session: AsyncClientSession | None = None
+    ) -> Document | None: ...
+
+    def find(
+        self, filter: Mapping[str, Any], *, session: AsyncClientSession | None = None
+    ) -> MongoFindCursor: ...
+
+    async def count_documents(
+        self, filter: Mapping[str, Any], *, session: AsyncClientSession | None = None
+    ) -> int: ...
+
+    async def find_one_and_update(
+        self,
+        filter: Mapping[str, Any],
+        update: Mapping[str, Any],
+        *,
+        return_document: bool = False,
+        session: AsyncClientSession | None = None,
+    ) -> Document | None: ...
+
+    async def delete_one(
+        self, filter: Mapping[str, Any], *, session: AsyncClientSession | None = None
+    ) -> DeleteResult: ...
+
+    async def delete_many(
+        self, filter: Mapping[str, Any], *, session: AsyncClientSession | None = None
+    ) -> DeleteResult: ...
+
+
+class MongoRepository(
+    Readable[OutputT],
+    FieldReadable[OutputT],
+    Creatable[OutputT],
+    BulkCreatable[OutputT],
+    Updatable[OutputT],
+    Deletable[OutputT],
+    Listable[OutputT],
+    Countable[OutputT],
+    Generic[OutputT, IdT],
+):
+    """Document repository over one MongoDB collection.
+
+    Id rule: a primary-key value present in the input struct wins and is
+    written to ``_id``; when the input carries none (field unset or
+    ``None``) ``id_policy`` generates it. ``ServerDefault.NOW`` fields left
+    empty on create and ``ServerOnUpdate.NOW`` fields on every update receive
+    the current UTC time. A duplicate key raises
+    :class:`~loom.core.errors.Conflict`.
+
+    Beyond refusing a composite key, the repository does not judge the
+    model's key declaration: a model whose key Mongo cannot mint
+    (``autoincrement=True``) is rejected at boot by
+    :func:`~loom.stores.mongo.ids.validate_id_field`, which the
+    backend runs over every discovered model.
+
+    Args:
+        model: Loom model bound to the collection; its ``primary_key`` field
+            maps to ``_id``.
+        collection: pymongo ``AsyncCollection`` (or any object with the same
+            async shape) holding the documents.
+        id_policy: Strategy minting and converting ids; defaults to
+            :class:`~loom.stores.mongo.ids.Uuid4IdPolicy`.
+        session_provider: Given whether the call writes, returns the client
+            session the driver call runs in, or ``None``. Defaults to no
+            session.
+        cursor_codec: Codec that issues and verifies cursor tokens; the
+            backend builds one from ``stores.settings.cursors`` and shares it;
+            a disabled codec refuses a cursor page.
+            Mongo has no row-level-security scope, so cursors are bound to
+            no scope (``""``) beyond the model, filters and sort.
+            A codec passed here by hand skips the deployed-environment
+            refusal of an opt-out that ``register_cursor_codec`` applies; a
+            custom builder passes ``context.container.resolve(CursorCodec)``.
+
+    Raises:
+        ValueError: If the model declares no primary key.
+        ConfigError: If the primary key is composite: ``_id`` holds one value.
+
+    Example::
+
+        repository = MongoRepository(Article, database["articles"], cursor_codec=codec)
+        article = await repository.create(ArticleCreate(slug="hello", title="Hi"))
+    """
+
+    backend_name: ClassVar[str] = "mongo"
+
+    def __init__(
+        self,
+        model: type,
+        collection: MongoCollection,
+        id_policy: IdPolicy | None = None,
+        session_provider: SessionProvider = _no_session,
+        *,
+        cursor_codec: CursorCodec,
+    ) -> None:
+        self._model = model
+        self._cursor_codec = cursor_codec
+        self._collection = collection
+        self._ids: IdPolicy = id_policy if id_policy is not None else Uuid4IdPolicy()
+        self._session = session_provider
+        self._id_attr = single_id_attribute(model, why_single="Mongo stores one key value in _id")
+        column_fields = get_column_fields(model)
+        self._column_fields = frozenset(column_fields)
+        self._cursor_columns = column_annotations(model)
+        self._naive_datetime_fields = frozenset(
+            name
+            for name, info in column_fields.items()
+            if info.kind is ColumnKind.DATETIME
+            and info.column_type is not None
+            and info.column_type.option("timezone") is False
+        )
+        self._stamps = ServerStamps.of(model)
+        self._compiler = MongoQueryCompiler(model, self._id_attr, self._ids.to_storage)
+
+    def has_caller_scoped_session(self) -> bool:
+        """Whether a read would run inside a session bound to the caller's context.
+
+        True while the ``session_provider`` yields a session for a read, as
+        the backend's provider does while a
+        :class:`~loom.stores.mongo.uow.MongoUnitOfWork` of the store
+        takes part in the invocation: the session dies when that caller
+        unwinds and holds writes only that caller can see.  False with the
+        default provider, and with ``transactions: false``, where every
+        driver call autocommits on its own.
+
+        Implements
+        :class:`~loom.core.stores.repository.session_scope.SupportsCallerScopedSession`.
+
+        Returns:
+            ``True`` when a caller-scoped session is bound to the context.
+        """
+        return self._read_session() is not None
+
+    def _read_session(self) -> AsyncClientSession | None:
+        """The session a read joins, or ``None`` to read outside one."""
+        return self._session(False)
+
+    def _write_session(self) -> AsyncClientSession | None:
+        """The session a write joins, or ``None`` to autocommit; the write is recorded."""
+        return self._session(True)
+
+    @property
+    def model(self) -> type:
+        """Loom model bound to the collection."""
+        return self._model
+
+    @property
+    def entity_name(self) -> str:
+        """Model table name, the cache namespace shared with every backend."""
+        return get_table_name(self._model)
+
+    async def get_by_id(self, obj_id: IdT, profile: str = "default") -> OutputT | None:
+        """Fetch one entity by primary key."""
+        document = await self._collection.find_one(self._key(obj_id), session=self._read_session())
+        return None if document is None else self._to_output(document)
+
+    async def get_by(self, field: str, value: Any, profile: str = "default") -> OutputT | None:
+        """Fetch the first entity whose ``field`` equals ``value``."""
+        document = await self._collection.find_one(
+            self._equals(field, value), session=self._read_session()
+        )
+        return None if document is None else self._to_output(document)
+
+    async def exists_by(self, field: str, value: Any) -> bool:
+        """Return whether any entity has ``field == value``."""
+        document = await self._collection.find_one(
+            self._equals(field, value), session=self._read_session()
+        )
+        return document is not None
+
+    async def count(self) -> int:
+        """Return the number of documents in the collection."""
+        return await self._collection.count_documents({}, session=self._read_session())
+
+    async def create(self, data: msgspec.Struct) -> OutputT:
+        """Insert one document and return its output struct.
+
+        Raises:
+            Conflict: If a document with the same key already exists.
+        """
+        document = self._new_document(data)
+        try:
+            await self._collection.insert_one(document, session=self._write_session())
+        except DuplicateKeyError as exc:
+            raise self._conflict(document[_ID]) from exc
+        return self._to_output(document)
+
+    async def create_many(
+        self, data: Sequence[msgspec.Struct], *, on_conflict: OnConflict = OnConflict.ERROR
+    ) -> tuple[OutputT, ...]:
+        """Insert every struct with one ``insert_many``.
+
+        With ``ERROR`` the write is ordered and a duplicate key persists
+        nothing: the documents the ordered write stored before the failing
+        one are deleted again, unless a transaction is active, in which case
+        its abort discards them. When that compensating delete itself fails,
+        the driver error surfaces instead of ``Conflict`` (with a note naming
+        it) and the store may hold the partial batch. With ``IGNORE`` the
+        write is unordered and a document whose ``_id`` already exists is
+        skipped; any other write error leaves the other documents written.
+        Inside a transaction the stored keys are read first, because a
+        duplicate-key error would abort it. An empty ``data`` returns ``()``
+        without a round trip.
+
+        Args:
+            data: Command structs to persist.
+            on_conflict: Whether an existing key raises (``ERROR``) or skips
+                its document (``IGNORE``).
+
+        Returns:
+            The inserted output structs in input order: one per input with
+            ``ERROR``, only the inserted documents with ``IGNORE``.
+
+        Raises:
+            Conflict: If a document with the same key already exists, with
+                ``ERROR``; with ``IGNORE``, on a duplicate in another unique
+                index.
+            BulkWriteError: On a write error other than a duplicate key.
+        """
+        documents = [self._new_document(item) for item in data]
+        if not documents:
+            return ()
+        if on_conflict is OnConflict.IGNORE:
+            documents = await self._insert_new(documents)
+        else:
+            await self._insert_all(documents)
+        return tuple(self._to_output(document) for document in documents)
+
+    async def _insert_all(self, documents: list[Document]) -> None:
+        """Insert *documents* in order, persisting none of them when a key already exists.
+
+        Raises:
+            Conflict: If a document with the same key already exists.
+        """
+        session = self._write_session()
+        try:
+            await self._collection.insert_many(documents, ordered=True, session=session)
+        except BulkWriteError as exc:
+            index = self._duplicate_indexes(exc)[0]
+            conflict = self._conflict(documents[index][_ID])
+            if session is None:
+                await self._undo_inserts(documents[:index], conflict)
+            raise conflict from exc
+
+    async def _insert_new(self, documents: list[Document]) -> list[Document]:
+        """Insert the *documents* whose ``_id`` is not stored yet and return them.
+
+        Outside a transaction one unordered ``insert_many`` skips the stored
+        keys. Inside one a duplicate key would abort the transaction, so the
+        stored keys are read in its session first and only the missing
+        documents are inserted; a key another transaction inserts in between
+        fails this one as a write conflict.
+
+        Raises:
+            Conflict: On a duplicate in a unique index other than ``_id``.
+            BulkWriteError: On a write error other than a duplicate key.
+        """
+        session = self._write_session()
+        if session is not None:
+            documents = await self._not_stored(documents, session)
+        try:
+            await self._collection.insert_many(documents, ordered=False, session=session)
+        except BulkWriteError as exc:
+            skipped = set(self._duplicate_indexes(exc))
+            self._raise_secondary_conflict(exc)
+            return [document for index, document in enumerate(documents) if index not in skipped]
+        return documents
+
+    async def _not_stored(
+        self, documents: list[Document], session: AsyncClientSession
+    ) -> list[Document]:
+        """Return the first document of each ``_id`` that *session* does not see stored."""
+        keys = [document[_ID] for document in documents]
+        stored = {
+            document[_ID]
+            for document in await self._collection.find(
+                {_ID: {"$in": keys}}, session=session
+            ).to_list()
+        }
+        missing = []
+        for document in documents:
+            if document[_ID] not in stored:
+                stored.add(document[_ID])
+                missing.append(document)
+        return missing
+
+    def _raise_secondary_conflict(self, exc: BulkWriteError) -> None:
+        """Raise ``Conflict`` when *exc* reports a duplicate in a unique index but ``_id``."""
+        secondary = next(
+            (
+                error["keyValue"]
+                for error in exc.details["writeErrors"]
+                if _ID not in error.get("keyPattern", {_ID: 1})
+            ),
+            None,
+        )
+        if secondary is not None:
+            values = ", ".join(f"{name}={value!r}" for name, value in secondary.items())
+            raise Conflict(f"{self._model.__qualname__} with {values} already exists.") from exc
+
+    @staticmethod
+    def _duplicate_indexes(exc: BulkWriteError) -> list[int]:
+        """Return the indexes of the documents *exc* refused as duplicate keys.
+
+        Raises:
+            BulkWriteError: *exc* itself, when it lists no write error or one
+                that is not a duplicate key.
+        """
+        errors = exc.details.get("writeErrors", [])
+        if not errors or any(error.get("code") != _DUPLICATE_KEY for error in errors):
+            raise exc
+        return [int(error["index"]) for error in errors]
+
+    async def _undo_inserts(self, documents: list[Document], conflict: Conflict) -> None:
+        """Delete the documents an ordered ``insert_many`` stored before it failed.
+
+        A driver failure here is logged and re-raised with a note naming the
+        conflict it was compensating: the store may hold the partial batch.
+        """
+        if not documents:
+            return
+        keys = [document[_ID] for document in documents]
+        try:
+            await self._collection.delete_many({_ID: {"$in": keys}})
+        except PyMongoError as exc:
+            _log.error(
+                MongoEvent.BULK_UNDO_FAILED,
+                extra={MongoKey.DOCUMENT_COUNT: len(keys)},
+                exc_info=exc,
+            )
+            exc.add_note(f"while undoing a partial create_many after: {conflict}")
+            raise
+
+    async def update(self, obj_id: IdT, data: msgspec.Struct) -> OutputT | None:
+        """``$set`` the non-``None`` fields of ``data`` on the document keyed ``obj_id``.
+
+        ``ServerOnUpdate.NOW`` fields are stamped with the current UTC time.
+        The primary key is never rewritten. Returns the updated output, or
+        ``None`` when no document has that key.
+        """
+        key = self._key(obj_id)
+        session = self._write_session()
+        changes = {
+            name: value
+            for name, value in self._to_internal(data).items()
+            if value is not None and name != self._id_attr
+        }
+        refuse_key_change(self._model, changes)
+        changes = self._stamps.with_update_stamps(changes, to_storage_datetime(_utc_now()))
+        if changes:
+            document = await self._collection.find_one_and_update(
+                key, {"$set": changes}, return_document=ReturnDocument.AFTER, session=session
+            )
+        else:
+            document = await self._collection.find_one(key, session=session)
+        return None if document is None else self._to_output(document)
+
+    async def delete(self, obj_id: IdT) -> bool:
+        """Delete the document keyed ``obj_id``, returning whether it existed."""
+        result = await self._collection.delete_one(self._key(obj_id), session=self._write_session())
+        return result.deleted_count > 0
+
+    async def list_paginated(
+        self,
+        page_params: PageParams,
+        filter_params: FilterParams | None = None,
+        profile: str = "default",
+    ) -> PageResult[OutputT]:
+        """Fetch one offset page ordered by primary key, with the total count."""
+        mongo_filter = self._compiler.compile_filter(_equality_group(filter_params))
+        return await self._offset_page(mongo_filter, [_ID_ASCENDING], page_params)
+
+    async def list_with_query(
+        self, query: QuerySpec, profile: str = "default"
+    ) -> PageResult[OutputT] | CursorResult[OutputT]:
+        """Fetch entities matching a :class:`QuerySpec` in offset or cursor mode.
+
+        Both modes append ``_id`` ascending to the requested sort so pages
+        are deterministic, unless the sort already names the primary key.
+
+        Raises:
+            UnsupportedQuery: On an unknown field, an unsupported operator or
+                a cursor token that is invalid, foreign or does not match
+                the sort.
+        """
+        if query.pagination == PaginationMode.CURSOR:
+            return await self._list_cursor(query)
+        return await self._list_offset(query)
+
+    async def _list_offset(self, query: QuerySpec) -> PageResult[OutputT]:
+        return await self._offset_page(
+            self._query_filter(query),
+            self._sort(query.sort),
+            PageParams(page=query.page, limit=query.limit),
+        )
+
+    async def _offset_page(
+        self, mongo_filter: MongoFilter, sort: MongoSort, page_params: PageParams
+    ) -> PageResult[OutputT]:
+        session = self._read_session()
+        documents = await (
+            self._collection.find(mongo_filter, session=session)
+            .sort(sort)
+            .skip(page_params.offset)
+            .limit(page_params.limit)
+            .to_list()
+        )
+        total = await self._collection.count_documents(mongo_filter, session=session)
+        items = [self._to_output(document) for document in documents]
+        return build_page_result(items, total, page_params)
+
+    async def _list_cursor(self, query: QuerySpec) -> CursorResult[OutputT]:
+        self._cursor_codec.require_enabled()
+        require_cursor_sort(
+            query,
+            backend=self.backend_name,
+            model=self._model,
+            columns=self._cursor_columns,
+            primary_key=(self._id_attr,),
+        )
+        mongo_filter = self._query_filter(query)
+        if query.cursor is not None:
+            cursor = self._decode(query.cursor, query)
+            keyset = self._compiler.compile_cursor_filter(query.sort, cursor)
+            mongo_filter = {"$and": [mongo_filter, keyset]} if mongo_filter else keyset
+        documents = await (
+            self._collection.find(mongo_filter, session=self._read_session())
+            .sort(self._sort(query.sort))
+            .limit(query.limit + 1)
+            .to_list()
+        )
+        has_next = len(documents) > query.limit
+        items = tuple(self._to_output(document) for document in documents[: query.limit])
+        next_cursor = self._encode(items[-1], query) if has_next else None
+        return CursorResult(items=items, next_cursor=next_cursor, has_next=has_next)
+
+    def _query_filter(self, query: QuerySpec) -> MongoFilter:
+        if query.filters is None:
+            return {}
+        return self._compiler.compile_filter(query.filters)
+
+    def _sort(self, sort: tuple[SortSpec, ...]) -> MongoSort:
+        """Compiled sort plus ``_id`` ascending, unless the sort already names the key.
+
+        pymongo folds the pairs into one document, so a second ``_id`` pair
+        would silently override the requested direction.
+        """
+        pairs = self._compiler.compile_sort(sort)
+        if any(column == _ID for column, _ in pairs):
+            return pairs
+        return [*pairs, _ID_ASCENDING]
+
+    def _decode(self, token: str, query: QuerySpec) -> Cursor:
+        """Verify and decode the token and put its keys in storage form."""
+        cursor = self._cursor_codec.decode(
+            token,
+            backend=self.backend_name,
+            model=self._model,
+            query=query,
+            scope="",
+            columns=self._cursor_columns,
+            primary_key=(self._id_attr,),
+        )
+        keys = tuple(
+            self._compiler.storage_value(spec.field, key)
+            for spec, key in zip(query.sort, cursor.keys, strict=True)
+        )
+        return Cursor(
+            backend=cursor.backend,
+            keys=keys,
+            tie_breaker=self._compiler.storage_value(self._id_attr, cursor.tie_breaker),
+        )
+
+    def _encode(self, item: object, query: QuerySpec) -> str:
+        """Issue the token for the page after ``item``, from its values in the model's types.
+
+        A document holds a date, a decimal or a UUID as text; the output
+        struct holds the model's type, which the token carries and the next
+        page's type check expects.
+        """
+        position = Cursor(
+            backend=self.backend_name,
+            keys=tuple(getattr(item, spec.field) for spec in query.sort),
+            tie_breaker=getattr(item, self._id_attr),
+        )
+        return self._cursor_codec.encode(position, model=self._model, query=query, scope="")
+
+    def _key(self, obj_id: object) -> MongoFilter:
+        return {_ID: {"$eq": self._compiler.storage_value(self._id_attr, obj_id)}}
+
+    def _equals(self, field: str, value: Any) -> MongoFilter:
+        return self._compiler.compile_filter(
+            FilterGroup(filters=(FilterSpec(field, FilterOp.EQ, value),))
+        )
+
+    def _conflict(self, key: object) -> Conflict:
+        return Conflict(
+            f"{self._model.__qualname__} with {self._id_attr}="
+            f"{self._ids.from_storage(key)!r} already exists."
+        )
+
+    def _new_document(self, data: msgspec.Struct) -> Document:
+        """Build the document to insert: ``_id`` resolved and server defaults applied."""
+        values = self._creation_columns(data)
+        supplied = values.pop(self._id_attr, None)
+        key = self._ids.generate() if supplied is None else self._ids.to_storage(supplied)
+        return {
+            _ID: key,
+            **self._stamps.with_create_stamps(values, to_storage_datetime(_utc_now())),
+        }
+
+    def _creation_columns(self, data: msgspec.Struct) -> Document:
+        """Return the column fields to store for *data*, keyed by internal name.
+
+        Every field that is not ``msgspec.UNSET`` is included, defaults too.
+        """
+        values = msgspec.to_builtins(
+            creation_values(self._model, data), builtin_types=_NATIVE_TYPES
+        )
+        return self._stored_columns(cast(dict[str, Any], values))
+
+    def _to_internal(self, data: msgspec.Struct) -> Document:
+        """Serialize a struct to its column fields, keyed by internal name, in storage form."""
+        builtins = msgspec.to_builtins(data, builtin_types=_NATIVE_TYPES)
+        if not isinstance(builtins, dict):
+            raise InternalError("Struct payload must serialize to a dict")
+        encoded_to_internal = {
+            field.encode_name: field.name for field in msgspec.structs.fields(type(data))
+        }
+        payload = cast(dict[str, Any], builtins)
+        return self._stored_columns(
+            {encoded_to_internal.get(key, key): value for key, value in payload.items()}
+        )
+
+    def _stored_columns(self, internal: dict[str, Any]) -> Document:
+        """Keep the column fields of *internal* in storage form."""
+        return {
+            name: to_storage_value(value)
+            for name, value in internal.items()
+            if name in self._column_fields
+        }
+
+    def _to_output(self, document: Document) -> OutputT:
+        """Build the output struct: ``_id`` back to the key field, unknown keys dropped."""
+        kwargs = {name: value for name, value in document.items() if name in self._column_fields}
+        kwargs[self._id_attr] = self._ids.from_storage(document[_ID])
+        for name in self._naive_datetime_fields:
+            value = kwargs.get(name)
+            if isinstance(value, datetime):
+                kwargs[name] = value.replace(tzinfo=None)
+        return cast(OutputT, to_struct(self._model, kwargs))
+
+
+def _equality_group(filter_params: FilterParams | None) -> FilterGroup:
+    """Translate page-mode equality filters into a flat AND group."""
+    if filter_params is None:
+        return FilterGroup(filters=())
+    return FilterGroup(
+        filters=tuple(
+            FilterSpec(field, FilterOp.EQ, value) for field, value in filter_params.filters.items()
+        )
+    )
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+__all__ = ["MongoCollection", "MongoFindCursor", "MongoRepository", "SessionProvider"]

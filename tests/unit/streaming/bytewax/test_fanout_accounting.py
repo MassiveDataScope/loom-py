@@ -39,10 +39,10 @@ from bytewax.run import cli_main  # noqa: E402
 from bytewax.testing import TestingSink, TestingSource  # noqa: E402
 
 from loom.core.config import ConfigContext  # noqa: E402
+from loom.core.errors import InvalidType, InvalidValue  # noqa: E402
 from loom.core.model import LoomStruct  # noqa: E402
-from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import Observability  # noqa: E402
 from loom.streaming import (  # noqa: E402
-    Backend,
     BatchExpandStep,
     BatchStep,
     Broadcast,
@@ -65,6 +65,7 @@ from loom.streaming import (  # noqa: E402
     Router,
     Selector,
     StreamFlow,
+    TableEngine,
     With,
     WithAsync,
     msg,
@@ -84,6 +85,7 @@ from loom.streaming.compiler import (  # noqa: E402
     compile_flow,
 )
 from loom.streaming.core._message import Message, MessageMeta  # noqa: E402
+from loom.streaming.event import StreamingEvent  # noqa: E402
 from loom.streaming.kafka import MessageDescriptor, MsgspecCodec, build_message  # noqa: E402
 from loom.streaming.kafka._record import KafkaRecord  # noqa: E402
 from tests.unit.streaming.bytewax.cases import (  # noqa: E402
@@ -145,7 +147,7 @@ def _ctx(tracker: KafkaCommitTracker | None) -> Any:
     return SimpleNamespace(
         plan=SimpleNamespace(name="orders"),
         current_path=(),
-        flow_runtime=ObservabilityRuntime.noop(),
+        flow_runtime=Observability.noop(),
         commit_tracker=tracker,
     )
 
@@ -255,7 +257,7 @@ class TestExpandRoutesAccounting:
             tracker,
             declared,
             False,
-            ObservabilityRuntime.noop(),
+            Observability.noop(),
             "orders",
         )
         tracker.complete(TOPIC, PARTITION, OFFSET)
@@ -274,7 +276,7 @@ class TestExpandRoutesAccounting:
             tracker,
             declared,
             False,
-            ObservabilityRuntime.noop(),
+            Observability.noop(),
             "orders",
         )
         tracker.complete(TOPIC, PARTITION, OFFSET)
@@ -296,7 +298,7 @@ class TestExpandRoutesAccounting:
             tracker,
             frozenset({AcmeOrder}),
             False,
-            ObservabilityRuntime.noop(),
+            Observability.noop(),
             "orders",
         )
 
@@ -315,7 +317,7 @@ class TestExpandRoutesAccounting:
             tracker,
             frozenset({AcmeOrder}),
             True,
-            ObservabilityRuntime.noop(),
+            Observability.noop(),
             "orders",
         )
         tracker.complete(TOPIC, PARTITION, OFFSET)
@@ -339,7 +341,7 @@ class TestExpandRoutesAccounting:
             tracker,
             frozenset({AcmeOrder}),
             False,
-            ObservabilityRuntime.noop(),
+            Observability.noop(),
             "orders",
         )
         tracker.complete(TOPIC, PARTITION, OFFSET)
@@ -406,7 +408,7 @@ class TestSinkTrackingContract:
         ctx = _adapter._BuildContext(
             plan=plan,
             bridge=None,
-            flow_runtime=ObservabilityRuntime.noop(),
+            flow_runtime=Observability.noop(),
             flow_run_id="run-1",
             terminal_sinks={},
         )
@@ -428,7 +430,7 @@ class TestSinkTrackingContract:
         ctx = _adapter._BuildContext(
             plan=cast(Any, SimpleNamespace(name="orders", terminal_sinks={}, source=source)),
             bridge=None,
-            flow_runtime=ObservabilityRuntime.noop(),
+            flow_runtime=Observability.noop(),
             flow_run_id="run-1",
             terminal_sinks={(0, 1): _UserSink()},
             commit_tracker=tracker,
@@ -448,7 +450,7 @@ def _guard_context(**plan_parts: Any) -> _adapter._BuildContext:
     return _adapter._BuildContext(
         plan=plan,
         bridge=None,
-        flow_runtime=ObservabilityRuntime.noop(),
+        flow_runtime=Observability.noop(),
         flow_run_id="run-1",
         sink=sink,
         terminal_sinks=dict.fromkeys(plan.terminal_sinks, sink),
@@ -929,7 +931,7 @@ def _topic(name: str) -> IntoTopic[Any]:
 
 def _table(payload: type[Any] = Item) -> Any:
     """Build the table sink; ``Process`` does not type ``IntoSink`` nodes."""
-    return IntoTable(payload=payload, table="items", backend=Backend.DELTA, name="items_table")
+    return IntoTable(payload=payload, table="items", engine=TableEngine.DELTA, name="items_table")
 
 
 @dataclass(frozen=True)
@@ -1481,7 +1483,7 @@ class TestStorageCompletesAfterItsFlush:
             node_name="table",
             flow_name="orders",
             flow_run_id="run-1",
-            observer=ObservabilityRuntime.noop(),
+            observer=Observability.noop(),
             commit_tracker=tracker,
         )
         return sink, tracker
@@ -1526,7 +1528,7 @@ class TestStorageCompletesAfterItsFlush:
                 return cast(int, None)
 
         sink, tracker = self._sink(_CountsLate(flush_at=10), 0, 1)
-        with pytest.raises(TypeError, match="must return how many"):
+        with pytest.raises(InvalidType, match="must return an int count"):
             sink.write_batch(self._orders(0, 1))
 
         sink.close()
@@ -1548,7 +1550,7 @@ class TestStorageCompletesAfterItsFlush:
         sink.close()
 
         assert tracker.flush_partition(TOPIC, PARTITION) == []
-        assert "storage_sink_closed_with_pending_events" in caplog.text
+        assert StreamingEvent.STORAGE_SINK_CLOSED_PENDING in [r.msg for r in caplog.records]
 
     def test_a_bad_count_from_close_completes_nothing_and_does_not_raise(
         self, caplog: pytest.LogCaptureFixture
@@ -1565,7 +1567,7 @@ class TestStorageCompletesAfterItsFlush:
         sink.close()
 
         assert tracker.flush_partition(TOPIC, PARTITION) == []
-        assert "storage_sink_close_count_invalid" in caplog.text
+        assert StreamingEvent.STORAGE_SINK_COUNT_INVALID in [r.msg for r in caplog.records]
 
     @pytest.mark.parametrize("count", [None, True])
     def test_a_partition_that_does_not_report_durability_is_refused(self, count: object) -> None:
@@ -1579,5 +1581,20 @@ class TestStorageCompletesAfterItsFlush:
 
         sink, _ = self._sink(_Silent(), 0)
 
-        with pytest.raises(TypeError, match="must return how many of the 1 pending items"):
+        with pytest.raises(InvalidType, match="must return an int count"):
+            sink.write_batch(self._orders(0))
+
+    @pytest.mark.parametrize("count", [-1, 2])
+    def test_a_partition_that_reports_a_count_out_of_range_is_refused(self, count: int) -> None:
+        class _OutOfRange:
+            def write_batch(self, items: Sequence[Any]) -> int:
+                del items
+                return count
+
+            def close(self) -> int:
+                return count
+
+        sink, _ = self._sink(_OutOfRange(), 0)
+
+        with pytest.raises(InvalidValue, match="between zero and the number of pending items"):
             sink.write_batch(self._orders(0))

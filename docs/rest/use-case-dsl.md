@@ -19,12 +19,12 @@ from app.product.schemas import CreateProduct
 class CreateProductUseCase(UseCase[Product, Product]):
     #            ↑ model   ↑ return type
 
-    computes = [CREATE_NORMALIZE_NAME, CREATE_NORMALIZE_PRICE]   # run first
-    rules    = [CREATE_NAME_RULE, CREATE_PRICE_RULE]             # run after computes
+    computes = [CREATE_NORMALIZE_NAME, CREATE_NORMALIZE_PRICE]  # run first
+    rules = [CREATE_NAME_RULE, CREATE_PRICE_RULE]  # run after computes
 
     async def execute(
         self,
-        cmd: CreateProduct = Input(),           # body ← JSON-decoded command
+        cmd: CreateProduct = Input(),  # body ← JSON-decoded command
     ) -> Product:
         return await self.main_repo.create(cmd)
 ```
@@ -60,9 +60,9 @@ class CreateProduct(Command, frozen=True):
 class UpdateProduct(Command, frozen=True):
     # Patch[T] marks a field as optional in partial updates.
     # None means "not provided" — not "set to null".
-    name:  Patch[str]   = None
+    name: Patch[str] = None
     price: Patch[float] = None
-    sku:   Patch[str]   = None
+    sku: Patch[str] = None
 ```
 
 > `Patch[T]` is a union type alias for `T | None` with framework-level tracking
@@ -107,9 +107,10 @@ async def execute(self, cmd: CreateProduct = Input()) -> Product: ...
 ```python
 from loom.core.use_case import LoadById
 
+
 async def execute(
     self,
-    product_id: int,                                    # path parameter
+    product_id: int,  # path parameter
     cmd: UpdateProduct = Input(),
     product: Product = LoadById(Product, by="product_id"),  # loaded before execute
 ) -> Product | None:
@@ -130,13 +131,14 @@ async def execute(
 ```python
 from loom.core.use_case import Exists, OnMissing
 
+
 async def execute(
     self,
     user_id: int,
     cmd: CreateAddress = Input(),
     _user_exists: bool = Exists(
         User,
-        from_param="user_id",    # check User.id == user_id
+        from_param="user_id",  # check User.id == user_id
         against="id",
         on_missing=OnMissing.RAISE,  # auto-404 if False
     ),
@@ -167,14 +169,18 @@ from typing import Annotated
 import msgspec
 from loom.core.use_case import Query
 
-class OrderQuery(msgspec.Struct, frozen=True, kw_only=True, rename="camel",
-                 forbid_unknown_fields=True):
+
+class OrderQuery(
+    msgspec.Struct, frozen=True, kw_only=True, rename="camel", forbid_unknown_fields=True
+):
     customer_id: UUID | None = None
     status: OrderStatus | None = None
     changed_since: Annotated[datetime, msgspec.Meta(tz=True)] | None = msgspec.field(
-        default=None, name="changed_since")
+        default=None, name="changed_since"
+    )
     cursor: str | None = None
     limit: Annotated[int, msgspec.Meta(ge=1, le=200)] = 50
+
 
 class ListOrders(UseCase[Order, OrderPage]):
     async def execute(self, query: OrderQuery = Query()) -> OrderPage: ...
@@ -261,13 +267,13 @@ class TriageIncidentUseCase(UseCase[object, IncidentReport]):
         caller: Identity = Caller(),
         triage: AgentHandle[SeverityAssessment] = Agent("incident-triage"),
     ) -> IncidentReport:
-        obs = triage.sql("observability_readonly")             # the artefact's own granted view
+        obs = triage.sql("observability_readonly")  # the artefact's own granted view
         deploys = await obs.query(
             "select service, status from deploys where incident = :id",
             parameters={"id": incident_id},
         )
 
-        runbooks = triage.mcp("runbooks")                       # the artefact's own filtered view
+        runbooks = triage.mcp("runbooks")  # the artefact's own filtered view
         runbook = await runbooks.call(
             "search_incident",
             {"incident_id": incident_id, "recent_deploy": deploys[0]["service"]},
@@ -304,9 +310,9 @@ like `Caller()` carries no configuration.
 ### Three run modes
 
 ```python
-assessment = await triage.run(prompt)                       # the artefact's declared shape
-plan       = await triage.run(prompt, expect=RollbackPlan)  # this run only
-summary    = await triage.run_text(f"Write it up: {facts}") # open prose, decodes nothing
+assessment = await triage.run(prompt)  # the artefact's declared shape
+plan = await triage.run(prompt, expect=RollbackPlan)  # this run only
+summary = await triage.run_text(f"Write it up: {facts}")  # open prose, decodes nothing
 ```
 
 ### Two grant views, reached through the agent — never re-declared
@@ -363,12 +369,12 @@ the file to see the exact assertion.
 
 | Refusal | Code | Message (from the code) | What to do |
 |---|---|---|---|
-| Anonymous caller | `UNAUTHORIZED` | `agent 'incident-triage' requires an authenticated caller` | A marker-filled handle never accepts an anonymous identity, with no configuration to relax it — the caller must already be authenticated at the use case's own route. In a test, register one with `.with_caller(identity)`. See `tests/unit/ai/runtime/test_agent_handle.py::TestIdentidadAnonima::test_el_mensaje_es_el_que_muestra_use_case_dsl_md`. |
+| Anonymous caller | `UNAUTHORIZED` | `agent 'incident-triage' requires an authenticated caller` | A marker-filled handle never accepts an anonymous identity, with no configuration to relax it — the caller must already be authenticated at the use case's own route. In a test, register one with `.with_caller(identity)`. See `tests/unit/ai/execution/test_agent_handle.py::TestIdentidadAnonima::test_el_mensaje_es_el_que_muestra_use_case_dsl_md`. |
 | A cycle: the same agent already in the chain (agent names `outer`/`inner` below, as the pinning test names them) | `AGENT_CALL_CYCLE` | `agent call cycle detected: outer -> outer` | Break the cycle: an `on_output` hook or any use case an agent's run invokes must not call the same agent back. Route to a different named agent instead. See `tests/integration/ai/test_agent_call_chain.py::TestProfundidadPorDefecto::test_una_corrida_anidada_del_mismo_agente_es_un_ciclo`. |
 | A depth past `ai.max_agent_depth` | `AGENT_CALL_TOO_DEEP` | `agent call chain outer -> inner exceeds ai.max_agent_depth=1` | Raise `ai.max_agent_depth` deliberately if the nesting is intended — see [the nesting bound](../ai/overview.md#nesting-how-deep-an-agent-may-call-another) for what that costs — or remove the nested `Agent()` call. See `tests/integration/ai/test_agent_call_chain.py::TestProfundidadPorDefecto::test_una_corrida_anidada_de_otro_agente_excede_la_profundidad`. |
-| A shape override (`expect=` or `run_text`) on an artefact whose `on_output` hook declares the `output` field | `AGENT_RUN_SHAPE_WITH_HOOK` | `agent 'incident-triage' declares an output hook that reads the run's output, so this run cannot use a per-run shape; call run(prompt) for the artefact's own declared output instead` | Call `run(prompt)` with no `expect` so the hook receives the artefact's declared shape, or narrow the hook's `Input` to conversation-bookkeeping fields only (drop `output`) so any mode is accepted. See `tests/unit/ai/runtime/test_agent_handle.py::TestRechazoPorHookDeSalida::test_el_mensaje_es_el_que_muestra_use_case_dsl_md`. |
-| A tool outside the artefact's own `mcp` grant filter | `TOOL_UNKNOWN` | `mcp server 'runbooks' grants no tool named 'delete_incident'; tools this grant admits: search_incident` | Call one of the tools `handle.mcp(server).tools()` lists, or widen the artefact's `include` / `exclude` filter for that server. See `tests/unit/ai/runtime/test_grants.py::TestElFiltroDelPermisoMcp::test_el_mensaje_de_tool_fuera_del_permiso_es_el_que_muestra_use_case_dsl_md`. |
-| A tool that publishes no output schema, called through `call(..., expect=X)` | `TOOL_UNTYPED` | `tool 'legacy_lookup' of mcp server 'runbooks' publishes no output schema; call it with call_untyped() instead` | Call `call_untyped(tool, arguments)` instead, and treat the result as the server's own, undecoded JSON. See `tests/unit/ai/runtime/test_grants.py::TestLlamadaTipada::test_el_mensaje_de_tool_sin_forma_es_el_que_muestra_use_case_dsl_md`. |
+| A shape override (`expect=` or `run_text`) on an artefact whose `on_output` hook declares the `output` field | `AGENT_RUN_SHAPE_WITH_HOOK` | `agent 'incident-triage' declares an output hook that reads the run's output, so this run cannot use a per-run shape; call run(prompt) for the artefact's own declared output instead` | Call `run(prompt)` with no `expect` so the hook receives the artefact's declared shape, or narrow the hook's `Input` to conversation-bookkeeping fields only (drop `output`) so any mode is accepted. See `tests/unit/ai/execution/test_agent_handle.py::TestRechazoPorHookDeSalida::test_el_mensaje_es_el_que_muestra_use_case_dsl_md`. |
+| A tool outside the artefact's own `mcp` grant filter | `TOOL_UNKNOWN` | `mcp server 'runbooks' grants no tool named 'delete_incident'; tools this grant admits: search_incident` | Call one of the tools `handle.mcp(server).tools()` lists, or widen the artefact's `include` / `exclude` filter for that server. See `tests/unit/ai/execution/test_grants.py::TestElFiltroDelPermisoMcp::test_el_mensaje_de_tool_fuera_del_permiso_es_el_que_muestra_use_case_dsl_md`. |
+| A tool that publishes no output schema, called through `call(..., expect=X)` | `TOOL_UNTYPED` | `tool 'legacy_lookup' of mcp server 'runbooks' publishes no output schema; call it with call_untyped() instead` | Call `call_untyped(tool, arguments)` instead, and treat the result as the server's own, undecoded JSON. See `tests/unit/ai/execution/test_grants.py::TestLlamadaTipada::test_el_mensaje_de_tool_sin_forma_es_el_que_muestra_use_case_dsl_md`. |
 
 ---
 
@@ -416,9 +422,7 @@ class LookUpRunbookUseCase(UseCase[object, RunbookLookup]):
         caller: Identity = Caller(),
         runbooks: McpHandle = Mcp("runbooks", include=("search_incident",)),
     ) -> RunbookLookup:
-        result = await runbooks.call_untyped(
-            "search_incident", {"incident_id": incident_id}
-        )
+        result = await runbooks.call_untyped("search_incident", {"incident_id": incident_id})
         return RunbookLookup(
             incident_id=incident_id,
             requested_by=caller.require_subject(),
@@ -531,6 +535,7 @@ Computes can read multiple fields:
 def _compute_subtotal(unit_price: float, quantity: int) -> float:
     return unit_price * quantity
 
+
 # Derives subtotal from unit_price × quantity
 CREATE_SUBTOTAL = Compute.set(F(PricingCommand).subtotal).from_command(
     F(PricingCommand).unit_price,
@@ -547,7 +552,7 @@ UPDATE_NORMALIZE_NAME = (
     Compute.set(F(UpdateProduct).name)
     .from_command(F(UpdateProduct).name, via=_normalize_name_with_context)
     .from_params("product_id")
-    .when_present(F(UpdateProduct).name)   # skip if name was not sent
+    .when_present(F(UpdateProduct).name)  # skip if name was not sent
 )
 ```
 
@@ -563,7 +568,7 @@ Essential for partial-update commands:
 UPDATE_NORMALIZE_PRICE = (
     Compute.set(F(UpdateProduct).price)
     .from_command(F(UpdateProduct).price, via=_normalize_price)
-    .when_present(F(UpdateProduct).price)   # skip when price is absent from PATCH body
+    .when_present(F(UpdateProduct).price)  # skip when price is absent from PATCH body
 )
 ```
 
@@ -586,7 +591,7 @@ array, a string, a number, `null` — is a `boundary_validation` 422 whose
 message and single `body` violation read `Request body must be a JSON object`.
 The body is decoded as JSON whatever its `Content-Type` says.
 
-A single `RuleViolation(field, message)` raised from `execute()` also answers
+A single `RuleViolationError(field, message)` raised from `execute()` also answers
 422, with `code: "rule_violation"`, its `message` and its `field` at the top
 level of the body, so a client tells two such 422s apart by `field` instead of
 by the message text:
@@ -599,7 +604,7 @@ by the message text:
 ### Rule.check — field validation
 
 `Rule.check` validates a single field. The `via=` function returns an error
-string (or a `RuleViolation`) when the value is invalid, or `None` when it is
+string (or a `RuleViolationError`) when the value is invalid, or `None` when it is
 valid. Any other result, a `bool` included, raises `TypeError`; a boolean
 condition belongs in `Rule.forbid`:
 
@@ -615,7 +620,7 @@ def _price_must_be_positive(price: float) -> str | None:
     return None if price > 0 else "price must be positive"
 
 
-CREATE_NAME_RULE  = Rule.check(F(CreateProduct).name,  via=_name_must_not_be_blank)
+CREATE_NAME_RULE = Rule.check(F(CreateProduct).name, via=_name_must_not_be_blank)
 CREATE_PRICE_RULE = Rule.check(F(CreateProduct).price, via=_price_must_be_positive)
 ```
 
@@ -723,15 +728,15 @@ UPDATE_NAME_PRICE_MISMATCH_RULE = (
 ```python
 class UpdateProductUseCase(UseCase[Product, Product | None]):
     computes = [
-        UPDATE_NORMALIZE_NAME,    # strip whitespace — skipped if name absent
-        UPDATE_NORMALIZE_PRICE,   # round to 2 dp  — skipped if price absent
+        UPDATE_NORMALIZE_NAME,  # strip whitespace — skipped if name absent
+        UPDATE_NORMALIZE_PRICE,  # round to 2 dp  — skipped if price absent
     ]
     rules = [
-        UPDATE_NOT_EMPTY_RULE,              # reject empty PATCH body
-        UPDATE_NAME_RULE,                   # name not blank (if present)
-        UPDATE_PRICE_RULE,                  # price positive (if present)
+        UPDATE_NOT_EMPTY_RULE,  # reject empty PATCH body
+        UPDATE_NAME_RULE,  # name not blank (if present)
+        UPDATE_PRICE_RULE,  # price positive (if present)
         UPDATE_SYSTEM_NAME_IMMUTABLE_RULE,  # block rename of id=1 (if name present)
-        UPDATE_NAME_PRICE_MISMATCH_RULE,    # name ≠ str(price) (if both present)
+        UPDATE_NAME_PRICE_MISMATCH_RULE,  # name ≠ str(price) (if both present)
     ]
 
     async def execute(
@@ -751,14 +756,15 @@ Attach use cases to routes via `RestRoute`:
 ```python
 from loom.rest.model import RestInterface, RestRoute
 
+
 class ProductInterface(RestInterface[Product]):
     prefix = "/products"
     tags = ("Products",)
     routes = (
-        RestRoute(use_case=CreateProductUseCase, method="POST",   path="/",              status_code=201),
-        RestRoute(use_case=GetProductUseCase,    method="GET",    path="/{product_id}"),
-        RestRoute(use_case=ListProductsUseCase,  method="GET",    path="/"),
-        RestRoute(use_case=UpdateProductUseCase, method="PATCH",  path="/{product_id}"),
+        RestRoute(use_case=CreateProductUseCase, method="POST", path="/", status_code=201),
+        RestRoute(use_case=GetProductUseCase, method="GET", path="/{product_id}"),
+        RestRoute(use_case=ListProductsUseCase, method="GET", path="/"),
+        RestRoute(use_case=UpdateProductUseCase, method="PATCH", path="/{product_id}"),
         RestRoute(use_case=DeleteProductUseCase, method="DELETE", path="/{product_id}"),
     )
 ```
@@ -769,7 +775,7 @@ Or let the framework generate all five routes automatically:
 class ProductInterface(RestInterface[Product]):
     prefix = "/products"
     tags = ("Products",)
-    auto = True   # generates GET, POST, PATCH, DELETE, list automatically
+    auto = True  # generates GET, POST, PATCH, DELETE, list automatically
 ```
 
 See [Auto-CRUD guide](autocrud.md) for the full options reference.
@@ -781,6 +787,7 @@ create or find the resource already there returns `Created` when it created:
 
 ```python
 from loom.core.use_case import Created, Input
+
 
 class CreateOrder(UseCase[Order, OrderView | Created[OrderView]]):
     async def execute(self, cmd: CreateOrderCommand = Input()) -> OrderView | Created[OrderView]:
@@ -795,7 +802,7 @@ hold only characters allowed in an RFC 3986 URI reference; otherwise it raises
 `ValueError`. OpenAPI documents both statuses with the `OrderView` schema and
 declares `Location` on the `201`. `Created` must wrap one of the other members
 of the result, and a route whose `status_code` is already `201` cannot return
-it; either fails at startup. `LoomRestAdapter` answers a `Created` the same
+it; either fails at startup. `RestUseCaseDispatcher` answers a `Created` the same
 way; other callers receive the wrapper and read `.value`.
 
 ### `429` when the caller spent its budget
@@ -961,7 +968,7 @@ class RestockWorkflowUseCase(UseCase[Product, RestockWorkflowResponse]):
             BuildProductSummaryUseCase,
             params={"product_id": int(product_id)},
         )
-        handle = self._jobs.dispatch(
+        handle = self._jobs.dispatch_after_commit(
             SendRestockEmailJob,
             params={"product_id": int(product_id)},
             payload={"product_id": int(product_id), "recipient_email": cmd.recipient_email},
@@ -985,7 +992,7 @@ await self._app.entity(Product).update(params={"id": product_id}, payload={"stoc
 
 ## Execution lifecycle
 
-`RuntimeExecutor.execute` owns one execution end to end — from opening the
+`UseCaseExecutor.execute` owns one execution end to end — from opening the
 unit of work to running the post-commit actions it queued. REST use cases
 and Celery jobs run through the same lifecycle; the Celery worker drives it
 through the async bridge, not through a lifecycle of its own.
@@ -1065,7 +1072,7 @@ never shields; only the adapters do, around their own I/O. `EXEC_ERROR`
 carries `error_kind="cancelled"` for a cancelled execution.
 
 A cancellation waits for the rollback of each store, but every rollback of
-one invocation shares one deadline: `persistence.rollback_timeout` seconds
+one invocation shares one deadline: `stores.settings.rollback_timeout` seconds
 (30 by default) from the first one. A rollback still running then counts as
 failed (`UoWRollbackFailed`) and its store is closed.
 
@@ -1089,9 +1096,9 @@ pipeline stage alone; `commit_ms` measures the unit-of-work exit (`None`
 when no unit of work was opened). A post-commit failure raises no new event
 kind — it surfaces only as `PostCommitError`, after `EXEC_DONE`.
 
-### The `transactional` declaration
+### The `is_transactional` declaration
 
-Every unit-of-work adapter declares `transactional: ClassVar[bool]`: `True`
+Every unit-of-work adapter declares `is_transactional: ClassVar[bool]`: `True`
 when `commit` / `rollback` are real (SQLAlchemy, Mongo with
 `transactions: true`), `False` for adapters whose writes autocommit
 (DynamoDB, Mongo with `transactions: false`). The protocol is
@@ -1099,7 +1106,7 @@ runtime-checkable, so an adapter that omits the declaration no longer
 satisfies `isinstance(x, UnitOfWork)`. Nothing reads the flag yet: the
 bootstrap check that refuses a use case requiring a transaction on a
 non-transactional backend, and the cache rules keyed on it, arrive in a
-later release; see [Persistence backends](persistence-backends.md).
+later release; see [Stores and their backends](stores.md).
 
 ### `PostCommitError` in REST and Celery
 
@@ -1139,16 +1146,16 @@ methods stay on the protocol. Closing is the context manager's job
   letting an individual dispatch's exception propagate directly, and
   **raises `RuntimeError` when called inside an execution**: the executor
   owns the post-commit channel and drains it after the unit of work closes.
-  Call it only outside an execution, as `InlineJobService` documents.
+  Call it only outside an execution, as `JobService with InlineJobTransport` documents.
   `clear_pending_dispatches()` discards the job dispatches and publishes the
   running invocation queued, those of every store, so a hand-driven caller
   cancelling dispatches inside an execution really cancels them; the cache
   invalidations stay, since their writes may still commit.
 - **`UnitOfWork` is a runtime-checkable protocol with a data member**:
   `isinstance(x, UnitOfWork)` is `False` for an adapter that does not
-  declare `transactional`, and `issubclass(X, UnitOfWork)` raises
+  declare `is_transactional`, and `issubclass(X, UnitOfWork)` raises
   `TypeError` — Python cannot check a data member on a class. Third-party
-  adapters must declare `transactional: ClassVar[bool]`; code that used
+  adapters must declare `is_transactional: ClassVar[bool]`; code that used
   `issubclass` must switch to `isinstance` on an instance.
 - **`error_kind="commit"` means the commit itself failed**: the outcome is
   undetermined — the driver may have committed before the failure surfaced.
@@ -1175,7 +1182,7 @@ methods stay on the protocol. Closing is the context manager's job
 | `Exists(Model, from_param=..., against=...)` | Check existence; 404 on missing if `RAISE` |
 | `Compute.set(F).from_command(...)` | Derive/normalise a command field |
 | `Compute.set(F).from_params(...)` | Include path params in derive computation |
-| `Rule.check(F, via=fn)` | Validate a field; `fn` returns a message, a `RuleViolation`, or `None` |
+| `Rule.check(F, via=fn)` | Validate a field; `fn` returns a message, a `RuleViolationError`, or `None` |
 | `Rule.forbid(predicate, message=...)` | Enforce invariant; predicate returns `True` to fail |
 | `.from_command(F1, F2, ...)` | Pass command fields to rule predicate |
 | `.from_params("name")` | Pass path parameter to rule predicate |

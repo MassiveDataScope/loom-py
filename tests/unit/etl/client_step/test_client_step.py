@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from loom.core.errors import InternalError, InvalidUse
 from loom.core.model.redaction import Dsn
 from loom.etl import ETLParams, ETLPipeline, ETLProcess
 from loom.etl.compiler import ETLCompiler
@@ -15,8 +16,8 @@ from loom.etl.declarative.target._client import ClientSpec, IntoClient
 from loom.etl.executor import ETLExecutor
 from loom.etl.io.targets._clickhouse import ClickHouseClientExecutor
 from loom.etl.pipeline._step_client import ClientStep
-from loom.etl.runtime.contracts import ClientCommandExecutor
-from loom.etl.testing import StubSourceReader, StubTargetWriter
+from loom.etl.ports.contracts import ClientCommandExecutor
+from loom.etl.testing import InMemorySourceReader, InMemoryTargetWriter
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -42,8 +43,8 @@ class _PipelineWithClientStep(ETLPipeline[SimpleParams]):
 
 def _make_executor(client_executor: ClientCommandExecutor | None = None) -> ETLExecutor:
     return ETLExecutor(
-        StubSourceReader({}),
-        StubTargetWriter(),
+        InMemorySourceReader({}),
+        InMemoryTargetWriter(),
         client_executor=client_executor,
     )
 
@@ -151,8 +152,8 @@ class TestClientStepExecution:
                 fn(mock_client)
 
         executor = ETLExecutor(
-            StubSourceReader({}),
-            StubTargetWriter(),
+            InMemorySourceReader({}),
+            InMemoryTargetWriter(),
             client_executor=_MockExecutor(),  # type: ignore[arg-type]
         )
         plan = ETLCompiler().compile_step(_RecordingStep)
@@ -173,8 +174,8 @@ class TestClientStepExecution:
                 fn(object())
 
         executor = ETLExecutor(
-            StubSourceReader({}),
-            StubTargetWriter(),
+            InMemorySourceReader({}),
+            InMemoryTargetWriter(),
             client_executor=_NullClientExecutor(),  # type: ignore[arg-type]
         )
         plan = ETLCompiler().compile_step(_ParamsCapture)
@@ -184,7 +185,7 @@ class TestClientStepExecution:
         assert param.value == 7
 
     def test_no_sources_read_for_client_step(self) -> None:
-        reader = StubSourceReader({})
+        reader = InMemorySourceReader({})
         read_calls: list[Any] = []
         original_read = reader.read
 
@@ -202,7 +203,7 @@ class TestClientStepExecution:
 
         executor = ETLExecutor(
             reader,
-            StubTargetWriter(),
+            InMemoryTargetWriter(),
             client_executor=_MockClientExecutor(),  # type: ignore[arg-type]
         )
         plan = ETLCompiler().compile_step(_ConcreteClientStep)
@@ -211,7 +212,7 @@ class TestClientStepExecution:
         assert not read_calls, "reader.read should not be called for ClientStep"
 
     def test_no_write_called_for_client_step(self) -> None:
-        writer = StubTargetWriter()
+        writer = InMemoryTargetWriter()
         write_calls: list[Any] = []
         original_write = writer.write
 
@@ -227,7 +228,7 @@ class TestClientStepExecution:
                 fn(mock_client)
 
         executor = ETLExecutor(
-            StubSourceReader({}),
+            InMemorySourceReader({}),
             writer,
             client_executor=_MockClientExecutor(),  # type: ignore[arg-type]
         )
@@ -241,7 +242,7 @@ class TestClientStepExecution:
         plan = ETLCompiler().compile_step(_ConcreteClientStep)
 
         params = SimpleParams(value=1)
-        with pytest.raises(TypeError, match="ClientCommandExecutor"):
+        with pytest.raises(InvalidUse, match="ClientCommandExecutor"):
             executor.run_step(plan, params)
 
     def test_from_config_runner_runs_client_step_without_missing_executor_error(
@@ -303,7 +304,7 @@ class TestClickHouseClientExecutor:
 
     def test_no_url_and_no_client_raises_on_command(self) -> None:
         executor = ClickHouseClientExecutor()
-        with pytest.raises(ValueError, match="url.*client"):
+        with pytest.raises(InvalidUse, match="url.*client"):
             executor.command(lambda _: None)
 
     def test_implements_client_command_executor_protocol(self) -> None:
@@ -322,7 +323,7 @@ class TestClientSpecWriteGuards:
         """Verify the ClientSpec guard is present in _write_policy.py source code."""
         import inspect
 
-        from loom.etl.backends import _write_policy
+        from loom.etl.engines import _write_policy
 
         src = inspect.getsource(_write_policy)
         assert "ClientSpec" in src, "_write_policy must import and guard against ClientSpec"
@@ -336,5 +337,5 @@ class TestClientSpecWriteGuards:
 
         spec = ClientSpec()
         params = SimpleParams(value=1)
-        with pytest.raises(TypeError, match="ClientSpec"):
+        with pytest.raises(InternalError, match="ClientSpec"):
             writer.write(object(), spec, params)

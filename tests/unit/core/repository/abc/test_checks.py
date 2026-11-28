@@ -14,7 +14,7 @@ import pytest
 
 from loom.core.checks import run_deploy_checks
 from loom.core.config import ConfigContext
-from loom.core.repository.abc import CURSOR_SIGNING_CHECK
+from loom.core.stores.repository import CURSOR_SIGNING_CHECK
 
 _DATABASE = {"stores": {"default": {"backend": "sqlalchemy", "url": "${oc.env:DATABASE_URL}"}}}
 _MONGO = {
@@ -29,8 +29,8 @@ def _found(raw: dict[str, Any]) -> bool:
 
 
 def _with_cursors(backend: dict[str, Any], cursors: dict[str, Any]) -> dict[str, Any]:
-    persistence = {**backend.get("persistence", {}), "cursors": cursors}
-    return {**backend, "persistence": persistence}
+    stores = backend.get("stores", {})
+    return {**backend, "stores": {**stores, "settings": {"cursors": cursors}}}
 
 
 class TestCursorSigningChecks:
@@ -64,5 +64,6 @@ class TestCursorSigningChecks:
     ) -> None:
         assert _found(_with_cursors(backend, cursors))
 
-    def test_a_configuration_serving_no_repositories_is_not_judged(self) -> None:
-        assert not _found({"persistence": {"cursors": {"signing": "unsigned"}}})
+    @pytest.mark.parametrize("backend", [_DATABASE, _MONGO], ids=["sqlalchemy", "mongo"])
+    def test_a_store_without_cursor_settings_is_not_judged(self, backend: dict[str, Any]) -> None:
+        assert not _found(backend)

@@ -45,17 +45,19 @@ from typing import Any, NamedTuple, TypeVar
 import msgspec
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.metrics import MetricsAdapter
+from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.errors import UnsupportedBoundaryType
+from loom.core.errors import InvalidValue, UnsupportedBoundaryType
+from loom.core.log_names import LogField
 from loom.core.model import get_column_fields, is_pydantic_model, loom_type, msgspec_type
 from loom.core.model._json_schema import DEFS, DEFS_PREFIX, REF, definition, without_null
 from loom.core.model.introspection import scalar_column_annotations
-from loom.core.repository.abc.cursor import cursor_carries
-from loom.core.repository.abc.query import CursorResult, PageResult, QuerySpec
+from loom.core.stores.repository.cursor import cursor_carries
+from loom.core.stores.repository.query import CursorResult, PageResult, QuerySpec
 from loom.core.use_case.field_ref import FieldRef
 from loom.core.use_case.outcome import Created
 from loom.rest.constants import QueryParam
+from loom.rest.event import RestEvent
 from loom.rest.model import (
     ALL,
     DeclaredFields,
@@ -343,7 +345,7 @@ def _query_field(
     schema = without_null(prop)
     target = definition(schema, definitions)
     if "enum" not in target and target.get("type") not in _SCALAR_TYPES:
-        raise ValueError(
+        raise InvalidValue(
             f"query field {name!r} must be a string (UUID, date-time and other string "
             "formats included), integer, number, boolean, enum or Literal, optionally None."
         )
@@ -433,6 +435,7 @@ class _ColumnPolicy:
 
     Args:
         where: Route label used in compilation errors and warnings.
+        path: The route's full path template, the one a warning records.
         model: The use case's model, ``None`` when it declares none.
         takes_query_spec: Whether the use case takes a ``QuerySpec``.
         response: Result type of the use case, ``Created`` removed.
@@ -441,6 +444,7 @@ class _ColumnPolicy:
     """
 
     where: str
+    path: str
     model: type[Any] | None
     takes_query_spec: bool
     response: Any = Any
@@ -532,13 +536,7 @@ class _ColumnPolicy:
             )
         columns = scalar_column_annotations(self.model)
         if declared is ALL:
-            _logger.warning(
-                "%s makes every scalar column of %s %s (ALL), columns its response does not "
-                "show included; declare the columns instead.",
-                self.where,
-                self.model.__name__,
-                kind,
-            )
+            _logger.warning(RestEvent.COLUMNS_ALL_EXPOSED, extra={LogField.HTTP_ROUTE: self.path})
             return columns
         resolved: dict[str, Any] = {}
         for entry in declared:
@@ -634,7 +632,7 @@ class RestInterfaceCompiler:
         defaults: Global REST API defaults applied when interface/route
             level is unset.  Defaults to :class:`~loom.rest.model.RestApiDefaults`
             with offset pagination.
-        metrics: Optional metrics adapter.  Reserved for future use
+        execution_observer: Optional execution observer.  Reserved for future use
             (HTTP metrics are emitted at request time by the router runtime).
 
     Example::
@@ -647,11 +645,11 @@ class RestInterfaceCompiler:
         self,
         use_case_compiler: UseCaseCompiler,
         defaults: RestApiDefaults | None = None,
-        metrics: MetricsAdapter | None = None,
+        execution_observer: ExecutionObserver | None = None,
     ) -> None:
         self._uc_compiler = use_case_compiler
         self._defaults = defaults or RestApiDefaults()
-        self._metrics = metrics
+        self._execution_observer = execution_observer
         self._cache: dict[type[RestInterface[Any]], list[CompiledRoute]] = {}
 
     def compile(self, interface: type[RestInterface[Any]]) -> list[CompiledRoute]:
@@ -776,6 +774,7 @@ class RestInterfaceCompiler:
             pagination_override = self._resolve_allow_pagination_override(route, interface)
             columns = _ColumnPolicy(
                 where=where,
+                path=path,
                 model=route.use_case.describe_main_repo()[0],
                 takes_query_spec=takes_query_spec,
                 response=result_type,

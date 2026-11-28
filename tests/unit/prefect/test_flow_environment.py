@@ -123,8 +123,6 @@ class TestRuns:
         for module in (_body, _backfill_body):
             monkeypatch.setattr(module.ETLRunner, "from_yaml", recorder)
             monkeypatch.setattr(module, "build_observers", lambda *a, **k: [])
-            monkeypatch.setattr(module, "install_log_bridge", lambda *a, **k: None)
-            monkeypatch.setattr(module, "uninstall_log_bridge", lambda *a, **k: None)
             monkeypatch.setattr(module, "prefect_flow_run_id", lambda: None)
         return recorder
 
@@ -213,9 +211,6 @@ class TestRuns:
     ) -> None:
         load_context = MagicMock()
         monkeypatch.setattr(_maintenance, "_load_context", load_context)
-        monkeypatch.setattr(_maintenance, "install_log_bridge", lambda *a, **k: None)
-        monkeypatch.setattr(_maintenance, "uninstall_log_bridge", lambda *a, **k: None)
-        monkeypatch.setattr(_maintenance, "prefect_flow_run_id", lambda: None)
         monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
         flow = maintenance_flow(
             name="env-maintenance-mismatch",
@@ -246,9 +241,6 @@ class TestRuns:
         overlay = {area: {key: True}}
         (storage / "production.yaml").write_text(yaml.safe_dump(overlay), encoding="utf-8")
         monkeypatch.setenv(ENVIRONMENT_VARIABLE, "production")
-        monkeypatch.setattr(_maintenance, "install_log_bridge", lambda *a, **k: None)
-        monkeypatch.setattr(_maintenance, "uninstall_log_bridge", lambda *a, **k: None)
-        monkeypatch.setattr(_maintenance, "prefect_flow_run_id", lambda: None)
         flow = maintenance_flow(
             name="env-maintenance",
             step=AcmeMaintenance,

@@ -8,8 +8,8 @@ import pytest
 from sqlalchemy import text
 
 from loom.core.config import ConfigError
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.repository.sqlalchemy.rls import create_schema
+from loom.core.stores.profile import SERVER_PROFILE
+from loom.stores.sqlalchemy.rls import create_schema
 from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import BootstrapFactory, application_for, execute, scalar
@@ -60,8 +60,8 @@ class TestCreateSchema:
     ) -> None:
         from loom.core.config import ConfigContext
         from loom.core.identity import Identity, reset_identity, set_identity
-        from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
-        from loom.core.repository.sqlalchemy.rls.sources import (
+        from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
+        from loom.stores.sqlalchemy.rls.sources import (
             clear_scope_sources,
             register_scope_source,
         )
@@ -87,12 +87,15 @@ class TestCreateSchema:
                             "scopes": {"owner": "identity.subject", "editor": "request.editor"},
                             "guard": "loom_guard_notes_wired",
                         },
-                    }
+                    },
+                    "settings": {"cursors": {"signing": "ephemeral"}},
                 },
-                "persistence": {"cursors": {"signing": "ephemeral"}},
             }
             return build_backend(
-                SQLAlchemyBackend(), ConfigContext.from_dict(config), notes.MODELS, SERVER_PROFILE
+                SQLAlchemyStorePlugin(),
+                ConfigContext.from_dict(config),
+                notes.MODELS,
+                SERVER_PROFILE,
             )
 
         register_scope_source("editor", lambda: None)
@@ -123,7 +126,7 @@ class TestCreateSchema:
     async def test_a_disabled_guard_event_trigger_stops_create_schema_and_fails_verify(
         self, scoped_database: BootstrapFactory, tmp_path: Path
     ) -> None:
-        from loom.core.repository.sqlalchemy.rls import verify
+        from loom.stores.sqlalchemy.rls import verify
 
         database = await scoped_database("notes_evt")
         application = application_for(notes, database, tmp_path, schema="notes_evt")
@@ -140,7 +143,7 @@ class TestCreateSchema:
         scoped_database: BootstrapFactory,
     ) -> None:
         from loom.core.config import ConfigContext
-        from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
+        from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
         from tests.unit.core.locator_fixtures.plain import Widget
 
         database = await scoped_database("plain_external")
@@ -156,12 +159,12 @@ class TestCreateSchema:
                     "backend": "sqlalchemy",
                     "url": database.bypass,
                     "schema": {"mode": "external"},
-                }
+                },
+                "settings": {"cursors": {"signing": "ephemeral"}},
             },
-            "persistence": {"cursors": {"signing": "ephemeral"}},
         }
         wiring = build_backend(
-            SQLAlchemyBackend(), ConfigContext.from_dict(config), (Widget,), SERVER_PROFILE
+            SQLAlchemyStorePlugin(), ConfigContext.from_dict(config), (Widget,), SERVER_PROFILE
         )
         wiring.prepare_models((Widget,))
 

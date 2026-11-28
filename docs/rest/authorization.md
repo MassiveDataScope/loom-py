@@ -33,8 +33,8 @@ separation of duty belongs to the product.
 ## Scopes are paths
 
 loom gives the segments no meaning. A product with workspaces, projects and datasets
-might use `Scope.of("acme")`, `Scope.of("acme", "billing")` and
-`Scope.of("acme", "billing", "invoices")`; another might put a region first. A grant on a
+might use `Scope.from_segments("acme")`, `Scope.from_segments("acme", "billing")` and
+`Scope.from_segments("acme", "billing", "invoices")`; another might put a region first. A grant on a
 scope reaches that scope and everything below it, and nothing else:
 
 | grant on \ access to | `/` | `/W` | `/W/x` | `/W/x/y` | `/W/z` | `/V` |
@@ -72,7 +72,7 @@ CATALOG = RoleCatalog(
 
 The catalog refuses a duplicate role name and a role that uses a permission you did not
 declare, and every decision refuses a permission the catalog does not declare
-({class}`~loom.core.authz.UnknownPermission`), so a typo fails loudly rather than
+({class}`~loom.core.authz.UnknownPermissionError`), so a typo fails loudly rather than
 silently denying. Roles only add:
 there are no negative permissions, and holding two roles gives their union.
 
@@ -82,13 +82,13 @@ there are no negative permissions, and holding two roles gives their union.
 from loom.core.authz import Grant, Scope, evaluate, scopes_with
 
 grants = [
-    Grant("ada", "viewer", Scope.of("acme")),
-    Grant("ada", "operator", Scope.of("acme", "billing")),
+    Grant("ada", "viewer", Scope.from_segments("acme")),
+    Grant("ada", "operator", Scope.from_segments("acme", "billing")),
 ]
 
-evaluate(CATALOG, grants, READ, Scope.of("acme", "billing", "invoices"))   # allowed
-evaluate(CATALOG, grants, RUN, Scope.of("acme"))                           # denied
-evaluate(CATALOG, grants, READ, Scope.of("globex"))                        # denied
+evaluate(CATALOG, grants, READ, Scope.from_segments("acme", "billing", "invoices"))  # allowed
+evaluate(CATALOG, grants, RUN, Scope.from_segments("acme"))  # denied
+evaluate(CATALOG, grants, READ, Scope.from_segments("globex"))  # denied
 ```
 
 {func}`~loom.core.authz.evaluate` never touches a database or reads a clock. It denies unless
@@ -101,7 +101,7 @@ A stored grant whose role the code does not declare allows nothing.
 To filter a listing, ask once for the outermost scopes and test each item by prefix:
 
 ```python
-reachable = scopes_with(CATALOG, grants, READ)      # frozenset({Scope.of("acme")})
+reachable = scopes_with(CATALOG, grants, READ)  # frozenset({Scope.from_segments("acme")})
 visible = [item for item in items if any(scope.covers(item.scope) for scope in reachable)]
 ```
 
@@ -115,10 +115,10 @@ timezone-aware `expires_at` and pass the decision instant as `now=`:
 from datetime import UTC, datetime, timedelta
 
 now = datetime.now(UTC)
-on_call = [Grant("ada", "operator", Scope.of("acme"), expires_at=now + timedelta(hours=8))]
+on_call = [Grant("ada", "operator", Scope.from_segments("acme"), expires_at=now + timedelta(hours=8))]
 
-evaluate(CATALOG, on_call, RUN, Scope.of("acme"), now=now)                        # allowed
-evaluate(CATALOG, on_call, RUN, Scope.of("acme"), now=now + timedelta(hours=8))   # denied
+evaluate(CATALOG, on_call, RUN, Scope.from_segments("acme"), now=now)  # allowed
+evaluate(CATALOG, on_call, RUN, Scope.from_segments("acme"), now=now + timedelta(hours=8))  # denied
 ```
 
 A grant is alive while `now` is before `expires_at`; from that instant on it counts as
@@ -140,16 +140,16 @@ out. The answer lists whatever is missing.
 ```python
 from loom.core.authz import can_grant, can_revoke
 
-manager = [Grant("bob", "admin", Scope.of("acme"))]
-can_grant(CATALOG, manager, "operator", Scope.of("acme", "billing"), delegate=MANAGE)  # allowed
-can_grant(CATALOG, manager, "admin", Scope.root(), delegate=MANAGE)                     # denied
+manager = [Grant("bob", "admin", Scope.from_segments("acme"))]
+can_grant(CATALOG, manager, "operator", Scope.from_segments("acme", "billing"), delegate=MANAGE)  # allowed
+can_grant(CATALOG, manager, "admin", Scope.root(), delegate=MANAGE)  # denied
 
-support = [Grant("eve", "helpdesk", Scope.of("acme"))]
-can_grant(CATALOG, support, "admin", Scope.of("acme"), delegate=MANAGE).missing
+support = [Grant("eve", "helpdesk", Scope.from_segments("acme"))]
+can_grant(CATALOG, support, "admin", Scope.from_segments("acme"), delegate=MANAGE).missing
 # frozenset({Permission("jobs.run")})
 
-operator = [Grant("ola", "operator", Scope.of("acme"))]
-can_grant(CATALOG, operator, "viewer", Scope.of("acme"), delegate=MANAGE).missing
+operator = [Grant("ola", "operator", Scope.from_segments("acme"))]
+can_grant(CATALOG, operator, "viewer", Scope.from_segments("acme"), delegate=MANAGE).missing
 # frozenset({Permission("members.manage")})
 ```
 
@@ -157,7 +157,7 @@ Holding `members.manage`, as `helpdesk` does, is not enough to promote someone t
 and holding a role is not enough to hand it out. Revoking needs exactly what granting
 would ({func}`~loom.core.authz.can_revoke`); a stored grant of a role the code does not
 declare allows nothing, so removing it needs `delegate` only. Asking to grant an
-undeclared role raises {class}`~loom.core.authz.UnknownRole`.
+undeclared role raises {class}`~loom.core.authz.UnknownRoleError`.
 
 ## Where grants come from
 
@@ -235,7 +235,7 @@ created, so nobody defines a role above what they hold:
 ```python
 from loom.core.authz import CompositionRules, RoleSpec, Scope, evaluate
 
-at = Scope.of("acme")
+at = Scope.from_segments("acme")
 ceiling = frozenset(
     permission
     for permission in CATALOG.permissions
@@ -314,7 +314,7 @@ ledger = "ledger.authz:LedgerAuthz"
 {func}`~loom.core.authz.product.load_authz_product` returns the product, or `None` when
 none is registered; {func}`~loom.core.authz.product.register_authz_product` installs one
 for the process ahead of the entry point, which is what tests use.
-{func}`~loom.core.repository.sqlalchemy.rls.validate_elevations` raises `ConfigError` when
+{func}`~loom.stores.sqlalchemy.rls.validate_elevations` raises `ConfigError` when
 `elevations` names a scope that no compiled model declares, or one that is not elevable.
 It also raises `ElevableScopeInSeveralStores`
 (`ElevationErrorCode.ELEVABLE_SCOPE_IN_SEVERAL_STORES`) when a scope that is elevable, or
@@ -329,15 +329,15 @@ one-store rule applies. It remains available for programmatic use.
 A [row-scoped table](postgres-rls.md#row-scoped-tables) can declare a write-only,
 elevable scope: callers read every row within the boundary but modify only their own.
 When the product's authorizer allows more, for example an administrator editing other
-users' rows, {func}`~loom.core.repository.sqlalchemy.rls.elevate` turns that decision,
+users' rows, {func}`~loom.stores.sqlalchemy.rls.elevate` turns that decision,
 and only that decision, into the session flag `loom.scope.<scope>.any` for the rest of
 the current execution:
 
 ```python
 from loom.core.authz import Scope, evaluate
-from loom.core.repository.sqlalchemy.rls import elevate
+from loom.stores.sqlalchemy.rls import elevate
 
-at = Scope.of(account_id)
+at = Scope.from_segments(account_id)
 decision = evaluate(CATALOG, grants, EDIT_ANY, at)
 if not decision:
     raise PermissionError("not allowed to edit other clerks' entries")
@@ -368,9 +368,9 @@ lives:
   transaction that begins while the frame holds the scope, and `''` otherwise;
 - elevating after a read in the same unit of work also flags the open transaction of the
   store that declares the scope, and no other store's, through the executor's elevation
-  sink, {class}`~loom.core.persistence.elevation.ScopedElevationSink`. The composition
+  sink, {class}`~loom.core.stores.elevation.ScopedElevationSink`. The composition
   registers it once, over every store whose wiring exposes an elevation
-  ({class}`~loom.core.repository.sqlalchemy.rls.SQLAlchemyStoreElevation` in `external`
+  ({class}`~loom.stores.sqlalchemy.rls.SQLAlchemyStoreElevation` in `external`
   mode on Postgres); a kernel built by hand registers an `ElevationSink` through one of its
   `modules`. Elevating from a task other than the execution's own (a `gather` child)
   while the scope's store is enlisted raises

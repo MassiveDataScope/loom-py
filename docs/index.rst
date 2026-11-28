@@ -65,6 +65,9 @@ Companion demo application:
    :caption: Guides
 
    guides/ports-and-adapters
+   guides/business-keys
+   guides/etl-models
+   guides/logging
 
 .. toctree::
    :maxdepth: 2
@@ -77,7 +80,7 @@ Companion demo application:
    rest/postgres-rls
    rest/celery
    rest/sql
-   rest/persistence-backends
+   rest/stores
    rest/cache
    rest/examples
    rest/testing

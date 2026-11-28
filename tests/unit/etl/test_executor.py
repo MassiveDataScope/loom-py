@@ -8,9 +8,11 @@ from typing import Any
 
 import pytest
 
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.etl import ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
+from loom.etl.checkpoint import CheckpointCleanupError, CheckpointStore
 from loom.etl.compiler import ETLCompiler
+from loom.etl.event import EtlEvent
 from loom.etl.executor import ETLExecutor, ThreadDispatcher
 from loom.etl.lineage._records import (
     EventName as LineageEventName,
@@ -21,10 +23,10 @@ from loom.etl.lineage._records import (
 from loom.etl.lineage._records import (
     RunStatus as LineageRunStatus,
 )
-from loom.etl.testing import StubRunObserver, StubSourceReader, StubTargetWriter
+from loom.etl.testing import InMemorySourceReader, InMemoryTargetWriter, RecordingRunObserver
 from tests.unit.etl.doubles import OrdersStagingAStep, RunDateIgnoredParams
 
-ExecutorFactory = Callable[..., tuple[ETLExecutor, StubTargetWriter, StubRunObserver]]
+ExecutorFactory = Callable[..., tuple[ETLExecutor, InMemoryTargetWriter, RecordingRunObserver]]
 
 
 def _table_ref(spec: Any) -> Any:
@@ -77,6 +79,11 @@ class OrdersCustomersParallelProcess(ETLProcess[RunDateIgnoredParams]):
     steps = [[OrdersStagingAStep, CustomersStagingBStep]]
 
 
+class FailingCleaner:
+    def delete_tree(self, path: str) -> None:
+        raise CheckpointCleanupError(path)
+
+
 class PipelineSeq(ETLPipeline[RunDateIgnoredParams]):
     processes = [OrdersCustomersProcess]
 
@@ -99,17 +106,19 @@ def compiler() -> ETLCompiler:
 def executor_factory() -> ExecutorFactory:
     def _make(
         frames: dict[str, Any] | None = None,
-        observer: StubRunObserver | None = None,
+        observer: RecordingRunObserver | None = None,
         dispatcher: Any = None,
-    ) -> tuple[ETLExecutor, StubTargetWriter, StubRunObserver]:
-        writer = StubTargetWriter()
-        run_observer = observer or StubRunObserver()
-        reader = StubSourceReader(frames or {"orders": SENTINEL_A, "customers": SENTINEL_B})
+        checkpoint_store: CheckpointStore | None = None,
+    ) -> tuple[ETLExecutor, InMemoryTargetWriter, RecordingRunObserver]:
+        writer = InMemoryTargetWriter()
+        run_observer = observer or RecordingRunObserver()
+        reader = InMemorySourceReader(frames or {"orders": SENTINEL_A, "customers": SENTINEL_B})
         executor = ETLExecutor(
             reader,
             writer,
-            observability=ObservabilityRuntime([run_observer]),
+            observability=Observability([run_observer]),
             dispatcher=dispatcher,
+            checkpoint_store=checkpoint_store,
         )
         return executor, writer, run_observer
 
@@ -196,11 +205,11 @@ class TestRunStep:
                 return SENTINEL_A
 
         reader = _TracingReader()
-        writer = StubTargetWriter()
+        writer = InMemoryTargetWriter()
         executor = ETLExecutor(
             reader,
             writer,
-            observability=ObservabilityRuntime([StubRunObserver()]),
+            observability=Observability([RecordingRunObserver()]),
         )
 
         streaming_plan = compiler.compile_step(StepStreaming)
@@ -222,8 +231,8 @@ class TestRunStep:
 
         executor = ETLExecutor(
             _NonStreamingReader(),
-            StubTargetWriter(),
-            observability=ObservabilityRuntime([StubRunObserver()]),
+            InMemoryTargetWriter(),
+            observability=Observability([RecordingRunObserver()]),
         )
         streaming_plan = compiler.compile_step(StepStreaming)
 
@@ -356,6 +365,21 @@ class TestRunPipeline:
             executor.run_pipeline(plan, params)
         assert observer.pipeline_statuses == [LineageRunStatus.FAILED]
 
+    def test_run_pipeline_logs_instead_of_raising_when_temp_cleanup_fails(
+        self,
+        compiler: ETLCompiler,
+        params: RunDateIgnoredParams,
+        executor_factory: ExecutorFactory,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        plan = compiler.compile(PipelineSeq)
+        store = CheckpointStore("memory://temps", cleaner=FailingCleaner())
+        executor, _, _ = executor_factory(checkpoint_store=store)
+
+        executor.run_pipeline(plan, params)
+
+        assert EtlEvent.CHECKPOINT_RUN_CLEANUP_FAILED in caplog.messages
+
 
 class TestFlush:
     def test_flush_calls_observer_capability(self) -> None:
@@ -371,9 +395,9 @@ class TestFlush:
 
         observer = _FlushObserver()
         executor = ETLExecutor(
-            StubSourceReader({"raw.orders": object()}),
-            StubTargetWriter(),
-            observability=ObservabilityRuntime([observer]),
+            InMemorySourceReader({"raw.orders": object()}),
+            InMemoryTargetWriter(),
+            observability=Observability([observer]),
         )
 
         executor.flush()

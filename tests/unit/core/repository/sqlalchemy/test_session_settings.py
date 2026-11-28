@@ -9,15 +9,16 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from loom.core.errors import InvalidType
 from loom.core.model.redaction import Dsn
-from loom.core.persistence.database import DatabaseConfig
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.sqlalchemy.session_manager import (
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.database import DatabaseConfig
+from loom.core.stores.profile import SERVER_PROFILE
+from loom.stores.sqlalchemy.session_manager import (
     SessionManager,
     build_session_manager,
 )
-from loom.core.repository.sqlalchemy.session_settings import (
+from loom.stores.sqlalchemy.session_settings import (
     SET_SETTINGS,
     SessionSettings,
     install_session_settings,
@@ -65,8 +66,8 @@ class TestSessionSettings:
         with pytest.raises(ValueError, match="session setting key"):
             settings_statement({key: "acme"})
 
-    def test_a_non_str_key_raises_value_error(self) -> None:
-        with pytest.raises(ValueError, match="session setting key"):
+    def test_a_non_str_key_raises_invalid_type(self) -> None:
+        with pytest.raises(InvalidType, match="session setting key"):
             settings_statement({1: "acme"})  # type: ignore[dict-item]
 
     @pytest.mark.parametrize("value", [1, None, b"acme", ["acme"]])
@@ -129,7 +130,7 @@ class TestSessionSettings:
                 assert isinstance(session.sync_session, Session)
             assert not manager.has_session_settings
         finally:
-            await manager.dispose()
+            await manager.close()
 
     def test_a_provider_returning_none_lets_the_transaction_run_untouched(self) -> None:
         engine, session_class = _sqlite_session_class(lambda: None)
@@ -182,7 +183,7 @@ class TestSessionSettings:
         try:
             assert manager.session_factory.kw["sync_session_class"].__name__ == "LoomSession"
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_the_configured_constructor_installs_the_provider_on_a_postgres_url(self) -> None:
         manager = build_session_manager(
@@ -194,7 +195,7 @@ class TestSessionSettings:
         try:
             assert manager.session_factory.kw["sync_session_class"].__name__ == "LoomSession"
         finally:
-            await manager.dispose()
+            await manager.close()
 
     def test_keys_with_more_than_two_parts_are_accepted(self) -> None:
         clause, params = settings_statement({"app.scope.extra": "x"})

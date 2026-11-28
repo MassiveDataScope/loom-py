@@ -1,4 +1,4 @@
-"""One island per optional extra of the pydantic-ai engine, beside the provider islands.
+"""One island per optional extra of the pydantic-ai engine, beside the model builders.
 
 Each module here imports its SDK at the top and nothing else in the engine
 does; the module that needs it loads the island by name through

@@ -63,9 +63,10 @@ from loom.etl.compiler._validators_config import (
 )
 from loom.etl.compiler._validators_step import StepCompilationContext, validate_step
 from loom.etl.declarative.target import AppendSpec
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.pipeline._pipeline import ETLPipeline, ETLProcess
 from loom.etl.pipeline._step import ETLStep
-from loom.etl.runtime.contracts import AgentBatchRunner, TableDiscovery
+from loom.etl.ports.contracts import AgentBatchRunner, TableDiscovery
 
 _log = logging.getLogger(__name__)
 
@@ -121,9 +122,6 @@ class ETLCompiler:
                 or a ``WithAgent`` cannot be served.
         """
         params_type = _require_params_type(pipeline_type, "ETLPipeline")
-        _log.debug(
-            "compile pipeline=%s processes=%d", pipeline_type.__name__, len(pipeline_type.processes)
-        )
         nodes = tuple(
             self._compile_pipeline_item(item, pipeline_type, params_type)
             for item in pipeline_type.processes
@@ -136,6 +134,7 @@ class ETLCompiler:
             validate_plan_config(plan, self._config_context)
         if self._validates_agents:
             validate_plan_agents(plan, self._agents)
+        _log.debug(EtlEvent.PIPELINE_COMPILED, extra={EtlKey.PIPELINE: pipeline_type.__name__})
         return plan
 
     def compile_process(self, process_type: type[ETLProcess[Any]]) -> ProcessPlan:
@@ -260,11 +259,6 @@ class ETLCompiler:
         target_binding = resolve_target_binding(step_type)
         config_bindings = resolve_config_bindings(step_type)
         agent_bindings = resolve_agent_bindings(step_type)
-        _log.debug(
-            "compile step=%s sources=%d",
-            step_type.__name__,
-            len(source_bindings),
-        )
         validate_step(
             StepCompilationContext(
                 step_type=step_type,
@@ -276,6 +270,7 @@ class ETLCompiler:
             )
         )
         _warn_append_target(step_type, target_binding.spec)
+        _log.debug(EtlEvent.STEP_COMPILED, extra={EtlKey.STEP: step_type.__name__})
         return StepPlan(
             step_type=step_type,
             params_type=params_type,
@@ -288,7 +283,7 @@ class ETLCompiler:
 
     def _get_or_build_process(self, process_type: type[ETLProcess[Any]]) -> ProcessPlan:
         if process_type in self._process_cache:
-            _log.debug("compile cache hit process=%s", process_type.__name__)
+            _log.debug(EtlEvent.COMPILE_CACHE_HIT, extra={EtlKey.PROCESS: process_type.__name__})
             return self._process_cache[process_type]
         plan = self._build_process_plan(process_type)
         self._process_cache[process_type] = plan
@@ -296,7 +291,7 @@ class ETLCompiler:
 
     def _get_or_build_step(self, step_type: type[ETLStep[Any]]) -> StepPlan:
         if step_type in self._step_cache:
-            _log.debug("compile cache hit step=%s", step_type.__name__)
+            _log.debug(EtlEvent.COMPILE_CACHE_HIT, extra={EtlKey.STEP: step_type.__name__})
             return self._step_cache[step_type]
         plan = self._build_step_plan(step_type)
         self._step_cache[step_type] = plan
@@ -315,8 +310,6 @@ def _require_params_type(cls: type[Any], kind: str) -> type[Any]:
 def _warn_append_target(step_type: type[Any], spec: object) -> None:
     if isinstance(spec, AppendSpec):
         _log.warning(
-            "compile append target step=%s table=%s schema_mode=%s",
-            step_type.__name__,
-            spec.table_ref.ref,
-            spec.schema_mode.value,
+            EtlEvent.APPEND_TARGET_COMPILED,
+            extra={EtlKey.STEP: step_type.__name__, EtlKey.TABLE: spec.table_ref.ref},
         )

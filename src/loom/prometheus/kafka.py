@@ -1,4 +1,4 @@
-"""Prometheus metrics adapter for Kafka transport operations.
+"""Prometheus metrics recorder for Kafka transport operations.
 
 Optional module — requires ``prometheus-client``::
 
@@ -8,11 +8,11 @@ Usage::
 
     from prometheus_client import CollectorRegistry
     from loom.prometheus import KafkaPrometheusMetrics
-    from loom.core.observability.runtime import ObservabilityRuntime
+    from loom.core.observability.observability import Observability
 
     registry = CollectorRegistry()
     metrics = KafkaPrometheusMetrics(registry=registry)
-    obs = ObservabilityRuntime([metrics])
+    obs = Observability([metrics])
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ class KafkaPrometheusMetrics:
     - ``streaming_kafka_encode_duration_seconds`` — encode latency by content type.
     - ``streaming_kafka_decode_duration_seconds`` — decode latency by content type.
 
-    Wire this into an :class:`~loom.core.observability.runtime.ObservabilityRuntime`
+    Wire this into an :class:`~loom.core.observability.observability.Observability`
     and pass the runtime to the Kafka client constructors via ``obs=``.
 
     Args:
@@ -82,7 +82,7 @@ class KafkaPrometheusMetrics:
     Example::
 
         metrics = KafkaPrometheusMetrics(registry=registry)
-        obs = ObservabilityRuntime([metrics])
+        obs = Observability([metrics])
         consumer = KafkaConsumerClient(settings, obs=obs)
     """
 

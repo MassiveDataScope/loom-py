@@ -7,27 +7,30 @@ from typing import Any, cast
 import pytest
 
 from loom.core.di.container import LoomContainer
+from loom.core.errors import InvalidType
 from loom.core.model.introspection import scalar_column_annotations
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository import DefaultRepositoryBuilder, RepositoryBuildContext
-from loom.core.repository.abc import (
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import (
     Creatable,
     CursorCodec,
     CursorResult,
+    DefaultRepositoryBuilder,
     Listable,
     PaginationMode,
     QuerySpec,
     Readable,
+    RepositoryBuildContext,
     SortSpec,
 )
-from loom.core.repository.mongo.ids import IdPolicy, ObjectIdPolicy, Uuid4IdPolicy
-from loom.core.repository.mongo.registry import (
+from loom.stores.mongo.ids import IdPolicy, ObjectIdPolicy, Uuid4IdPolicy
+from loom.stores.mongo.registry import (
     MongoDatabase,
     MongoDefaultRepositoryBuilder,
     build_mongo_repository_registration_module,
 )
-from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.mongo.uow import MongoSessions
+from loom.stores.mongo.repository import MongoRepository
+from loom.stores.mongo.uow import MongoSessions
+from loom.testing import make
 
 from ._fake import FakeMongoClient
 from .conftest import Article
@@ -69,7 +72,7 @@ class TestMongoRegistry:
     def test_module_registers_capability_bindings(self) -> None:
         container = _container(FakeMongoClient())
 
-        assert isinstance(container.resolve(Readable[Article]), RepositoryMongo)
+        assert isinstance(container.resolve(Readable[Article]), MongoRepository)
         assert container.resolve_repo(Article) is not None
 
     @pytest.mark.asyncio
@@ -115,7 +118,7 @@ class TestMongoRegistry:
 
         context = RepositoryBuildContext(model=cast(Any, NotAModel))
 
-        with pytest.raises(RuntimeError, match="NotAModel"):
+        with pytest.raises(InvalidType, match="NotAModel"):
             builder(context)
 
     @pytest.mark.asyncio
@@ -123,7 +126,7 @@ class TestMongoRegistry:
         container = _container(FakeMongoClient())
         for slug in ("a", "b", "c"):
             await container.resolve(Creatable[Article]).create(ArticleCreate(slug=slug, title=slug))
-        query = QuerySpec(sort=(SortSpec("slug"),), pagination=PaginationMode.CURSOR, limit=2)
+        query = make(QuerySpec, sort=(SortSpec("slug"),), pagination=PaginationMode.CURSOR, limit=2)
         page = await container.resolve(Listable[Article]).list_with_query(query)
         assert isinstance(page, CursorResult)
         assert page.next_cursor is not None

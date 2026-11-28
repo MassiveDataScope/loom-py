@@ -9,9 +9,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.repository.sqlalchemy.rls import create_schema
-from loom.core.repository.sqlalchemy.rls.guard_manifest import AUDIT_LOG_SHAPE
-from loom.core.repository.sqlalchemy.rls.integrity import AUDIT_SHAPE
+from loom.stores.sqlalchemy.rls import create_schema
+from loom.stores.sqlalchemy.rls.guard_manifest import AUDIT_LOG_SHAPE
+from loom.stores.sqlalchemy.rls.integrity import AUDIT_SHAPE
 from tests.integration.agnosticism import bookkeeping
 from tests.integration.rls.conftest import BootstrapFactory, application_for
 

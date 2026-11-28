@@ -23,8 +23,9 @@ from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.identity import Identity
 from loom.core.model import BaseModel
-from loom.core.persistence import NoneBackend, PersistenceWiring
-from loom.core.persistence.profile import BackendRuntime
+from loom.core.stores import NullStorePlugin, StoreWiring
+from loom.core.stores.catalog import NO_CAPABILITIES, StoreCapabilities, StoreSpec
+from loom.core.stores.profile import StorePluginContext
 from loom.rest.auth import RequestCredentials
 from loom.rest.compiler import InterfaceCompilationError
 from loom.rest.fastapi import health as health_module
@@ -73,12 +74,16 @@ class _ProbedBackend:
     repository_type: ClassVar[type[Any] | None] = None
     ready: ClassVar[bool | None] = None
 
+    def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
+        del spec
+        return NO_CAPABILITIES
+
     def build(
-        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], runtime: BackendRuntime
-    ) -> PersistenceWiring:
-        wiring = NoneBackend().build(ctx, models, runtime)
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], context: StorePluginContext
+    ) -> StoreWiring:
+        wiring = NullStorePlugin().build(ctx, models, context)
         readiness = None if self.ready is None else self._probe
-        return PersistenceWiring(
+        return StoreWiring(
             uow_factory=wiring.uow_factory,
             repo_registration_module=wiring.repo_registration_module,
             lifespan_init=wiring.lifespan_init,
@@ -92,7 +97,7 @@ class _ProbedBackend:
 
 class _ProbedEntryPoint:
     name = _ProbedBackend.name
-    group = "loom.persistence.backends"
+    group = "loom.stores.plugins"
 
     def load(self) -> type[_ProbedBackend]:
         return _ProbedBackend

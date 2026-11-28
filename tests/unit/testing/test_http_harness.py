@@ -2,30 +2,40 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Iterator
 from typing import Any, Protocol, cast
+from unittest.mock import patch
 
 import pytest
+from fastapi.testclient import TestClient
 
-from loom.composition import Application
+from loom.composition import Application, Project
+from loom.composition.recipe import Runtime
 from loom.core.command.base import Command
 from loom.core.errors import Conflict, NotFound
-from loom.core.model import LoomStruct
-from loom.core.repository.abc import Readable
+from loom.core.job.job import Job
+from loom.core.job.service import JobService
+from loom.core.model import BaseModel, ColumnField
+from loom.core.stores.repository import Readable
 from loom.core.use_case.markers import Input
 from loom.core.use_case.use_case import UseCase
 from loom.rest.model import RestInterface, RestRoute
-from loom.testing import http_harness
 from loom.testing.http_harness import HttpTestHarness
 from loom.testing.in_memory import InMemoryRepository
+from loom.testing.overrides import Override
+from tests.helpers.jobs import JobActivity
 
 # ---------------------------------------------------------------------------
 # Domain fixtures
 # ---------------------------------------------------------------------------
 
 
-class Product(LoomStruct):
-    id: int
-    name: str
+class Product(BaseModel):
+    __tablename__ = "harness_products"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    name: str = ColumnField(length=64)
 
 
 class CreateProductCmd(Command, frozen=True):
@@ -60,9 +70,11 @@ class ProductInterface(RestInterface[Product]):
 # ---------------------------------------------------------------------------
 
 
-class Tag(LoomStruct):
-    id: int
-    label: str
+class Tag(BaseModel):
+    __tablename__ = "harness_tags"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    label: str = ColumnField(length=64)
 
 
 class GetTagUseCase(UseCase[Tag, Tag | None]):
@@ -338,9 +350,11 @@ class TestDisableRoutesForwarding:
 # ---------------------------------------------------------------------------
 
 
-class AcmeItem(LoomStruct):
-    id: int
-    name: str
+class AcmeItem(BaseModel):
+    __tablename__ = "harness_acme_items"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    name: str = ColumnField(length=64)
 
 
 class AcmeItemLookup(Readable[AcmeItem], Protocol):
@@ -375,13 +389,13 @@ class TestCapabilityKeys:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         composed: list[Application] = []
-        compose = http_harness.compose_application
+        compose = Project.compose
 
-        def captured(*args: Any, **kwargs: Any) -> Application:
-            composed.append(compose(*args, **kwargs))
+        def captured(self: Project, adapter: Runtime[object], **kwargs: Any) -> Application:
+            composed.append(compose(self, adapter, **kwargs))
             return composed[-1]
 
-        monkeypatch.setattr(http_harness, "compose_application", captured)
+        monkeypatch.setattr(Project, "compose", captured)
         fake = AcmeItemFake()
         harness = HttpTestHarness()
         harness.inject_repo(AcmeItem, fake)
@@ -390,3 +404,101 @@ class TestCapabilityKeys:
         container = composed[0].kernel.container
         assert container.resolve(Readable[AcmeItem]) is fake
         assert container.resolve(AcmeItemLookup) is fake
+
+
+@pytest.fixture(scope="module")
+def shared_override_harness() -> tuple[HttpTestHarness, Any, list[int]]:
+    baseline = InMemoryRepository(Product)
+    baseline.seed(Product(id=1, name="baseline"))
+    calls: list[int] = []
+    compose = Project.compose
+
+    def counted(project: Project, adapter: Runtime[object]) -> Application:
+        calls.append(1)
+        return compose(project, adapter)
+
+    harness = HttpTestHarness(overrides=[Override.repository(Product, baseline)])
+    with patch.object(Project, "compose", counted):
+        client = harness.build_app(interfaces=[ProductInterface])
+    yield harness, client, calls
+    client.close()
+
+
+class TestHarnessOverride:
+    def test_instance_override_restores_the_previous_value(self) -> None:
+        repository = InMemoryRepository(Product)
+        harness = HttpTestHarness(
+            overrides=[Override.repository(Product, repository), Override.instance(str, "baseline")]
+        )
+        client = harness.build_app(interfaces=[ProductInterface])
+        container = harness.application.kernel.container
+
+        assert container.resolve(str) == "baseline"
+        with harness.overriding(Override.instance(str, "temporary")):
+            assert container.resolve(str) == "temporary"
+        assert container.resolve(str) == "baseline"
+        client.close()
+
+    @pytest.mark.parametrize("name", ["first", "second", "third"])
+    def test_each_double_uses_one_composition_and_restores(
+        self, shared_override_harness: tuple[HttpTestHarness, Any, list[int]], name: str
+    ) -> None:
+        harness, client, calls = shared_override_harness
+        double = InMemoryRepository(Product)
+        double.seed(Product(id=1, name=name))
+
+        with harness.overriding(Override.repository(Product, double)):
+            assert client.get("/products/1").json()["name"] == name
+
+        assert client.get("/products/1").json()["name"] == "baseline"
+        assert len(calls) == 1
+
+
+class StockedJob(Job[None]):
+    """Records the product it was sent for after some I/O, and sends the next until two are."""
+
+    def __init__(self, jobs: JobService, activity: JobActivity) -> None:
+        self._jobs = jobs
+        self._activity = activity
+
+    async def execute(self, product_id: int) -> None:
+        await asyncio.sleep(0.01)
+        self._activity.record(f"stocked {product_id}")
+        if product_id == 1:
+            await self._jobs.dispatch_now(StockedJob, params={"product_id": 2})
+
+
+class RestockProductUseCase(UseCase[Product, bool]):
+    def __init__(self, jobs: JobService) -> None:
+        super().__init__()
+        self._jobs = jobs
+
+    async def execute(self, product_id: int) -> bool:
+        self._jobs.dispatch_after_commit(StockedJob, params={"product_id": product_id})
+        return True
+
+
+class RestockInterface(RestInterface[Product]):
+    prefix = "/restocks"
+    routes = (RestRoute(use_case=RestockProductUseCase, method="POST", path="/{product_id}"),)
+
+
+class TestHarnessJobs:
+    @pytest.fixture
+    def client(self, activity: JobActivity) -> Iterator[TestClient]:
+        harness = HttpTestHarness(
+            overrides=[
+                Override.repository(Product, InMemoryRepository(Product)),
+                Override.instance(JobActivity, activity),
+            ]
+        )
+        client = harness.build_app(interfaces=[RestockInterface])
+        yield client
+        client.close()
+
+    def test_a_request_returns_once_the_jobs_it_dispatched_and_theirs_have_run(
+        self, client: TestClient, activity: JobActivity
+    ) -> None:
+        response = client.post("/restocks/1")
+
+        assert (response.status_code, activity.entries) == (200, ["stocked 1", "stocked 2"])

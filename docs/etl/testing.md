@@ -11,6 +11,7 @@ and returns a `StepResult` for assertions.
 ```python
 from loom.etl.testing import PolarsStepRunner
 
+
 def test_clean_orders():
     runner = PolarsStepRunner()
     runner.seed("raw.orders", [(1, 10.0), (2, -5.0)], ["id", "amount"])
@@ -49,7 +50,7 @@ the reader's own decoding (including the normalisation of fields whose JSON
 type changes between rows) on an eager or lazy frame:
 
 ```python
-from loom.etl.backends.polars import decode_json_columns
+from loom.etl.engines.polars import decode_json_columns
 
 events = decode_json_columns(raw_events, EnrichEvents.events.json_columns)
 result = EnrichEvents().execute(params, events=events.lazy())
@@ -60,7 +61,7 @@ result = EnrichEvents().execute(params, events=events.lazy())
 ### Targets that declare `replace(allow_empty=False)`
 
 `PolarsStepRunner` captures the step's result instead of writing it, and
-`StubTargetWriter` stores whatever it receives, so neither applies
+`InMemoryTargetWriter` stores whatever it receives, so neither applies
 `allow_empty`: an empty result passes without `EmptyReplaceError`. Test the
 declaration on the compiled spec, and the guard itself with
 `PolarsTargetWriter` on a temporary directory if needed:
@@ -84,10 +85,8 @@ with any backend runner.
 ```python
 from loom.etl.testing import ETLScenario
 
-ORDERS = (
-    ETLScenario()
-    .with_table("raw.orders", [(1, 10.0), (2, 20.0)], ["id", "amount"])
-)
+ORDERS = ETLScenario().with_table("raw.orders", [(1, 10.0), (2, 20.0)], ["id", "amount"])
+
 
 def test_double_amount(loom_polars_runner):
     ORDERS.apply(loom_polars_runner)
@@ -114,6 +113,6 @@ with SparkTestSession.start() as spark:
 
 ## Compile-time stubs
 
-- `StubCatalog` — in-memory catalog.
-- `StubSourceReader` / `StubTargetWriter` — in-memory I/O.
-- `StubRunObserver` — records pipeline lifecycle events.
+- `InMemoryCatalog` — in-memory catalog.
+- `InMemorySourceReader` / `InMemoryTargetWriter` — in-memory I/O.
+- `RecordingRunObserver` — records pipeline lifecycle events.

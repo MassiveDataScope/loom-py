@@ -1,6 +1,6 @@
-"""HTTP surface of the agent runtime (T086-T095, T098).
+"""HTTP surface of the agent host (T086-T095, T098).
 
-Drives ``bind_agent_endpoints`` over a live :class:`AgentRuntime` backed by
+Drives ``mount_agent_endpoints`` over a live :class:`AgentHost` backed by
 scripted engines, asserting the wire contract in
 ``specs/001-ai-agent-layer/contracts/http-sse.md``: double opt-in mounting,
 401 before 404, the body cap enforced while reading, the run-error status
@@ -28,7 +28,7 @@ import yaml
 from fastapi import FastAPI
 
 from loom.ai.a2a.card import card_path
-from loom.ai.a2a.server import bind_a2a_endpoints
+from loom.ai.a2a.server import mount_a2a_endpoints
 from loom.ai.abc import (
     AgentEvent,
     DepsFactory,
@@ -47,17 +47,20 @@ from loom.ai.errors import (
     AgentErrorCode,
     AgentRunErrorCode,
 )
-from loom.ai.fastapi.endpoints import bind_agent_endpoints
-from loom.ai.runtime import AgentRuntime
+from loom.ai.event import AiEvent, AiKey
+from loom.ai.execution import AgentHost
+from loom.ai.fastapi.endpoints import mount_agent_endpoints
 from loom.core.config.errors import ConfigError
 from loom.core.di import LoomContainer
 from loom.core.errors import Forbidden
 from loom.core.identity import ANONYMOUS, Identity, reset_identity, set_identity
+from loom.core.log_names import LogField
 from loom.core.model import loom_type, msgspec_type
 from loom.core.model.redaction import Dsn
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.rest.auth.middleware import AuthenticationMiddleware
+from tests.helpers.loggers import CapturedLog
 from tests.integration.ai.conftest import (
     DEFAULT_OUTPUT,
     DEFAULT_USAGE,
@@ -86,7 +89,7 @@ _PREFIX = "/agents"
 _MCP_SERVER = "tools"
 _SRC = Path(__file__).resolve().parents[3] / "src"
 _INTERACTION_ID_LENGTH = 32
-"""Length of the ``uuid4().hex`` the runtime mints per admitted run."""
+"""Length of the ``uuid4().hex`` the host mints per admitted run."""
 _NEW_MESSAGES = b'[{"kind": "request", "conversation_id": "c-42"}]'
 _RESULT_KEYS = {"output", "usage", "interaction_id", "hook_result"}
 """The only keys a completed run publishes, on ``/run`` and on the ``final`` frame."""
@@ -137,9 +140,9 @@ async def _serving(
     max_state_bytes: int = 65536,
     health_cache_ttl_ms: int = 20,
     max_concurrent_runs: int = 8,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
 ) -> AsyncIterator[tuple[FastAPI, httpx.AsyncClient]]:
-    """Serve an entered runtime over an in-process ASGI client."""
+    """Serve an entered host over an in-process ASGI client."""
     config = make_ai_config(
         endpoints=dict(endpoints if endpoints is not None else {_AGENT: make_endpoint()}),
         mcp_servers=make_mcp_servers(_MCP_SERVER),
@@ -148,24 +151,24 @@ async def _serving(
         health_cache_ttl_ms=health_cache_ttl_ms,
         max_concurrent_runs=max_concurrent_runs,
     )
-    runtime = AgentRuntime(
+    host = AgentHost(
         plans=list(plans if plans is not None else (make_plan(_AGENT),)),
         config=config,
-        engine_provider=CountingEngineProvider(engines=engines),  # type: ignore[arg-type]
+        engine_plugin=CountingEngineProvider(engines=engines),  # type: ignore[arg-type]
         deps=deps,
         container=container,
         mcp_client_factory=mcp_client_factory(
             {_MCP_SERVER: StubMcpClient(label="mcp", session=RecordingMcpSession(), log=[])}
         ),  # type: ignore[arg-type]
     )
-    async with runtime:
+    async with host:
         app = FastAPI()
-        bind_agent_endpoints(
+        mount_agent_endpoints(
             app,
-            runtime=runtime,
+            host=host,
             config=config,
             authenticator=authenticator if authenticator is not None else StubAuthenticator(),  # type: ignore[arg-type]
-            observability_runtime=observability_runtime,
+            observability=observability,
             prefix=_PREFIX,
         )
         app.add_middleware(_IdentityMiddleware, identity=identity)
@@ -359,94 +362,54 @@ class TestMounting:
     ) -> None:
         """Opting in without an authenticator and without anonymous aborts start-up."""
         config = make_ai_config(endpoints={_AGENT: make_endpoint(allow_anonymous=False)})
-        runtime = AgentRuntime(
+        host = AgentHost(
             plans=[make_plan(_AGENT)],
             config=config,
-            engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
             deps=deps,
             container=container,
         )
 
         app = FastAPI()
 
-        async with runtime:
+        async with host:
             with pytest.raises(ConfigError):
-                bind_agent_endpoints(
-                    app, runtime=runtime, config=config, authenticator=None, prefix=_PREFIX
+                mount_agent_endpoints(
+                    app, host=host, config=config, authenticator=None, prefix=_PREFIX
                 )
 
-    async def test_warns_when_mounting_an_agent(
+    @pytest.mark.parametrize(
+        ("allow_anonymous", "conversational"),
+        [(False, False), (False, True), (True, False), (True, True)],
+        ids=["authenticated", "authenticated-conv", "anonymous", "anonymous-conv"],
+    )
+    async def test_the_one_event_of_the_mount_tells_how_callers_are_admitted(
         self,
         deps: StubDepsFactory,
         container: LoomContainer,
         caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """Every mount announces its security state at WARNING level."""
-        with caplog.at_level(logging.WARNING):
-            async with _serving(deps=deps, container=container) as (_app, _client):
-                pass
-
-        assert _AGENT in caplog.text
-
-    @staticmethod
-    async def _mount_warning(
-        *,
-        deps: StubDepsFactory,
-        container: LoomContainer,
-        caplog: pytest.LogCaptureFixture,
+        request: pytest.FixtureRequest,
         allow_anonymous: bool,
-    ) -> str:
-        """Return the mount WARNING emitted for one endpoint configuration."""
+        conversational: bool,
+    ) -> None:
+        """Anonymity removes the identity and a conversation makes the id the credential."""
+        plans = (conversational_plan(_AGENT, loader=True),) if conversational else None
+        serving_deps = request.getfixturevalue("conversation_deps" if conversational else "deps")
         endpoints = {_AGENT: make_endpoint(allow_anonymous=allow_anonymous)}
         with caplog.at_level(logging.WARNING):
-            async with _serving(deps=deps, container=container, endpoints=endpoints) as (
-                _app,
-                _client,
+            async with _serving(
+                deps=serving_deps, container=container, endpoints=endpoints, plans=plans
             ):
                 pass
-        return caplog.text
 
-    async def test_does_not_claim_a_verified_identity_when_the_mount_is_anonymous(
-        self,
-        deps: StubDepsFactory,
-        container: LoomContainer,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """``allow_anonymous`` removes the identity: the warning must not claim one."""
-        text = await self._mount_warning(
-            deps=deps, container=container, caplog=caplog, allow_anonymous=True
-        )
-
-        assert "runs as that verified identity" not in text
-        assert "NOT authenticated" in text
-
-    async def test_warns_about_spend_without_identity_when_the_mount_is_anonymous(
-        self,
-        deps: StubDepsFactory,
-        container: LoomContainer,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """An anonymous mount spends model tokens for an unidentified caller: say so."""
-        text = await self._mount_warning(
-            deps=deps, container=container, caplog=caplog, allow_anonymous=True
-        )
-
-        assert "no verified identity" in text
-        assert "max_concurrent_runs" in text
-        assert "rate limit" in text
-
-    async def test_claims_a_verified_identity_when_the_mount_requires_auth(
-        self,
-        deps: StubDepsFactory,
-        container: LoomContainer,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """An authenticated mount keeps the sentence that is true for it."""
-        text = await self._mount_warning(
-            deps=deps, container=container, caplog=caplog, allow_anonymous=False
-        )
-
-        assert "runs as that verified identity" in text
+        assert CapturedLog(caplog).named(AiEvent.ENDPOINT_MOUNTED) == [
+            {
+                AiKey.AGENT: _AGENT,
+                LogField.HTTP_ROUTE: f"{_PREFIX}/{_AGENT}",
+                AiKey.ANONYMOUS: allow_anonymous,
+                AiKey.CONVERSATIONAL: conversational,
+            }
+        ]
 
 
 class TestAuthenticationBeforeExistence:
@@ -1304,7 +1267,7 @@ class TestStreamTracing:
             container=container,
             identity=identity,
             engines={_AGENT: engine},
-            observability_runtime=ObservabilityRuntime([recorder]),
+            observability=Observability([recorder]),
         ) as (_app, client):
             response = await client.post(f"{_PREFIX}/{_AGENT}/stream", json={"prompt": "p"})
             assert _sse_names(response.text) == [
@@ -1399,7 +1362,7 @@ class TestStreamTracing:
             container=container,
             identity=identity,
             engines={_AGENT: engine},
-            observability_runtime=ObservabilityRuntime([recorder]),
+            observability=Observability([recorder]),
         ) as (app, _client):
             await self._abandon_stream_after_first_frame(app, f"{_PREFIX}/{_AGENT}/stream")
 
@@ -1407,10 +1370,10 @@ class TestStreamTracing:
         assert agent_kinds[0] is EventKind.START
         assert agent_kinds[-1] in (EventKind.END, EventKind.ERROR)
 
-    async def test_attributes_the_subject_when_serving_a_stream(
+    async def test_attributes_the_agent_and_the_mechanism_when_serving_a_stream(
         self, deps: StubDepsFactory, container: LoomContainer, identity: Identity
     ) -> None:
-        """The span carries who ran what, over which route: an audit needs all of it."""
+        """The span carries what ran and over which route, never who ran it."""
         events = await self._stream_with_recorder(deps=deps, container=container, identity=identity)
 
         start = next(
@@ -1418,7 +1381,7 @@ class TestStreamTracing:
             for event in events
             if event.scope is Scope.AGENT and event.kind is EventKind.START
         )
-        assert start.meta["subject"] == identity.subject
+        assert "subject" not in start.meta
         assert start.meta["agent"] == _AGENT
         assert start.meta["mechanism"] == identity.mechanism
         assert start.meta["route"] == f"{_PREFIX}/{{name}}/stream"
@@ -1449,7 +1412,7 @@ class TestUsageOnTheAgentSpan:
             container=container,
             identity=identity,
             engines={_AGENT: engine if engine is not None else ScriptedEngine()},
-            observability_runtime=ObservabilityRuntime([recorder]),
+            observability=Observability([recorder]),
         ) as (_app, client):
             response = await client.post(f"{_PREFIX}/{_AGENT}/{suffix}", json={"prompt": "p"})
             assert response.status_code == 200
@@ -1528,7 +1491,7 @@ class TestUsageOnTheAgentSpan:
             container=container,
             identity=identity,
             engines={_AGENT: engine},
-            observability_runtime=ObservabilityRuntime([recorder]),
+            observability=Observability([recorder]),
         ) as (_app, client):
             response = await client.post(f"{_PREFIX}/{_AGENT}/run", json={"prompt": "p"})
             assert response.status_code == 422
@@ -1715,18 +1678,18 @@ def test_does_not_import_loom_ai_when_the_config_has_no_ai_section(tmp_path: Pat
     interpreter so modules imported by unrelated suites inside the pytest
     process cannot mask the leak.
     """
-    (tmp_path / f"{_APP_MODULE}.py").write_text(_APP_SOURCE, encoding="utf-8")
+    (tmp_path / _APP_MODULE).mkdir()
+    (tmp_path / _APP_MODULE / "__init__.py").write_text(_APP_SOURCE, encoding="utf-8")
     config = {
         "app": {
             "name": "ai-containment-demo",
             "code_path": ".",
-            "discovery": {
-                "mode": "interfaces",
-                "interfaces": {"modules": [_APP_MODULE], "warn_recommended": False},
-            },
+            "packages": [_APP_MODULE],
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
     }
     config_path = tmp_path / "app.yaml"
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
@@ -1764,23 +1727,23 @@ class TestAuthenticationExclusions:
             a2a=A2AConfig(base_url=Dsn(_A2A_BASE_URL), expose=(_AGENT,)),
         )
         plans = [make_plan(_AGENT)]
-        runtime = AgentRuntime(
+        host = AgentHost(
             plans=plans,
             config=config,
-            engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
             deps=deps,
             container=container,
         )
-        async with runtime:
+        async with host:
             app = FastAPI()
             app.add_middleware(
                 AuthenticationMiddleware,
                 authenticator=StubAuthenticator(),  # type: ignore[arg-type]
                 exclude_paths=tuple(exclude_paths),
             )
-            bind_a2a_endpoints(
+            mount_a2a_endpoints(
                 app,
-                runtime=runtime,
+                host=host,
                 config=config,
                 plans=plans,
                 authenticator=StubAuthenticator(),  # type: ignore[arg-type]

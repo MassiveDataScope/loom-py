@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-from loom.etl.checkpoint._cleaners import (
-    CheckpointCleanupError,
-    FsspecTempCleaner,
-    TempCleaner,
-)
+from loom.etl.checkpoint._cleaners import FsspecTempCleaner, TempCleaner
+from loom.etl.checkpoint._errors import CheckpointCleanupError
 from loom.etl.checkpoint._scope import CheckpointScope
 from loom.etl.checkpoint._store import CheckpointStore
 

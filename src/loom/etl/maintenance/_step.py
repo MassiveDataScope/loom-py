@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Generic, TypeVar
 
+from loom.core.errors import InvalidType
 from loom.etl.maintenance._protocol import OperationDeclaration
 from loom.etl.pipeline._generics import _extract_generic_arg
 
@@ -70,12 +71,12 @@ def _validate_operations(cls: type[Any]) -> None:
     """Ensure ``operations`` is a list of OperationDeclaration implementors."""
     ops = cls.__dict__.get("operations", cls.operations)
     if not isinstance(ops, list):
-        raise TypeError(
+        raise InvalidType(
             f"{cls.__qualname__}: 'operations' must be a list, got {type(ops).__name__}"
         )
     for idx, op in enumerate(ops):
         if not isinstance(op, OperationDeclaration):
-            raise TypeError(
+            raise InvalidType(
                 f"{cls.__qualname__}: operations[{idx}] must implement OperationDeclaration "
                 f"(MaintainTable or MaintainSchema), got {type(op).__name__}"
             )

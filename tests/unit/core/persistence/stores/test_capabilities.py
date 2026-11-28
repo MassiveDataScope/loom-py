@@ -8,21 +8,19 @@ from typing import Any, ClassVar
 import pytest
 
 import loom.core.plugins.entrypoints as entrypoints_module
-from loom.core.checks import run_deploy_checks
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.persistence.stores import (
+from loom.core.stores.catalog import (
     DEFAULT_STORE,
     StoreCapabilities,
     StoreKey,
     StoreSpec,
     load_catalog,
 )
-from loom.core.repository.abc import CURSOR_SIGNING_CHECK
 
-_ALL = StoreCapabilities(serves_models=True, transactional=True, pages_with_cursors=True)
-_NOTHING = StoreCapabilities(serves_models=False, transactional=False, pages_with_cursors=False)
-_MODELS_ONLY = StoreCapabilities(serves_models=True, transactional=False, pages_with_cursors=False)
-_NO_ROLLBACK = StoreCapabilities(serves_models=True, transactional=False, pages_with_cursors=True)
+_ALL = StoreCapabilities(can_serve_models=True, is_transactional=True)
+_NOTHING = StoreCapabilities(can_serve_models=False, is_transactional=False)
+_MODELS_ONLY = StoreCapabilities(can_serve_models=True, is_transactional=False)
+_NO_ROLLBACK = StoreCapabilities(can_serve_models=True, is_transactional=False)
 
 
 class TestBuiltinStoreCapabilities:
@@ -59,11 +57,9 @@ class TestBuiltinStoreCapabilities:
         assert spec.capabilities == _NOTHING
 
     def test_capabilities_are_immutable(self) -> None:
-        capabilities = StoreCapabilities(
-            serves_models=True, transactional=True, pages_with_cursors=True
-        )
+        capabilities = StoreCapabilities(can_serve_models=True, is_transactional=True)
         with pytest.raises(FrozenInstanceError):
-            capabilities.transactional = False  # type: ignore[misc]
+            capabilities.is_transactional = False  # type: ignore[misc]
 
     def test_capabilities_take_keywords_only(self) -> None:
         with pytest.raises(TypeError):
@@ -85,7 +81,7 @@ class TestBuiltinStoreCapabilities:
 
 
 class _EntryPoint:
-    group = "loom.persistence.backends"
+    group = "loom.stores.plugins"
 
     def __init__(self, name: str, target: type) -> None:
         self.name = name
@@ -111,9 +107,8 @@ class _CustomBackend:
     def capabilities(self, spec: StoreSpec) -> StoreCapabilities:
         type(self).calls += 1
         return StoreCapabilities(
-            serves_models=True,
-            transactional=spec.settings().get("transactional", False),
-            pages_with_cursors=True,
+            can_serve_models=True,
+            is_transactional=spec.section().get("transactional", False),
         )
 
 
@@ -162,17 +157,3 @@ class TestPluginStoreCapabilities:
 
         with pytest.raises(ConfigError, match=r"'legacy'.*required method 'capabilities'"):
             _ = spec.capabilities
-
-    @pytest.mark.parametrize(("backend", "expected"), [("dynamodb", False), ("mongo", True)])
-    def test_cursor_deploy_check_follows_store_capabilities(
-        self, backend: str, expected: bool
-    ) -> None:
-        settings = {"url": "mongodb://localhost", "database": "test"} if backend == "mongo" else {}
-        ctx = ConfigContext.from_dict(
-            {
-                "stores": {"default": {"backend": backend, **settings}},
-                "persistence": {"cursors": {"signing": "unsigned"}},
-            }
-        )
-        report = run_deploy_checks(ctx)
-        assert any(result.id == CURSOR_SIGNING_CHECK for result in report.errors) is expected

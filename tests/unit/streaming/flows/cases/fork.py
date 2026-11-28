@@ -9,7 +9,7 @@ from omegaconf import DictConfig
 
 from loom.streaming import (
     CollectBatch,
-    ContextFactory,
+    ContextSupplier,
     Drain,
     Fork,
     ForkRoute,
@@ -152,7 +152,7 @@ def _fork_with_process(events: ResourceEvents) -> Process[Any, Any]:
                                 PriceOrder(),
                                 IntoTopic(_ORDERS_FORK_VIP_TOPIC, payload=PricedOrder),
                             ),
-                            client=ContextFactory(events.create_pricing_client),
+                            client=ContextSupplier(events.create_pricing_client),
                             scope=ResourceScope.BATCH,
                         ),
                     ),

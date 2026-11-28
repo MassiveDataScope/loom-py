@@ -1,0 +1,785 @@
+"""Router runtime — binds CompiledRoute records to a FastAPI application.
+
+Builds one handler at startup per
+:class:`~loom.rest.compiler.CompiledRoute`.  Each handler:
+
+1. Extracts path parameters from ``request.path_params`` (populated by
+   Starlette's routing layer from the URL).
+2. Decodes the query string: a ``Query()`` parameter accepts exactly its
+   declared names (``400 unsupported_query`` for an unknown or repeated one,
+   ``400 query_validation`` for a bad value), then ``profile`` and a
+   ``QuerySpec``.
+3. Reads the raw request body and decodes it with ``msgspec.json.decode``,
+   answering ``400`` when it is empty, not well-formed JSON or nested too
+   deeply to decode, and ``422`` when it is not a JSON object.
+4. Builds the :class:`~loom.core.use_case.use_case.UseCase` instance via the
+   :class:`~loom.core.use_case.factory.UseCaseFactory`, only once the request
+   parameters are valid.
+5. Drives execution through :class:`~loom.core.engine.executor.UseCaseExecutor`.
+6. Returns a :class:`~loom.rest.fastapi.response.MsgspecJSONResponse`: a
+   :class:`~loom.core.use_case.Created` result answers ``201`` with its
+   ``value``, any other result the route's ``status_code``.
+
+Each handler's ``__signature__`` exposes the route's path parameters, so
+FastAPI validates and documents them in OpenAPI. Path params, status codes and
+tags come from the ``CompiledRoute`` produced at startup.
+"""
+
+from __future__ import annotations
+
+import inspect
+import logging
+import re
+import types
+import typing
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass
+from http import HTTPStatus
+from typing import Any, Protocol, runtime_checkable
+
+import msgspec
+from fastapi import FastAPI, HTTPException
+from starlette.datastructures import QueryParams
+from starlette.requests import Request
+from starlette.responses import Response
+
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.errors import BODY_FIELD, BoundaryValidationError, CodedError, Forbidden
+from loom.core.errors.codes import ErrorCode
+from loom.core.identity import Identity, current_identity
+from loom.core.log_names import LogField
+from loom.core.logger.subject import SubjectHasher
+from loom.core.model import LoomType, loom_type, msgspec_type
+from loom.core.observability.event import Scope
+from loom.core.observability.observability import Observability
+from loom.core.stores.repository.query import (
+    FilterGroup,
+    FilterOp,
+    FilterSpec,
+    PaginationMode,
+    QuerySpec,
+    SortSpec,
+)
+from loom.core.tracing import get_trace_id
+from loom.core.use_case.factory import UseCaseFactory
+from loom.core.use_case.outcome import Created
+from loom.rest._body import MALFORMED_BODY_ERRORS, BodyTooLarge
+from loom.rest.compiler import CompiledRoute, names_query_spec
+from loom.rest.constants import LIMIT_DEFAULT, QueryParam
+from loom.rest.errors import HttpErrorMapper
+from loom.rest.event import RestEvent
+from loom.rest.fastapi._errors import internal_error_response, malformed_body_error
+from loom.rest.fastapi.openapi import (
+    QUERY_SPEC_PARAMETER_NAMES,
+    build_query_parameters_schema,
+    build_request_body_schema,
+    build_success_responses,
+    has_profile_parameter,
+)
+from loom.rest.fastapi.response import MsgspecJSONResponse, created_response
+
+_logger = logging.getLogger(__name__)
+_error_mapper = HttpErrorMapper()
+
+_DEFAULT_PAGE = 1
+_MAX_OFFSET = 2**63 - 1
+_PAGE_TOO_FAR_MESSAGE = "Page is beyond the largest offset a query can skip."
+_NOT_AUTHORIZED_MESSAGE = "You are not authorized to access this route."
+_UNSUPPORTED_QUERY_MESSAGE = (
+    "The request has a query parameter this route does not accept, or one given twice."
+)
+_INVALID_PROFILE_MESSAGE = "Not a profile this route allows."
+_NOT_AN_OBJECT_MESSAGE = "Request body must be a JSON object"
+
+
+@runtime_checkable
+class _CallerRefusal(Protocol):
+    """A failure outside :class:`CodedError` that may stand for a denial of its caller.
+
+    :class:`~loom.ai.errors.AgentRunError` is one, matched by shape so a
+    route never imports the AI pillar.
+    """
+
+    def refusal_for(self, caller: Identity) -> CodedError | None:
+        """Return the core denial this failure stands for, or ``None``."""
+        ...
+
+
+def _authorize_route(identity: Identity, required_roles: tuple[str, ...], route: str) -> None:
+    """Refuse callers holding none of the roles the route declares.
+
+    Holding **any** declared role grants access.  The refusal is a ``403`` for
+    an anonymous caller too: whether authenticating would have helped is part
+    of the route's policy, and the response must not become an oracle for it.
+    The message stays generic; the audit trail is server-side.
+
+    Args:
+        identity: Verified caller of the request.
+        required_roles: Roles resolved for the route at compile time.
+        route: Full path, recorded in the audit log.
+
+    Raises:
+        Forbidden: When the caller holds none of *required_roles*.
+    """
+    if not required_roles or any(identity.has_role(role) for role in required_roles):
+        return
+    _logger.warning(
+        RestEvent.AUTHORIZATION_DENIED,
+        extra={LogField.HTTP_ROUTE: route, **SubjectHasher.installed().fields(identity.subject)},
+    )
+    raise Forbidden(_NOT_AUTHORIZED_MESSAGE)
+
+
+def _extract_path_params(path: str) -> list[str]:
+    """Return ordered path-parameter names from a FastAPI path template.
+
+    Args:
+        path: Path string, e.g. ``"/{user_id}/orders/{order_id}"``.
+
+    Returns:
+        List of parameter names in declaration order, e.g.
+        ``["user_id", "order_id"]``.
+    """
+    return re.findall(r"\{(\w+)\}", path)
+
+
+def _normalize_path_param_annotation(annotation: Any) -> Any:
+    if annotation is inspect._empty or annotation is Any:
+        return str
+
+    origin = typing.get_origin(annotation)
+    if origin is typing.Annotated:
+        args = typing.get_args(annotation)
+        if not args:
+            return str
+        return _normalize_path_param_annotation(args[0])
+
+    if origin in {typing.Union, types.UnionType}:
+        args = tuple(arg for arg in typing.get_args(annotation) if arg is not type(None))
+        if len(args) != 1:
+            return str
+        return _normalize_path_param_annotation(args[0])
+
+    if isinstance(annotation, type):
+        return annotation
+    return str
+
+
+def path_param_annotation(name: str, execute_param_types: Mapping[str, Any]) -> Any:
+    """Return the type path parameter *name* validates as: its ``execute`` annotation, or ``str``.
+
+    Args:
+        name: Path parameter name.
+        execute_param_types: ``(name, annotation)`` of the use case's
+            ``execute`` parameters.
+    """
+    return _normalize_path_param_annotation(execute_param_types.get(name, str))
+
+
+_RESERVED_QUERY_KEYS = frozenset((*QUERY_SPEC_PARAMETER_NAMES, QueryParam.PROFILE))
+_FILTER_OP_VALUES = frozenset(item.value for item in FilterOp)
+
+
+def _camel_to_snake(value: str) -> str:
+    s = re.sub(r"([a-z\d])([A-Z])", r"\1_\2", value)
+    s = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", "_", s)
+    return s.lower()
+
+
+def _normalize_field_name(value: str) -> str:
+    if any(char.isupper() for char in value):
+        return _camel_to_snake(value)
+    return value
+
+
+def _query_validation(exc: BoundaryValidationError) -> BoundaryValidationError:
+    """Re-issue a query-string validation failure under ``query_validation`` (``400``)."""
+    return BoundaryValidationError(exc.message, exc.violations, code=ErrorCode.QUERY_VALIDATION)
+
+
+@dataclass(frozen=True, slots=True)
+class _FilterValues:
+    """Refuses filters the route does not allow and types the values of the others.
+
+    ``decoder`` is a struct with one field per column the route declares
+    filterable; ``text_columns`` are those of them annotated ``str``.
+    """
+
+    decoder: LoomType
+    columns: frozenset[str]
+    text_columns: frozenset[str]
+
+    def convert(self, field: str, op: FilterOp, raw: str) -> Any:
+        """Return the filter value of *op* on *field*, typed by the field.
+
+        Raises:
+            CodedError: ``unsupported_query`` when the route does not declare
+                *field* filterable, for ``exists`` and ``not_exists``, and for
+                ``like`` or ``ilike`` on a column that is not text.
+            BoundaryValidationError: ``query_validation`` when a value does
+                not satisfy the field's type.
+        """
+        if field not in self.columns:
+            raise _unsupported_query(f"Filtering on field {field!r} is not allowed by this route.")
+        if op in _RELATION_OPS:
+            raise _unsupported_query(f"Operator {op.value!r} is not supported by this route.")
+        if op in _PATTERN_OPS and field not in self.text_columns:
+            raise _unsupported_query(f"Operator {op.value!r} applies to text fields only.")
+        if op not in _TYPED_OPS:
+            return raw
+        if op is FilterOp.IN:
+            return [self._typed(field, item) for item in raw.split(",") if item != ""]
+        return self._typed(field, raw)
+
+    def _typed(self, field: str, text: str) -> Any:
+        try:
+            return getattr(self.decoder.from_query({field: text}), field)
+        except BoundaryValidationError as exc:
+            raise _query_validation(exc) from exc
+
+
+_RELATION_OPS = frozenset((FilterOp.EXISTS, FilterOp.NOT_EXISTS))
+_PATTERN_OPS = frozenset((FilterOp.LIKE, FilterOp.ILIKE))
+_TYPED_OPS = frozenset(
+    (FilterOp.EQ, FilterOp.NE, FilterOp.GT, FilterOp.GTE, FilterOp.LT, FilterOp.LTE, FilterOp.IN)
+)
+
+
+def _unsupported_query(message: str) -> CodedError:
+    return CodedError(message, code=ErrorCode.UNSUPPORTED_QUERY)
+
+
+def _is_text(annotation: Any) -> bool:
+    union = typing.get_origin(annotation) in (typing.Union, types.UnionType)
+    members = typing.get_args(annotation) if union else (annotation,)
+    absent = (type(None), msgspec.UnsetType)
+    return [member for member in members if member not in absent] == [str]
+
+
+def _filter_values(fields: Sequence[tuple[str, Any]]) -> _FilterValues:
+    """Compile the filter value decoder of a route from its declared ``(column, annotation)``."""
+    struct = msgspec.defstruct(
+        "FilterValues", [(column, annotation, None) for column, annotation in fields]
+    )
+    return _FilterValues(
+        decoder=msgspec_type(struct),
+        columns=frozenset(column for column, _ in fields),
+        text_columns=frozenset(column for column, annotation in fields if _is_text(annotation)),
+    )
+
+
+def _parse_pagination_mode(
+    raw: str | None,
+    cursor: str | None,
+    *,
+    default_mode: PaginationMode,
+    allow_override: bool,
+) -> PaginationMode:
+    if not allow_override:
+        if raw is not None and raw.lower() != default_mode.value:
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST,
+                detail=(
+                    "Query parameter 'pagination' cannot override this route's "
+                    f"default mode ({default_mode.value!r})."
+                ),
+            )
+        if cursor is not None and default_mode is PaginationMode.OFFSET:
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST,
+                detail=(
+                    "Cursor parameters are not allowed when pagination mode is fixed to 'offset'."
+                ),
+            )
+        return default_mode
+
+    if raw is None:
+        if cursor is not None:
+            return PaginationMode.CURSOR
+        return default_mode
+    try:
+        return PaginationMode(raw.lower())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=f"Invalid pagination mode: {raw!r}.",
+        ) from exc
+
+
+def _parse_sort(
+    sort_field: str | None, direction_raw: str, sortable: Collection[str]
+) -> SortSpec | None:
+    """Read ``sort`` and ``direction``, refusing a column the route does not let clients sort by.
+
+    The refusal is the same whether or not the column exists, so it does not
+    reveal the model's columns.
+    """
+    direction = direction_raw.upper()
+    if direction not in {"ASC", "DESC"}:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST, detail="direction must be 'ASC' or 'DESC'."
+        )
+    if not sort_field:
+        return None
+    field = _normalize_field_name(sort_field)
+    if field not in sortable:
+        raise _unsupported_query(f"Sorting on field {sort_field!r} is not allowed by this route.")
+    return SortSpec(field=field, direction=typing.cast(Any, direction))
+
+
+def _parse_filter_specs(
+    query_params: QueryParams, filter_values: _FilterValues
+) -> list[FilterSpec]:
+    filters: list[FilterSpec] = []
+    for key, raw_value in query_params.items():
+        if key in _RESERVED_QUERY_KEYS:
+            continue
+
+        parts = [part for part in key.split("__") if part]
+        if not parts:
+            continue
+
+        maybe_op = parts[-1].lower()
+        if maybe_op in _FILTER_OP_VALUES:
+            op = FilterOp(maybe_op)
+            field_parts = parts[:-1]
+        else:
+            op = FilterOp.EQ
+            field_parts = parts
+
+        if not field_parts:
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST, detail=f"Invalid filter field: {key!r}."
+            )
+        field = ".".join(_normalize_field_name(part) for part in field_parts)
+
+        value = filter_values.convert(field, op, raw_value)
+        filters.append(FilterSpec(field=field, op=op, value=value))
+    return filters
+
+
+def _positive_int(query_params: QueryParams, name: str, default: int) -> int:
+    """Read a positive integer query parameter, refusing anything else.
+
+    A non-numeric value is a client error.
+    """
+    raw = query_params.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=f"Query parameter {name!r} must be an integer, got {raw!r}.",
+        ) from exc
+    if value < 1:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail=f"Query parameter {name!r} must be greater than or equal to 1.",
+        )
+    return value
+
+
+def _resolve_query_param_name(uc_type: type[Any]) -> str | None:
+    execute_sig = inspect.signature(uc_type.execute)
+    hints = typing.get_type_hints(uc_type.execute)
+    for name, param in execute_sig.parameters.items():
+        if name == "self":
+            continue
+        if names_query_spec(hints.get(name, param.annotation)):
+            return name
+    return None
+
+
+def _route_docs(compiled_route: CompiledRoute) -> tuple[str | None, str | None]:
+    """Resolve OpenAPI summary/description from route metadata or UseCase docs."""
+    summary = compiled_route.route.summary.strip()
+    description = compiled_route.route.description.strip()
+    if summary or description:
+        return summary or None, description or None
+
+    uc_doc = inspect.getdoc(compiled_route.route.use_case) or ""
+    cleaned_lines = tuple(line.strip() for line in uc_doc.splitlines() if line.strip())
+    if not cleaned_lines:
+        return None, None
+
+    auto_summary, *rest = cleaned_lines
+    auto_description = "\n".join(rest) if rest else None
+    return auto_summary, auto_description
+
+
+@dataclass(frozen=True, slots=True)
+class _DeclaredQuery:
+    param_name: str
+    accepted: frozenset[str]
+    profiles: frozenset[str]
+    decoder: LoomType
+
+    def decode(self, query_params: QueryParams) -> Any:
+        """Build the typed query, refusing a key the route does not accept or repeats.
+
+        ``profile`` is accepted only under the condition OpenAPI publishes it:
+        the route exposes it and ``execute`` declares an annotated ``profile``
+        parameter, and only with one of the route's allowed profiles;
+        :meth:`_ResolvedRoute._profile` then selects it.
+
+        Raises:
+            CodedError: ``unsupported_query`` for an unknown or repeated key.
+            BoundaryValidationError: ``query_validation`` when a value does
+                not satisfy its field.
+        """
+        keys = [key for key, _ in query_params.multi_items()]
+        if len(set(keys)) != len(keys) or not self.accepted.issuperset(keys):
+            raise _unsupported_query(_UNSUPPORTED_QUERY_MESSAGE)
+        profile = query_params.get(QueryParam.PROFILE)
+        if profile is not None and profile not in self.profiles:
+            raise BoundaryValidationError(
+                _INVALID_PROFILE_MESSAGE,
+                ((QueryParam.PROFILE, _INVALID_PROFILE_MESSAGE),),
+                code=ErrorCode.QUERY_VALIDATION,
+            )
+        try:
+            return self.decoder.from_query(
+                {key: value for key, value in query_params.items() if key != QueryParam.PROFILE}
+            )
+        except BoundaryValidationError as exc:
+            raise _query_validation(exc) from exc
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedRoute:
+    """Per-route facts resolved once at startup and read on every request."""
+
+    compiled_route: CompiledRoute
+    use_case_type: type[Any]
+    path_params: tuple[str, ...]
+    accepts_profile_param: bool
+    query_param_name: str | None
+    has_input_binding: bool
+    declared_query: _DeclaredQuery | None
+    filter_values: _FilterValues
+
+    @classmethod
+    def from_compiled_route(cls, compiled_route: CompiledRoute) -> _ResolvedRoute:
+        """Resolve the request-time facts of one compiled route."""
+        uc_type = compiled_route.route.use_case
+        plan = getattr(uc_type, "__execution_plan__", None)
+        query_binding = plan.query_binding if plan is not None else None
+        execute_parameters = inspect.signature(uc_type.execute).parameters
+        declared_query = None
+        if query_binding is not None:
+            accepted = {field.name for field in compiled_route.query_fields}
+            if compiled_route.effective_expose_profile and has_profile_parameter(
+                typing.get_type_hints(uc_type.execute)
+            ):
+                accepted.add(QueryParam.PROFILE)
+            declared_query = _DeclaredQuery(
+                param_name=query_binding.name,
+                accepted=frozenset(accepted),
+                profiles=frozenset(compiled_route.effective_allowed_profiles),
+                decoder=loom_type(query_binding.query_type),
+            )
+        return cls(
+            compiled_route=compiled_route,
+            use_case_type=uc_type,
+            path_params=tuple(_extract_path_params(compiled_route.route.path)),
+            accepts_profile_param=QueryParam.PROFILE in execute_parameters,
+            query_param_name=_resolve_query_param_name(uc_type),
+            has_input_binding=plan is not None and plan.input_binding is not None,
+            declared_query=declared_query,
+            filter_values=_filter_values(compiled_route.filter_fields),
+        )
+
+    def signature(self) -> inspect.Signature:
+        """Expose ``request`` plus every path parameter so FastAPI validates them."""
+        execute_param_types = dict(self.compiled_route.execute_param_types)
+        sig_params = [
+            inspect.Parameter(
+                "request", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=Request
+            )
+        ]
+        sig_params.extend(
+            inspect.Parameter(
+                name,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=path_param_annotation(name, execute_param_types),
+            )
+            for name in self.path_params
+        )
+        return inspect.Signature(sig_params, return_annotation=Response)
+
+    def params(self, request: Request, path_kwargs: Mapping[str, Any]) -> dict[str, Any]:
+        """Return the ``execute`` parameters the request binds."""
+        params: dict[str, Any] = {name: path_kwargs[name] for name in self.path_params}
+        if self.declared_query is not None:
+            params[self.declared_query.param_name] = self.declared_query.decode(
+                request.query_params
+            )
+        selected_profile = self._profile(request)
+        if self.accepts_profile_param:
+            params["profile"] = selected_profile
+        if self.query_param_name is not None:
+            params[self.query_param_name] = self._query_spec(request.query_params)
+        return params
+
+    async def payload(self, request: Request) -> dict[str, Any] | None:
+        """Return the decoded JSON object, or ``None`` when the route takes no input.
+
+        The 400 and 422 messages are fixed, so the offending input is never echoed.
+
+        Raises:
+            HTTPException: ``400`` when the body is empty, not well-formed UTF-8
+                JSON, or nested too deeply to decode.
+            BoundaryValidationError: When the body is well-formed JSON but not an
+                object.
+        """
+        if not self.has_input_binding:
+            return None
+        body = await request.body()
+        try:
+            payload = msgspec.json.decode(body)
+        except MALFORMED_BODY_ERRORS as exc:
+            raise malformed_body_error() from exc
+        if not isinstance(payload, dict):
+            raise BoundaryValidationError(
+                _NOT_AN_OBJECT_MESSAGE, ((BODY_FIELD, _NOT_AN_OBJECT_MESSAGE),)
+            )
+        return payload
+
+    def _profile(self, request: Request) -> str:
+        """Return the profile the request runs under, refusing values the route bans."""
+        compiled_route = self.compiled_route
+        requested = request.query_params.get(QueryParam.PROFILE)
+        if requested is None:
+            return compiled_route.effective_profile_default
+
+        if not compiled_route.effective_expose_profile:
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST,
+                detail="Query parameter 'profile' is not allowed for this route.",
+            )
+
+        allowed = compiled_route.effective_allowed_profiles
+        if allowed and requested not in allowed:
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST,
+                detail=(f"Invalid profile {requested!r}. Allowed: {', '.join(allowed)}"),
+            )
+        return requested
+
+    def _query_spec(self, query_params: QueryParams) -> QuerySpec:
+        compiled_route = self.compiled_route
+        page = _positive_int(query_params, QueryParam.PAGE, _DEFAULT_PAGE)
+        limit = min(
+            _positive_int(query_params, QueryParam.LIMIT, LIMIT_DEFAULT),
+            compiled_route.effective_max_limit,
+        )
+        if (page - 1) * limit > _MAX_OFFSET:
+            raise BoundaryValidationError(
+                _PAGE_TOO_FAR_MESSAGE,
+                ((QueryParam.PAGE, _PAGE_TOO_FAR_MESSAGE),),
+                code=ErrorCode.QUERY_VALIDATION,
+            )
+        after = query_params.get(QueryParam.AFTER)
+        cursor = after if after is not None else query_params.get(QueryParam.CURSOR)
+        pagination = _parse_pagination_mode(
+            query_params.get(QueryParam.PAGINATION),
+            cursor,
+            default_mode=compiled_route.effective_pagination_mode,
+            allow_override=compiled_route.effective_allow_pagination_override,
+        )
+        sort = _parse_sort(
+            query_params.get(QueryParam.SORT),
+            query_params.get(QueryParam.DIRECTION, "ASC"),
+            compiled_route.sort_fields,
+        )
+        filters = _parse_filter_specs(query_params, self.filter_values)
+        return QuerySpec(
+            filters=FilterGroup(filters=tuple(filters)) if filters else None,
+            sort=() if sort is None else (sort,),
+            pagination=pagination,
+            limit=limit,
+            page=page,
+            cursor=cursor,
+        )
+
+
+class _RouteHandler:
+    """FastAPI endpoint of one compiled route.
+
+    Authorizes the caller, binds the request, runs the use case and answers;
+    a failure becomes the response the caller sees.
+
+    Args:
+        runtime: Request-time facts of the route.
+        factory: Factory used to construct the use-case instance per request.
+        executor: Executor that drives the use-case pipeline.
+        observability: Runtime that opens one span per request.
+    """
+
+    def __init__(
+        self,
+        runtime: _ResolvedRoute,
+        factory: UseCaseFactory,
+        executor: UseCaseExecutor,
+        observability: Observability,
+    ) -> None:
+        self._runtime = runtime
+        self._factory = factory
+        self._executor = executor
+        self._observability = observability
+
+    def endpoint(self) -> Callable[..., Awaitable[Response]]:
+        """Coroutine function serving this route, named and typed for FastAPI.
+
+        Returns:
+            An ``async def`` with the route's signature and a
+            ``handle_<UseCase>`` name.
+        """
+
+        async def endpoint(request: Request, **path_kwargs: Any) -> Response:
+            return await self(request, **path_kwargs)
+
+        endpoint.__signature__ = self._runtime.signature()  # type: ignore[attr-defined]
+        endpoint.__name__ = f"handle_{self._runtime.use_case_type.__name__}"
+        return endpoint
+
+    async def __call__(self, request: Request, **path_kwargs: Any) -> Response:
+        """Serve one request.
+
+        Raises:
+            HTTPException: For refusals, mapped loom errors and caller
+                denials of an agent run included.
+            BodyTooLarge: When the body exceeds the configured limit.
+        """
+        try:
+            return await self._execute(request, path_kwargs)
+        except HTTPException:
+            raise
+        except BodyTooLarge:
+            raise
+        except CodedError as exc:
+            raise _error_mapper.to_http(exc) from exc
+        except Exception as exc:
+            refusal = (
+                exc.refusal_for(current_identity()) if isinstance(exc, _CallerRefusal) else None
+            )
+            if refusal is not None:
+                raise _error_mapper.to_http(refusal) from exc
+            _logger.exception(
+                RestEvent.REQUEST_UNHANDLED,
+                extra={
+                    LogField.USE_CASE: self._runtime.use_case_type.__name__,
+                    LogField.HTTP_ROUTE: self._runtime.compiled_route.full_path,
+                },
+            )
+            return internal_error_response()
+
+    async def _execute(self, request: Request, path_kwargs: Mapping[str, Any]) -> Response:
+        runtime = self._runtime
+        compiled_route = runtime.compiled_route
+        status_code = compiled_route.route.status_code
+        identity = current_identity()
+        with self._observability.span(
+            Scope.USE_CASE,
+            runtime.use_case_type.__name__,
+            trace_id=get_trace_id(),
+            route=compiled_route.full_path,
+            method=compiled_route.route.method.upper(),
+            status_code=status_code,
+            read_only=compiled_route.read_only,
+        ):
+            _authorize_route(
+                identity, compiled_route.effective_requires_roles, compiled_route.full_path
+            )
+            params = runtime.params(request, path_kwargs)
+            payload = await runtime.payload(request)
+            result = await self._executor.run(
+                runtime.use_case_type,
+                factory=self._factory,
+                params=params,
+                payload=payload,
+                read_only=compiled_route.read_only,
+                identity=identity,
+            )
+        if isinstance(result, Created):
+            return created_response(result)
+        return MsgspecJSONResponse(content=result, status_code=status_code)
+
+
+def mount_interfaces(
+    app: FastAPI,
+    compiled_routes: Sequence[CompiledRoute],
+    factory: UseCaseFactory,
+    executor: UseCaseExecutor,
+    observability: Observability,
+) -> dict[str, Any]:
+    """Register compiled routes on a FastAPI application.
+
+    For each :class:`~loom.rest.compiler.CompiledRoute`, creates a dynamic
+    async handler and registers it via ``app.add_api_route``.  Path parameters
+    are inferred from the route path template and exposed in the handler
+    signature so FastAPI validates and documents them correctly.
+
+    Nested JSON Schema ``$defs`` produced by msgspec/pydantic are collected
+    into a shared component registry and returned.  The caller is responsible
+    for injecting these into ``components.schemas`` of the OpenAPI document.
+
+    Args:
+        app: FastAPI application instance to register routes on.
+        compiled_routes: Ordered list of fully resolved routes produced by
+            :class:`~loom.rest.compiler.RestInterfaceCompiler`.
+        factory: Use-case factory for constructing instances per request.
+        executor: Runtime executor that drives the use-case pipeline.
+        observability: Shared runtime used to emit request lifecycle
+            events around each handler execution.
+
+    Returns:
+        Mapping of schema name → JSON Schema fragment for all collected
+        ``$defs`` that should appear under ``components.schemas``.
+
+    Example::
+
+        compiler = RestInterfaceCompiler(use_case_compiler)
+        routes = compiler.compile(UserRestInterface)
+        component_schemas = mount_interfaces(
+            app,
+            routes,
+            factory,
+            executor,
+            observability=Observability.noop(),
+        )
+    """
+    component_registry: dict[str, Any] = {}
+
+    for cr in compiled_routes:
+        handler = _RouteHandler(
+            _ResolvedRoute.from_compiled_route(cr), factory, executor, observability
+        )
+        summary, description = _route_docs(cr)
+        request_body = build_request_body_schema(cr, component_registry)
+        responses = build_success_responses(cr, component_registry)
+
+        openapi_extra: dict[str, Any] | None = None
+        query_parameters = build_query_parameters_schema(cr, component_registry)
+        if request_body is not None or query_parameters:
+            openapi_extra = {}
+            if request_body is not None:
+                openapi_extra["requestBody"] = request_body
+            if query_parameters:
+                openapi_extra["parameters"] = query_parameters
+
+        app.add_api_route(
+            path=cr.full_path,
+            endpoint=handler.endpoint(),
+            methods=[cr.route.method.upper()],
+            summary=summary,
+            description=description,
+            status_code=cr.route.status_code,
+            tags=list(cr.interface_tags),
+            responses=responses,
+            openapi_extra=openapi_extra,
+        )
+
+    return component_registry

@@ -10,7 +10,7 @@ import msgspec
 from pydantic_ai import ToolReturn
 
 from loom.ai.compiler import CompiledSqlCapability
-from loom.core.sql.abc import SqlQueryResult
+from loom.core.stores.sql.abc import SqlQueryResult
 
 RESERVED_METADATA_KEY: Final[str] = "loom"
 """Reserved metadata key under which a loom toolset publishes the facts of a return."""

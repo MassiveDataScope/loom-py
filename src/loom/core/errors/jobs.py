@@ -7,20 +7,16 @@ from loom.core.errors.codes import ErrorCode
 
 
 class MalformedJobMessage(SystemError):
-    """A job message violates the envelope contract.
+    """A job message violates the envelope contract: it is abandoned, never retried."""
 
-    Retryable on purpose: the queue's DLQ keeps the message as evidence; configure a DLQ.
-    """
+    is_retryable = False
 
     def __init__(self, message: str) -> None:
         super().__init__(message, code=ErrorCode.MALFORMED_JOB_MESSAGE)
 
 
 class UnknownJob(SystemError):
-    """A message names a job absent from this application's registry.
-
-    Retryable on purpose: the queue's DLQ keeps the message as evidence; configure a DLQ.
-    """
+    """A message names a job absent from this application's registry; it is retryable."""
 
     def __init__(self, name: str) -> None:
         self.name = name
@@ -65,23 +61,7 @@ class JobFailedError(SystemError):
     """
 
     def __init__(self, job_id: str, cause: BaseException | None = None) -> None:
-        msg = f"Job {job_id!r} failed"
-        if cause is not None:
-            msg += f": {cause}"
-        super().__init__(msg, code=ErrorCode.JOB_FAILED)
+        super().__init__(f"Job {job_id!r} failed", code=ErrorCode.JOB_FAILED)
         self.job_id = job_id
         self.cause = cause
         self.__cause__ = cause
-
-
-class MixedJobBackendsError(SystemError):
-    """``dispatch_parallel`` with callbacks spans jobs of more than one backend."""
-
-    retryable = False
-
-    def __init__(self) -> None:
-        super().__init__(
-            "dispatch_parallel callbacks need every job on one job backend; "
-            "these jobs route to several",
-            code=ErrorCode.JOB_BACKENDS_MIXED,
-        )

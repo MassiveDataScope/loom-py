@@ -68,12 +68,23 @@ runner.run(DailyPipeline, DailyParams(run_date=date(2026, 3, 30)))
 
 ```python
 import polars as pl
-from loom.etl import ETLStep, ETLProcess, ETLPipeline, FromFile, FromTable, IntoFile, IntoTable, Format
+from loom.etl import (
+    ETLStep,
+    ETLProcess,
+    ETLPipeline,
+    FromFile,
+    FromTable,
+    IntoFile,
+    IntoTable,
+    Format,
+)
+
 
 class Payload:
     store: str
     amount: float
     items: int
+
 
 class LoadEvents(ETLStep[DailyParams]):
     events = FromFile("/data/raw/events.csv", format=Format.CSV).parse_json("payload", Payload)
@@ -86,6 +97,7 @@ class LoadEvents(ETLStep[DailyParams]):
             pl.col("payload").struct.field("items").alias("items"),
         )
 
+
 class BuildReport(ETLStep[DailyParams]):
     events = FromTable("staging.events")
     target = IntoFile("/data/exports/daily_report.csv", format=Format.CSV)
@@ -96,8 +108,10 @@ class BuildReport(ETLStep[DailyParams]):
             pl.col("items").sum().alias("item_count"),
         )
 
+
 class ReportProcess(ETLProcess[DailyParams]):
     steps = [LoadEvents, BuildReport]
+
 
 class ReportPipeline(ETLPipeline[DailyParams]):
     processes = [ReportProcess]
@@ -130,6 +144,7 @@ Reference them in pipelines using the alias API:
 ```python
 from loom.etl import ETLStep, FromFile, IntoFile, Format
 
+
 class LoadEvents(ETLStep[DailyParams]):
     events = FromFile.alias("events_raw", format=Format.CSV)
     target = IntoFile.alias("exports_daily", format=Format.PARQUET)
@@ -145,6 +160,7 @@ You can also implement `FileLocator` directly for custom routing strategies:
 
 ```python
 from loom.etl.storage import FileLocator, FileLocation
+
 
 class MyFileLocator:
     def locate(self, name: str) -> FileLocation:
@@ -261,7 +277,7 @@ class RespondioSettings(msgspec.Struct, kw_only=True):
 
 
 class FetchMessages(ETLStep[DailyParams]):
-    api_token = FromConfig("respondio.api_token")          # str by default
+    api_token = FromConfig("respondio.api_token")  # str by default
     respondio = FromConfig("respondio", RespondioSettings)  # a typed section
     target = IntoTemp("messages")
 
@@ -442,8 +458,8 @@ MERGE on key columns. Inserts new rows and updates existing ones.
 target = IntoTable("events.orders").upsert(
     keys=("order_id",),
     partition_cols=("year", "month"),  # strongly recommended for large tables
-    exclude=("created_at",),           # columns excluded from UPDATE SET
-    delete_flag="_deleted",            # optional boolean column; omit to keep update+insert
+    exclude=("created_at",),  # columns excluded from UPDATE SET
+    delete_flag="_deleted",  # optional boolean column; omit to keep update+insert
 )
 ```
 
@@ -489,7 +505,7 @@ already exist: a missing table is a write error, not a create.
 target = IntoTable("events.orders").update(
     keys=("order_id",),
     partition_cols=("year", "month"),  # strongly recommended for large tables
-    include=("status",),               # only these columns are updated
+    include=("status",),  # only these columns are updated
 )
 ```
 
@@ -585,6 +601,7 @@ Reference them in pipelines:
 ```python
 from loom.etl import ETLStep, FromFile, IntoFile, Format
 
+
 class LoadEvents(ETLStep[DailyParams]):
     events = FromFile.alias("events_raw", format=Format.CSV)
     target = IntoFile.alias("exports_daily", format=Format.PARQUET)
@@ -600,6 +617,7 @@ You can also implement the `FileLocator` protocol directly for custom routing:
 
 ```python
 from loom.etl.storage import FileLocator, FileLocation
+
 
 class MyFileLocator:
     def locate(self, name: str) -> FileLocation:
@@ -711,6 +729,7 @@ from external stores (AWS SSM, Azure Key Vault, …) at parse time:
 ```python
 from loom.core.config import load_config
 
+
 class SsmResolver:
     name = "ssm"
 
@@ -719,8 +738,10 @@ class SsmResolver:
 
     def resolve(self, key: str) -> str:
         import boto3
+
         client = boto3.client("ssm", region_name=self._region)
         return client.get_parameter(Name=key, WithDecryption=True)["Parameter"]["Value"]
+
 
 cfg = load_config("config/etl.yaml", resolvers=[SsmResolver("eu-west-1")])
 ```

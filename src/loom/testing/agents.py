@@ -29,6 +29,7 @@ from loom.ai.abc import (
     TextDeltaEvent,
 )
 from loom.ai.errors import AgentRunErrorClass, AgentRunErrorCode, is_retriable, run_error_class
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.identity import Identity
 from loom.core.model import LoomFrozenStruct
 
@@ -68,16 +69,16 @@ def _default_script(output: object | None) -> tuple[AgentEvent, ...]:
 def _validated_terminal(events: tuple[AgentEvent, ...]) -> FinalEvent | ErrorEvent:
     """Return the script's terminal event, rejecting malformed scripts."""
     if not events:
-        raise ValueError("script must contain at least one event")
+        raise InvalidValue("script must contain at least one event")
     terminal = events[-1]
     if not isinstance(terminal, FinalEvent | ErrorEvent):
-        raise ValueError(
+        raise InvalidType(
             "script must end in a terminal event (FinalEvent or ErrorEvent); "
             f"last event is {type(terminal).__name__}"
         )
     for position, event in enumerate(events[:-1]):
         if isinstance(event, FinalEvent | ErrorEvent):
-            raise ValueError(
+            raise InvalidValue(
                 f"script has a terminal {type(event).__name__} at position {position}; "
                 "only the last event may be terminal"
             )
@@ -100,8 +101,9 @@ class FakeAgentEngine:
             ``script`` is provided.
 
     Raises:
-        ValueError: If ``script`` is empty, does not end in a terminal
-            event, or contains a terminal event before the last position.
+        ValueError: If ``script`` is empty or contains a terminal event before
+            the last position.
+        TypeError: If ``script`` does not end in a terminal event.
 
     Example::
 

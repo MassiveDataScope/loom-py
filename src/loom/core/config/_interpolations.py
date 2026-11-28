@@ -14,6 +14,7 @@ from collections.abc import Collection, Iterator
 from typing import Any
 
 from loom.core.config.errors import ConfigError
+from loom.core.config.keys import INTERPOLATION
 
 
 def referenced(text: str, names: Collection[str]) -> dict[str, list[str]]:
@@ -31,7 +32,7 @@ def referenced(text: str, names: Collection[str]) -> dict[str, list[str]]:
         ConfigError: When a selected resolver's arguments nest another
             interpolation, whose value the caller cannot know as written.
     """
-    if "${" not in text:
+    if INTERPOLATION not in text:
         return {}
     from omegaconf.grammar.gen.OmegaConfGrammarParser import OmegaConfGrammarParser as Grammar
     from omegaconf.grammar_parser import parse

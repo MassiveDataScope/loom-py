@@ -23,8 +23,8 @@ Public API
 - :class:`ManifestStore` / :class:`RunManifest` / :class:`StepEntry` —
   ephemeral retry manifest types.
 - :class:`S3JsonManifestStore` — S3-backed manifest implementation.
-- :class:`PrefectObserver` — ``LifecycleObserver`` bridging loom events
-  to the Prefect run logger.
+- :class:`PrefectObserver` — ``LifecycleObserver`` writing loom's lifecycle
+  records and the pipeline summary artifact.
 - :func:`resolve_placeholder` — date/datetime DSL used by parameter
   defaults (``${today}``, ``${now-1h}``, ...).
 - :class:`FlowTrigger` — the per-flow YAML ``trigger`` block: run after

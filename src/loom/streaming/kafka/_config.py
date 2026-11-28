@@ -9,6 +9,7 @@ import msgspec
 
 from loom.core.config import ConfigResolver
 from loom.core.config.overrides import load_application_config
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import RedactedMap, Secret, reveal_for_driver
 from loom.core.routing import DefaultingRouteResolver, LogicalRef, as_logical_ref
@@ -78,7 +79,7 @@ class ProducerSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkno
             String-keyed Confluent configuration mapping.
 
         Raises:
-            ValueError: If ``extra`` redefines a typed configuration key.
+            InvalidValue: If ``extra`` redefines a typed configuration key.
         """
 
         managed = {
@@ -128,15 +129,15 @@ class ConsumerSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkno
         """Validate batch consumption parameters.
 
         Raises:
-            ValueError: If ``batch_size`` or ``poll_backoff_ms`` is not
+            InvalidValue: If ``batch_size`` or ``poll_backoff_ms`` is not
                 greater than zero.
         """
         if self.batch_size < 1:
-            raise ValueError("ConsumerSettings.batch_size must be greater than zero.")
+            raise InvalidValue("ConsumerSettings.batch_size must be greater than zero.")
         if self.poll_backoff_ms < 1:
-            raise ValueError("ConsumerSettings.poll_backoff_ms must be greater than zero.")
+            raise InvalidValue("ConsumerSettings.poll_backoff_ms must be greater than zero.")
         if self.commit_keepalive_ms < 1:
-            raise ValueError("ConsumerSettings.commit_keepalive_ms must be greater than zero.")
+            raise InvalidValue("ConsumerSettings.commit_keepalive_ms must be greater than zero.")
 
     def to_confluent_config(self) -> dict[str, KafkaConfigValue]:
         """Compile settings to a Confluent-compatible config mapping.
@@ -149,7 +150,7 @@ class ConsumerSettings(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unkno
             String-keyed Confluent configuration mapping.
 
         Raises:
-            ValueError: If ``extra`` redefines a typed configuration key.
+            InvalidValue: If ``extra`` redefines a typed configuration key.
         """
 
         managed = {
@@ -309,13 +310,13 @@ def _merge_extra_config(
         extra: Extra user-provided configuration values.
 
     Raises:
-        ValueError: If ``extra`` redefines a typed configuration key.
+        InvalidValue: If ``extra`` redefines a typed configuration key.
     """
 
     duplicate_keys = set(config).intersection(extra)
     if duplicate_keys:
         ordered_keys = ", ".join(sorted(duplicate_keys))
-        raise ValueError(f"extra contains keys already managed by typed settings: {ordered_keys}")
+        raise InvalidValue(f"extra contains keys already managed by typed settings: {ordered_keys}")
     return {**config, **extra}
 
 

@@ -1,0 +1,9 @@
+{
+  "cause": {
+    "message": "task_default_queue is not declared in queues. Callbacks would be silently routed to an unconsumed queue. Add the queue name to the 'queues' list.",
+    "type": "loom.core.errors.base.InvalidValue"
+  },
+  "message": "the celery section is invalid: task_default_queue is not declared in queues. Callbacks would be silently routed to an unconsumed queue. Add the queue name to the 'queues' list.",
+  "type": "loom.composition.errors.JobTransportError",
+  "wrapped": false
+}

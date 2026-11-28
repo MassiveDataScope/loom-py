@@ -36,7 +36,24 @@ from typing import Any, TypeVar, cast
 import anyio
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 
+from loom.core.errors import InvalidUse
+from loom.core.log_names import LogEvent, LogKey, ValueKind
+
 logger = logging.getLogger(__name__)
+
+
+class BridgeEvent(LogEvent):
+    """What the async bridge logs."""
+
+    SHUTDOWN_TIMED_OUT = "loom.bridge.shutdown_timed_out"
+
+
+class BridgeKey(LogKey):
+    """The fields of an async bridge record."""
+
+    TIMEOUT_MS = "loom.bridge.timeout_ms", ValueKind.NUMBER
+
+
 T = TypeVar("T")
 
 
@@ -105,13 +122,13 @@ class AsyncBridge:
             The coroutine's return value.
 
         Raises:
-            RuntimeError: If the bridge has been shut down.
+            InvalidUse: If the bridge has been shut down.
             TimeoutError: If *timeout* elapses before completion.
             Exception: Any exception raised by *coro*.
         """
         if self._closed:
             coro.close()
-            raise RuntimeError("AsyncBridge has been shut down.")
+            raise InvalidUse("AsyncBridge has been shut down.")
 
         async def _await_coro_with_timeout() -> T:
             with anyio.fail_after(timeout):
@@ -155,7 +172,7 @@ def _exit_portal_with_timeout(portal_cm: Any, timeout_ms: int) -> None:
     thread = threading.Thread(target=_do_exit, daemon=True)
     thread.start()
     if not done.wait(timeout=timeout_ms / 1000):
-        logger.warning("async_bridge_shutdown_timeout", extra={"timeout_ms": timeout_ms})
+        logger.warning(BridgeEvent.SHUTDOWN_TIMED_OUT, extra={BridgeKey.TIMEOUT_MS: timeout_ms})
 
 
 async def _await_coro(coro: Coroutine[Any, Any, T]) -> T:

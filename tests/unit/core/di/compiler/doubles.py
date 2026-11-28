@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.repository.abc import RepoFor
+from loom.core.stores.repository import RepoFor
 from tests.unit.core.doubles import AcmeClock
 
 

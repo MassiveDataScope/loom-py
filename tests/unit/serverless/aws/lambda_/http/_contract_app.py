@@ -132,25 +132,6 @@ def _module_of(directory: Path) -> str:
     return f"loom_contract_app_{directory.name}"
 
 
-def _discovery(directory: Path, module: str, agents: tuple[str, ...]) -> dict[str, Any]:
-    """Discover *module*'s interfaces, or a manifest of them declaring *agents*."""
-    if not agents:
-        return {
-            "mode": "interfaces",
-            "interfaces": {"modules": [module], "warn_recommended": False},
-        }
-    manifest = f"{module}_manifest"
-    (directory / f"{manifest}.py").write_text(
-        f"from {module} import CreateItem, GetItem, Item, ItemInterface\n\n"
-        "MODELS = [Item]\n"
-        "USE_CASES = [GetItem, CreateItem]\n"
-        "INTERFACES = [ItemInterface]\n"
-        f"AGENTS = {list(agents)!r}\n",
-        encoding="utf-8",
-    )
-    return {"mode": "manifest", "manifest": {"module": manifest}}
-
-
 def write_contract_project(
     directory: Path,
     *,
@@ -166,13 +147,15 @@ def write_contract_project(
         exclude_paths: Paths served without a token; ``None`` leaves the
             default exclusions.
         health_route: Also serve a business route at the literal ``/health``.
-        agents: Agent artifacts a manifest declares; without them, the
-            interfaces are discovered from the module.
+        agents: The ``app.agents`` globs; without them, only the
+            package is scanned.
         **sections: Extra top-level configuration sections.
     """
     module = _module_of(directory)
     source = _APP_SOURCE + (_HEALTH_ROUTE_SOURCE if health_route else "")
-    (directory / f"{module}.py").write_text(source, encoding="utf-8")
+    package = directory / module
+    package.mkdir()
+    (package / "__init__.py").write_text(source, encoding="utf-8")
     secret_path = directory / "jwt.key"
     secret_path.write_text(SECRET, encoding="utf-8")
     exclusions = {} if exclude_paths is None else {"exclude_paths": list(exclude_paths)}
@@ -180,7 +163,8 @@ def write_contract_project(
         "app": {
             "name": "contract",
             "code_path": ".",
-            "discovery": _discovery(directory, module, agents),
+            "packages": [module],
+            "agents": list(agents),
             "rest": {
                 "docs_url": None,
                 "redoc_url": None,
@@ -205,8 +189,10 @@ def write_contract_project(
                 },
             },
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
         **sections,
     }
     config_path = directory / "app.yaml"

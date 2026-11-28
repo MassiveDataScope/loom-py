@@ -1,7 +1,7 @@
 """Conversation-loader use cases exercised by the conversation phase tests.
 
 ``LoadConversation`` is the satisfiable loader: its command asks only for
-``conversation_id`` and ``subject`` among the names the runtime offers, plus
+``conversation_id`` and ``subject`` among the names the host offers, plus
 an infrastructure-owned ``Internal`` field the proof never demands.  The
 other use cases each break exactly one rule of the compile-time proof.
 """

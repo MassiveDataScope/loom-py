@@ -12,22 +12,17 @@ from pathlib import Path
 
 import pytest
 
-from loom.composition import (
-    AppConfig,
-    Application,
-    CompositionSource,
-    Recipe,
-    compose_application,
-)
-from loom.composition.resources import ResourceKind
+from loom.composition import AppConfig, Application, Project, Recipe
 from loom.core.command import Command
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.repository.abc import PageParams
-from loom.core.repository.sqlalchemy.transactional import ForeignSessionError
-from tests.helpers.composition import composition_source, uow_factory
+from loom.core.resources import ResourceKind
+from loom.core.stores.profile import SERVER_PROFILE
+from loom.core.stores.repository import PageParams
+from loom.stores.sqlalchemy.transactional import ForeignSessionError
+from loom.testing import make
+from tests.helpers.composition import composition_project, uow_factory
 
 
 class AcmeIsolatedInvoice(BaseModel):
@@ -61,15 +56,15 @@ class _Models:
     def __init__(self, *models: type[BaseModel]) -> None:
         self.models = models
 
-    def recipe(self, source: CompositionSource) -> Recipe:
-        del source
+    def recipe(self, project: Project) -> Recipe:
+        del project
         return Recipe(
             profile=SERVER_PROFILE,
-            discovered=DiscoveryResult(models=self.models, use_cases=(), interfaces=()),
-            default_backend="sqlalchemy",
+            discovered=DiscoveryResult(models=self.models, use_cases=()),
+            default_store_plugin="sqlalchemy",
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
@@ -77,13 +72,13 @@ def _compose(database: Path, *models: type[BaseModel]) -> Application:
     ctx = ConfigContext.from_dict(
         {
             "stores": {
-                "default": {"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{database}"}
+                "default": {"backend": "sqlalchemy", "url": f"sqlite+aiosqlite:///{database}"},
+                "settings": {"cursors": {"signing": "ephemeral"}},
             },
-            "persistence": {"cursors": {"signing": "ephemeral"}},
         }
     )
-    source = composition_source(ctx, app=AppConfig(name=database.stem))
-    return compose_application(source, _Models(*models))
+    project = composition_project(ctx, app=AppConfig(name=database.stem))
+    return project.compose(_Models(*models))
 
 
 def _tables(database: Path) -> set[str]:
@@ -124,7 +119,7 @@ class TestStoreIsolation:
                 _NewInvoice(number="L-1")
             )
             page = await second.kernel.container.resolve_repo(AcmeIsolatedInvoice).list_paginated(
-                PageParams()
+                make(PageParams)
             )
 
         assert page.items == ()

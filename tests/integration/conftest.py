@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import CursorCodec
+from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from loom.testing import RepositoryIntegrationHarness, build_repository_harness
 from tests.integration.fake_repo.product.category.model import Category
 from tests.integration.fake_repo.product.model import Product
@@ -52,7 +52,7 @@ async def integration_context(tmp_path: Path) -> AsyncGenerator[RepositoryIntegr
     finally:
         async with manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().drop_all)
-        await manager.dispose()
+        await manager.close()
         reset_registry()
         if db_path.exists():
             db_path.unlink()

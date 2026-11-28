@@ -6,11 +6,12 @@ import pytest
 
 from loom.core.model import LoomFrozenStruct
 from loom.streaming import ErrorKind
+from loom.streaming.core import DispatchTable
 from loom.streaming.core._errors import ErrorEnvelope, ErrorMessage, ErrorMessageMeta
+from loom.streaming.event import StreamingEvent
 from loom.streaming.kafka import (
     DecodeError,
     DecodeOk,
-    DispatchTable,
     KafkaRecord,
     MessageDescriptor,
     MsgspecCodec,
@@ -150,7 +151,7 @@ class TestTryDecodeMultiRecord:
         result = try_decode_multi_record(_record(b"not-msgpack"), dispatch, codec)
 
         assert isinstance(result, DecodeError)
-        assert ("warning", "multi_source_wire_error") in logger.calls
+        assert ("warning", StreamingEvent.RECORD_UNDECODABLE) in logger.calls
 
     @pytest.mark.parametrize(
         ("payload", "inner_message_type"),

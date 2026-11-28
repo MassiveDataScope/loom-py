@@ -1,0 +1,825 @@
+"""Polars target writer implementing _WritePolicy hooks."""
+
+from __future__ import annotations
+
+import contextlib
+import logging
+from collections.abc import Sequence
+from typing import Any, Literal, cast
+
+import polars as pl
+from deltalake import CommitProperties, DeltaTable, WriterProperties, write_deltalake
+from deltalake.exceptions import TableNotFoundError
+from deltalake.table import TableMerger
+
+from loom.core.errors import InvalidType, InvalidValue
+from loom.etl.declarative.target import SchemaMode, UpsertDeleteFlagError
+from loom.etl.declarative.target._file import FileSpec
+from loom.etl.declarative.target._history import HistorifySpec
+from loom.etl.declarative.target._table import (
+    AppendSpec,
+    ReplacePartitionsSpec,
+    UpdateSpec,
+    UpsertSpec,
+)
+from loom.etl.engines._merge import (
+    SOURCE_ALIAS,
+    TARGET_ALIAS,
+    _build_merge_plan,
+    _build_partition_predicate,
+    _log_partition_combos,
+    _MergePlan,
+    _warn_no_partition_cols,
+)
+from loom.etl.engines._path_template import resolve_file_uri
+from loom.etl.engines._predicate import predicate_to_sql
+from loom.etl.engines._write_policy import _WritePolicy
+from loom.etl.engines.polars._historify import PolarsHistorifyOps
+from loom.etl.engines.polars._schema import (
+    PolarsPhysicalSchema,
+    read_delta_physical_schema,
+)
+from loom.etl.event import EtlEvent, EtlKey
+from loom.etl.lineage._records import LineageRecord, WriteContext, get_lineage_schema
+from loom.etl.schema._schema import ColumnSchema, SchemaError, StructType
+from loom.etl.storage import (
+    MissingTablePolicy,
+    PathRouteResolver,
+    PathTarget,
+    ResolvedTarget,
+    TableLocation,
+    TableRouteResolver,
+)
+from loom.etl.storage._config import AuditConfig
+from loom.etl.storage._file_locator import FileLocator
+from loom.etl.storage._locator import TableLocator, _as_locator
+
+from ._dtype import frame_type_to_polars
+from ._file_writer import PolarsFileWriter
+from ._streaming import partition_rows_from_spool, spool_lazy_to_arrow_reader
+
+_log = logging.getLogger(__name__)
+_DELTA_SCHEMA_MODES: dict[SchemaMode, Literal["merge", "overwrite"]] = {
+    SchemaMode.OVERWRITE: "overwrite",
+    SchemaMode.EVOLVE: "merge",
+}
+"""delta-rs ``schema_mode`` per Loom mode; STRICT has no entry."""
+
+
+def _log_write_start(mode: str, location: TableLocation, frame: pl.DataFrame | None = None) -> None:
+    _log.info(
+        EtlEvent.DELTA_WRITE_STARTED,
+        extra={
+            EtlKey.MODE: mode,
+            EtlKey.URI: location.uri,
+            EtlKey.ROWS: None if frame is None else frame.height,
+        },
+    )
+
+
+def _open_delta_table(location: TableLocation) -> DeltaTable | None:
+    """Open the Delta table at *location*, or return ``None`` when it does not exist."""
+    try:
+        return DeltaTable(location.uri, storage_options=location.storage_options or None)
+    except TableNotFoundError:
+        return None
+
+
+def _last_commit(table: DeltaTable) -> tuple[int, dict[str, Any]]:
+    """Return the version of *table* and its latest commit entry (empty without history)."""
+    history = table.history(1)
+    return table.version(), (history[0] if history else {})
+
+
+def _log_write_commit(mode: str, location: TableLocation) -> None:
+    fields: dict[str, object] = {EtlKey.MODE: mode, EtlKey.URI: location.uri}
+    with contextlib.suppress(Exception):
+        dt = _open_delta_table(location)
+        if dt is not None:
+            version, entry = _last_commit(dt)
+            metrics = entry.get("operationMetrics") or {}
+            fields |= {
+                EtlKey.VERSION: version,
+                EtlKey.ROWS: int(metrics.get("numOutputRows", 0)) or None,
+                EtlKey.FILES: int(metrics.get("numAddedFiles", 0)) or None,
+            }
+    _log.info(EtlEvent.DELTA_WRITE_COMMITTED, extra=fields)
+
+
+def _check_null_dtype_columns_lazy(frame: pl.LazyFrame) -> None:
+    """Lazy variant of :func:`_check_null_dtype_columns`.
+
+    Raises :exc:`~loom.etl.schema.SchemaError` if any column in the lazy
+    schema has dtype ``Null``.  Operates on ``collect_schema()`` (metadata
+    only), so it is safe to call on a frame about to be streamed.
+    """
+    schema = frame.collect_schema()
+    null_cols = [name for name, dtype in schema.items() if isinstance(dtype, pl.Null)]
+    if not null_cols:
+        return
+    schema_repr = "\n".join(f"  {n}: {d}" for n, d in schema.items())
+    raise SchemaError(
+        f"Delta Lake does not support the Null dtype. "
+        f"Column(s) with Null dtype: {null_cols}.\n"
+        f"Cast each column to its intended type before writing "
+        f"(use an explicit schema declaration or .cast() in the pipeline step).\n"
+        f"Full frame schema:\n{schema_repr}"
+    )
+
+
+def _require_delete_flag(frame: pl.LazyFrame, spec: UpsertSpec, flag: str) -> None:
+    """Check that *flag* names a usable boolean column of *frame*.
+
+    Raises:
+        UpsertDeleteFlagError: The flag is blank, names an upsert option, is
+            missing from *frame*, or is not boolean.
+    """
+    if not flag.strip():
+        raise UpsertDeleteFlagError(flag, "must name a source column")
+    conflict = spec.delete_flag_conflict
+    if conflict is not None:
+        raise UpsertDeleteFlagError(
+            flag,
+            f"conflicts with {conflict}; the flag column is not written to the target",
+        )
+    _require_boolean_flag_column(frame.collect_schema(), flag)
+
+
+def _require_boolean_flag_column(schema: pl.Schema, flag: str) -> None:
+    """Check that *schema* has *flag* as a boolean column.
+
+    Raises:
+        UpsertDeleteFlagError: *flag* is missing from *schema*, or is not boolean.
+    """
+    if flag not in schema:
+        raise UpsertDeleteFlagError(flag, "is missing from the source frame")
+    dtype = schema[flag]
+    if dtype.base_type() != pl.Boolean:
+        raise UpsertDeleteFlagError(flag, f"must be a boolean column, got {dtype}")
+
+
+def _require_flag_not_in_target(flag: str, existing: PolarsPhysicalSchema) -> None:
+    """Check that the target table has no column named *flag*.
+
+    Raises:
+        UpsertDeleteFlagError: The target table already has a column named *flag*.
+    """
+    if flag in existing.schema:
+        raise UpsertDeleteFlagError(
+            flag,
+            "is also a column of the target table; the flag column is never written, "
+            "so name it differently from every target column",
+        )
+
+
+def _check_null_dtype_columns(frame: pl.DataFrame) -> None:
+    """Raise :exc:`~loom.etl.schema.SchemaError` if any column has dtype ``Null``.
+
+    Delta Lake rejects ``Null``-typed columns.  This check surfaces the
+    offending column names before the write attempt so the error is
+    actionable rather than an opaque external exception.
+
+    Args:
+        frame: Collected DataFrame about to be written to Delta.
+
+    Raises:
+        SchemaError: When one or more columns carry ``pl.Null`` dtype.
+    """
+    null_cols = [name for name, dtype in frame.schema.items() if isinstance(dtype, pl.Null)]
+    if not null_cols:
+        return
+    schema_repr = "\n".join(f"  {n}: {d}" for n, d in frame.schema.items())
+    raise SchemaError(
+        f"Delta Lake does not support the Null dtype. "
+        f"Column(s) with Null dtype: {null_cols}.\n"
+        f"Cast each column to its intended type before writing "
+        f"(use an explicit schema declaration or .cast() in the pipeline step).\n"
+        f"Full frame schema:\n{schema_repr}"
+    )
+
+
+def _require_path_target(target: ResolvedTarget) -> PathTarget:
+    """Narrow a resolved target to the path target Polars writes to.
+
+    Raises:
+        InvalidType: When the target resolved to a catalog table.
+    """
+    if isinstance(target, PathTarget):
+        return target
+    raise InvalidType(
+        "PolarsTargetWriter requires path-resolved targets. "
+        "Configure routing so catalog refs resolve to PathTarget "
+        "(e.g. uc://catalog.schema.table)."
+    )
+
+
+def _delta_properties(location: TableLocation) -> dict[str, Any]:
+    """Return the delta-rs writer and commit properties a table location declares."""
+    return {
+        "writer_properties": WriterProperties(**location.writer) if location.writer else None,
+        "commit_properties": CommitProperties(**location.commit) if location.commit else None,
+    }
+
+
+def _delta_write_kwargs(location: TableLocation) -> dict[str, Any]:
+    """Return the delta-rs write keyword arguments a table location declares."""
+    return {
+        "storage_options": location.storage_options or None,
+        "configuration": location.delta_config or None,
+        "target_file_size": location.target_file_size,
+        **_delta_properties(location),
+    }
+
+
+def _collect_partition_combos(
+    frame: pl.DataFrame,
+    partition_cols: tuple[str, ...],
+    table_ref: str,
+) -> list[dict[str, Any]]:
+    """Return the unique partition value combinations in ``frame``."""
+    if not partition_cols:
+        _warn_no_partition_cols(table_ref)
+        return []
+    combos = frame.unique(subset=list(partition_cols)).select(list(partition_cols)).to_dicts()
+    _log_partition_combos(combos, table_ref)
+    return combos
+
+
+class PolarsTargetWriter(_WritePolicy[pl.LazyFrame, pl.DataFrame, PolarsPhysicalSchema]):
+    """Polars target writer using delta-rs for Delta tables."""
+
+    def __init__(
+        self,
+        locator: str | TableLocator,
+        *,
+        route_resolver: TableRouteResolver | None = None,
+        missing_table_policy: MissingTablePolicy = MissingTablePolicy.SCHEMA_MODE,
+        file_locator: FileLocator | None = None,
+        audit_config: AuditConfig | None = None,
+    ) -> None:
+        self._locator = _as_locator(locator)
+        super().__init__(
+            resolver=route_resolver or PathRouteResolver(self._locator),
+            missing_table_policy=missing_table_policy,
+            audit_config=audit_config,
+        )
+        self._file_writer = PolarsFileWriter()
+        self._file_locator = file_locator
+
+    def append(
+        self,
+        frame: pl.LazyFrame,
+        table_ref: Any,
+        params_instance: Any,
+        *,
+        streaming: bool = False,
+    ) -> None:
+        """Append frame to table, creating it on first write (``RecordFrameTargetWriter``)."""
+        spec = AppendSpec(table_ref=table_ref, schema_mode=SchemaMode.EVOLVE)
+        self.write(frame, spec, params_instance, streaming=streaming)
+
+    def to_frame(self, records: Sequence[LineageRecord], /) -> pl.LazyFrame:
+        """Convert lineage records into a Polars LazyFrame."""
+        if not records:
+            raise InvalidValue("PolarsTargetWriter.to_frame requires at least one record.")
+        first = records[0]
+        record_type = type(first)
+        if any(type(record) is not record_type for record in records):
+            raise InvalidType(
+                "PolarsTargetWriter.to_frame requires homogeneous record types per batch."
+            )
+        rows = [record.to_row() for record in records]
+        return pl.from_dicts(rows, schema=_polars_lineage_schema(first)).lazy()
+
+    def _physical_schema(self, target: ResolvedTarget) -> PolarsPhysicalSchema | None:
+        """Read physical schema from Delta log."""
+        path_target = _require_path_target(target)
+        physical = read_delta_physical_schema(
+            path_target.location.uri,
+            path_target.location.storage_options,
+        )
+        return physical
+
+    def _physical_of(self, schema: StructType) -> PolarsPhysicalSchema:
+        """The Polars schema of the lake *schema*."""
+        return PolarsPhysicalSchema.of_model(schema)
+
+    def _row_count_if_cheap(self, frame: pl.DataFrame) -> int | None:
+        """Rows in the collected frame."""
+        return frame.height
+
+    def _pin_rows(self, frame: pl.DataFrame) -> tuple[pl.DataFrame, bool]:
+        """Return the collected frame, which already holds its rows, and whether it has none."""
+        return frame, frame.is_empty()
+
+    def _materialize_for_write(self, frame: pl.LazyFrame, streaming: bool) -> pl.DataFrame:
+        """Collect lazy frame to DataFrame before Delta write."""
+        df = frame.collect(engine="streaming" if streaming else "auto")
+        _check_null_dtype_columns(df)
+        return df
+
+    def _do_replace_partitions(
+        self,
+        frame: pl.LazyFrame,
+        target: ResolvedTarget,
+        spec: ReplacePartitionsSpec,
+        streaming: bool,
+    ) -> None:
+        if not spec.streaming:
+            super()._do_replace_partitions(frame, target, spec, streaming)
+            return
+
+        existing = self._physical_schema(target)
+        if existing is None:
+            super()._do_replace_partitions(frame, target, spec, streaming)
+            return
+
+        if spec.require_physical:
+            self._require_physical_partitions(target, spec.partition_cols)
+        aligned = self._align(frame, existing, spec)
+        _check_null_dtype_columns_lazy(aligned)
+        self._streaming_replace_partitions(aligned, target, spec)
+
+    def _streaming_replace_partitions(
+        self,
+        frame: pl.LazyFrame,
+        target: ResolvedTarget,
+        spec: ReplacePartitionsSpec,
+    ) -> None:
+        path_target = _require_path_target(target)
+        location = path_target.location
+        with spool_lazy_to_arrow_reader(frame) as spool:
+            partition_rows = partition_rows_from_spool(spool.spool_path, spec.partition_cols)
+            if not partition_rows:
+                _log.warning(EtlEvent.REPLACE_PARTITIONS_EMPTY, extra={EtlKey.URI: location.uri})
+                return
+            null_rows = [r for r in partition_rows if any(v is None for v in r.values())]
+            if null_rows:
+                raise InvalidValue(
+                    f"replace_partitions: null values in partition columns "
+                    f"{spec.partition_cols}. Null partition "
+                    f"values cannot be used as a replace predicate. Ensure all "
+                    f"partition columns are non-null before writing."
+                )
+            predicate = _build_partition_predicate(iter(partition_rows), spec.partition_cols)
+            _log_write_start("replace_partitions", location)
+            write_deltalake(
+                location.uri,
+                spool.reader,
+                mode="overwrite",
+                predicate=predicate,
+                schema_mode=_DELTA_SCHEMA_MODES.get(spec.schema_mode),
+                **_delta_write_kwargs(location),
+            )
+        _log_write_commit("replace_partitions", location)
+
+    def _predicate_to_sql(self, predicate: Any, params: Any) -> str:
+        """Convert predicate to SQL (Polars uses internal SQL representation)."""
+        return predicate_to_sql(predicate, params)
+
+    def _create(
+        self,
+        frame: pl.DataFrame,
+        target: ResolvedTarget,
+        *,
+        schema_mode: SchemaMode,
+        partition_cols: tuple[str, ...] = (),
+    ) -> None:
+        """Create new Delta table."""
+        path_target = _require_path_target(target)
+        _ = schema_mode
+        location = path_target.location
+        if partition_cols:
+            missing = tuple(c for c in partition_cols if c not in frame.columns)
+            if missing:
+                if frame.is_empty():
+                    _log.warning(
+                        EtlEvent.CREATE_SKIPPED_EMPTY,
+                        extra={EtlKey.URI: location.uri, EtlKey.COLUMNS: list(missing)},
+                    )
+                    return
+                raise InvalidValue(
+                    f"_create: partition columns not found in frame schema: "
+                    f"{list(missing)}. Cannot create a partitioned Delta table."
+                )
+        if location.uri.lower().startswith("uc://"):
+            _log.warning(
+                EtlEvent.UNITY_CATALOG_CREATE_UNREGISTERED,
+                extra={EtlKey.TABLE: path_target.logical_ref.ref, EtlKey.URI: location.uri},
+            )
+        kwargs = _delta_write_kwargs(location)
+
+        _log_write_start("create", location, frame)
+        if partition_cols:
+            write_deltalake(
+                location.uri,
+                frame,
+                mode="overwrite",
+                partition_by=list(partition_cols),
+                schema_mode="overwrite",
+                **kwargs,
+            )
+        else:
+            write_deltalake(
+                location.uri,
+                frame,
+                mode="overwrite",
+                schema_mode="overwrite",
+                **kwargs,
+            )
+        _log_write_commit("create", location)
+
+    def _append(
+        self,
+        frame: pl.DataFrame,
+        target: ResolvedTarget,
+        *,
+        schema_mode: SchemaMode,
+    ) -> None:
+        """Append to existing Delta table."""
+        path_target = _require_path_target(target)
+        location = path_target.location
+        _log_write_start("append", location, frame)
+        write_deltalake(
+            location.uri,
+            frame,
+            mode="append",
+            schema_mode=_DELTA_SCHEMA_MODES.get(schema_mode),
+            **_delta_write_kwargs(location),
+        )
+        _log_write_commit("append", location)
+
+    def _replace(
+        self,
+        frame: pl.DataFrame,
+        target: ResolvedTarget,
+        *,
+        schema_mode: SchemaMode,
+    ) -> None:
+        """Overwrite existing Delta table."""
+        path_target = _require_path_target(target)
+        location = path_target.location
+        _log_write_start("replace", location, frame)
+        write_deltalake(
+            location.uri,
+            frame,
+            mode="overwrite",
+            schema_mode=_DELTA_SCHEMA_MODES.get(schema_mode),
+            **_delta_write_kwargs(location),
+        )
+        _log_write_commit("replace", location)
+
+    def _physical_partition_columns(self, target: ResolvedTarget) -> tuple[str, ...] | None:
+        location = _require_path_target(target).location
+        dt = DeltaTable(location.uri, storage_options=location.storage_options or {})
+        return tuple(dt.metadata().partition_columns)
+
+    def _replace_partitions(
+        self,
+        frame: pl.DataFrame,
+        target: ResolvedTarget,
+        *,
+        partition_cols: tuple[str, ...],
+        schema_mode: SchemaMode,
+    ) -> None:
+        """Overwrite partitions present in frame."""
+        path_target = _require_path_target(target)
+        if frame.is_empty():
+            _log.warning(
+                EtlEvent.REPLACE_PARTITIONS_EMPTY, extra={EtlKey.URI: path_target.location.uri}
+            )
+            return
+
+        location = path_target.location
+        partition_rows: list[dict[str, Any]] = list(
+            frame.select(list(partition_cols)).unique().iter_rows(named=True)
+        )
+        null_rows = [r for r in partition_rows if any(v is None for v in r.values())]
+        if null_rows:
+            raise InvalidValue(
+                f"replace_partitions: null values in partition columns {partition_cols}. "
+                "Null partition values cannot be used as a replace predicate. "
+                "Ensure all partition columns are non-null before writing."
+            )
+        predicate = _build_partition_predicate(
+            iter(partition_rows),
+            partition_cols,
+        )
+        _log_write_start("replace_partitions", location, frame)
+        write_deltalake(
+            location.uri,
+            frame,
+            mode="overwrite",
+            predicate=predicate,
+            schema_mode=_DELTA_SCHEMA_MODES.get(schema_mode),
+            **_delta_write_kwargs(location),
+        )
+        _log_write_commit("replace_partitions", location)
+
+    def _replace_where(
+        self,
+        frame: pl.DataFrame,
+        target: ResolvedTarget,
+        *,
+        predicate: str,
+        schema_mode: SchemaMode,
+    ) -> None:
+        """Overwrite rows matching SQL predicate."""
+        path_target = _require_path_target(target)
+        location = path_target.location
+        _log_write_start("replace_where", location, frame)
+        write_deltalake(
+            location.uri,
+            frame,
+            mode="overwrite",
+            predicate=predicate,
+            schema_mode=_DELTA_SCHEMA_MODES.get(schema_mode),
+            **_delta_write_kwargs(location),
+        )
+        _log_write_commit("replace_where", location)
+
+    def _upsert(
+        self,
+        frame: pl.DataFrame,
+        target: ResolvedTarget,
+        *,
+        spec: UpsertSpec,
+        existing_schema: PolarsPhysicalSchema,
+    ) -> None:
+        """Merge frame into target using Delta MERGE (update + insert)."""
+        _ = existing_schema
+        merger, plan, location = self._matched_update_merger(frame, target, spec, mode="upsert")
+        if plan.not_matched_insert_predicate is None:
+            merger.when_not_matched_insert(updates=plan.insert_values).execute()
+        else:
+            merger.when_not_matched_insert(
+                updates=plan.insert_values,
+                predicate=plan.not_matched_insert_predicate,
+            ).execute()
+        _log_write_commit("upsert", location)
+
+    def _upsert_deleting(
+        self,
+        frame: pl.LazyFrame,
+        target: ResolvedTarget,
+        spec: UpsertSpec,
+        flag: str,
+    ) -> None:
+        """Merge the frame, deleting matches whose *flag* column is true.
+
+        The flag column is removed before schema alignment. Rows whose flag
+        is true are omitted when the table is created. A null flag is false.
+        The source is collected once and the flag is reattached to the
+        aligned columns of that same collected frame, so every flag stays on
+        its row.
+        """
+        _require_delete_flag(frame, spec, flag)
+        existing = self._physical_schema(target)
+        if existing is None:
+            self._create_missing(
+                frame.filter(~pl.col(flag).fill_null(False)).drop(flag),
+                target,
+                spec=spec,
+                streaming=False,
+                partition_cols=spec.partition_cols,
+            )
+            return
+        _require_flag_not_in_target(flag, existing)
+        source = frame.collect()
+        flagless = source.drop(flag).lazy()
+        aligned = self._materialize_checked(
+            self._align(flagless, existing, spec),
+            target,
+            streaming=False,
+        )
+        merge_source = aligned.with_columns(source.get_column(flag))
+        del source, aligned
+        self._upsert(merge_source, target, spec=spec, existing_schema=existing)
+
+    def _update(
+        self,
+        frame: pl.DataFrame,
+        target: ResolvedTarget,
+        *,
+        spec: UpdateSpec,
+        existing_schema: PolarsPhysicalSchema,
+    ) -> None:
+        """Merge frame into target using a matched-only Delta MERGE.
+
+        No ``when_not_matched_insert`` clause is emitted, so unmatched source
+        rows are ignored and the MERGE inserts zero rows by construction.
+        """
+        _ = existing_schema
+        merger, _plan, location = self._matched_update_merger(frame, target, spec, mode="update")
+        merger.execute()
+        _log_write_commit("update", location)
+
+    def _matched_update_merger(
+        self,
+        frame: pl.DataFrame,
+        target: ResolvedTarget,
+        spec: UpsertSpec | UpdateSpec,
+        *,
+        mode: str,
+    ) -> tuple[TableMerger, _MergePlan, TableLocation]:
+        """Build the Delta MERGE up to the shared ``when_matched_update`` clause.
+
+        Both :meth:`_upsert` and :meth:`_update` start from the same merge:
+        partition-combo pre-filter, ON predicate, and the matched-update
+        column map.  The caller chains its remaining clauses and executes.
+
+        Args:
+            frame:  Materialised source frame.
+            target: Resolved path target.
+            spec:   Upsert or update spec (identical merge fields).
+            mode:   Write-mode label for logging.
+
+        Returns:
+            Tuple of the prepared merger, the merge plan, and the target
+            location (for commit logging).
+        """
+        path_target = _require_path_target(target)
+        location = path_target.location
+
+        combos = _collect_partition_combos(
+            frame,
+            spec.partition_cols,
+            path_target.logical_ref.ref,
+        )
+
+        merge_plan = _build_merge_plan(
+            combos=combos,
+            spec=spec,
+            df_columns=tuple(frame.columns),
+            target_alias=TARGET_ALIAS,
+            source_alias=SOURCE_ALIAS,
+        )
+
+        dt = DeltaTable(location.uri, storage_options=location.storage_options or {})
+        _log_write_start(mode, location, frame)
+        merger = dt.merge(
+            source=frame,
+            predicate=merge_plan.predicate,
+            source_alias=SOURCE_ALIAS,
+            target_alias=TARGET_ALIAS,
+            **_delta_properties(location),
+        )
+        if merge_plan.matched_delete_predicate is None:
+            merger = merger.when_matched_update(updates=merge_plan.update_set)
+        else:
+            merger = merger.when_matched_delete(
+                predicate=merge_plan.matched_delete_predicate
+            ).when_matched_update(
+                updates=merge_plan.update_set,
+                predicate=merge_plan.matched_update_predicate,
+            )
+        return merger, merge_plan, location
+
+    def _read_existing_data(
+        self,
+        target: ResolvedTarget,
+        frame: pl.LazyFrame,
+        spec: HistorifySpec,
+    ) -> pl.DataFrame | None:
+        """Read existing Delta data pruned to the partitions present in ``frame``.
+
+        When ``spec.partition_scope`` is set, distinct partition-column values
+        are extracted from ``frame`` (still lazy, one cheap ``collect``) and
+        pushed down as a filter before the Delta scan — so only the affected
+        Parquet files are opened.  Without a partition scope the full table is
+        returned.
+
+        Args:
+            target: Resolved path target.
+            frame:  Incoming LazyFrame; only partition columns are touched here.
+            spec:   Historify spec; ``partition_scope`` carries column names.
+
+        Returns:
+            Collected DataFrame of existing rows, or ``None`` if the table has
+            not been created yet.
+        """
+        from deltalake.exceptions import TableNotFoundError
+
+        path_target = _require_path_target(target)
+        location = path_target.location
+        storage_options = location.storage_options or {}
+        try:
+            if not spec.partition_scope:
+                return pl.read_delta(location.uri, storage_options=storage_options or None)
+            partition_vals = frame.select(list(spec.partition_scope)).unique().collect()
+            scan = pl.scan_delta(location.uri, storage_options=storage_options or None)
+            filter_expr = _partition_filter(partition_vals, spec.partition_scope)
+            return scan.filter(filter_expr).collect()
+        except (TableNotFoundError, FileNotFoundError):
+            return None
+
+    def _historify_ops(self) -> PolarsHistorifyOps:
+        return PolarsHistorifyOps()
+
+    def _write_file(
+        self,
+        frame: pl.LazyFrame,
+        spec: FileSpec,
+        params_instance: Any,
+        /,
+        *,
+        streaming: bool,
+    ) -> None:
+        """Write to file (CSV, JSON, Parquet), resolving alias and template."""
+        resolved = self._resolve_file_spec(spec, params_instance)
+        self._file_writer.write(frame, resolved, streaming=streaming)
+
+    def _resolve_file_spec(self, spec: FileSpec, params_instance: Any) -> FileSpec:
+        """Return a FileSpec with a physical URI, resolving alias and template."""
+        return FileSpec(
+            path=resolve_file_uri(
+                spec.path,
+                is_alias=spec.is_alias,
+                locator=self._file_locator,
+                params_instance=params_instance,
+                role="IntoFile",
+            ),
+            format=spec.format,
+            is_alias=False,
+            write_options=spec.write_options,
+        )
+
+    def _stamped_columns(self, frame: pl.LazyFrame | pl.DataFrame) -> tuple[ColumnSchema, ...]:
+        """The audit columns *frame* carries, so a model schema keeps them."""
+        carried = set(frame.collect_schema().names())
+        return tuple(column for column in self._audit_config.columns if column.name in carried)
+
+    def _apply_audit_columns(
+        self,
+        frame: pl.LazyFrame,
+        write_ctx: WriteContext | None,
+        params_instance: Any,
+        audit: AuditConfig,
+    ) -> pl.LazyFrame:
+        """Inject audit columns into a Polars LazyFrame.
+
+        Skipped when ``audit.enabled`` is ``False`` or ``write_ctx`` is ``None``.
+        ``process_run_id`` is only added when it is not ``None`` to avoid
+        nullable-column schema drift in Delta tables.
+
+        Args:
+            frame:           Incoming lazy frame.
+            write_ctx:       Step execution context.
+            params_instance: Concrete params; used to resolve ``from_param``.
+            audit:           Audit configuration from ``StorageConfig``.
+
+        Returns:
+            Frame with audit columns appended, or the original frame unchanged.
+        """
+        if write_ctx is None:
+            return frame
+        return frame.with_columns(
+            [
+                pl.lit(value, dtype=frame_type_to_polars(column.dtype)).alias(column.name)
+                for column, value in audit.stamps(write_ctx, params_instance)
+            ]
+        )
+
+
+__all__ = ["PolarsTargetWriter"]
+
+
+def _partition_filter(
+    partition_vals: pl.DataFrame,
+    partition_scope: tuple[str, ...],
+) -> pl.Expr:
+    """Build a Polars filter expression that matches exact partition combinations.
+
+    Instead of a loose column-wise ``is_in`` (which forms a bounding hyper-
+    rectangle and may read unwanted partition combinations), this builds an
+    ``OR`` of ``AND`` equalities — one per distinct partition combo present in
+    ``partition_vals``.  Delta-rs pushes these predicates to the file-scan level,
+    opening only the Parquet files that belong to the exact combinations needed.
+
+    Args:
+        partition_vals: DataFrame with one column per partition key and one row
+                        per distinct combination present in the incoming frame.
+        partition_scope: Ordered column names that form the partition key.
+
+    Returns:
+        A Polars expression suitable for use in ``.filter()``.
+    """
+    combos = partition_vals.select(list(partition_scope)).unique().iter_rows(named=True)
+    exprs: list[pl.Expr] = []
+    for combo in combos:
+        and_expr: pl.Expr = pl.col(partition_scope[0]) == combo[partition_scope[0]]
+        for col in partition_scope[1:]:
+            and_expr = and_expr & (pl.col(col) == combo[col])
+        exprs.append(and_expr)
+    if not exprs:
+        return pl.lit(False)
+    result = exprs[0]
+    for expr in exprs[1:]:
+        result = result | expr
+    return result
+
+
+def _polars_lineage_schema(record: LineageRecord) -> pl.Schema:
+    columns = get_lineage_schema(type(record))
+    polars_struct = cast(pl.Struct, frame_type_to_polars(StructType.of_columns(columns)))
+    return pl.Schema(polars_struct.to_schema())

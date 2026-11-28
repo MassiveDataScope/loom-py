@@ -5,11 +5,11 @@ import pytest
 from loom.core.authz import Scope
 
 ROOT = Scope.root()
-T = Scope.of("T")
-TX = Scope.of("T", "x")
-TXY = Scope.of("T", "x", "y")
-TZ = Scope.of("T", "z")
-U = Scope.of("U")
+T = Scope.from_segments("T")
+TX = Scope.from_segments("T", "x")
+TXY = Scope.from_segments("T", "x", "y")
+TZ = Scope.from_segments("T", "z")
+U = Scope.from_segments("U")
 
 COVERS = {
     ROOT: {ROOT, T, TX, TXY, TZ, U},
@@ -61,14 +61,14 @@ class TestScope:
     def test_renders_as_a_path(self, scope: Scope, text: str) -> None:
         assert str(scope) == text
 
-    def test_of_requires_a_segment(self) -> None:
+    def test_from_segments_requires_a_segment(self) -> None:
         with pytest.raises(ValueError, match="root"):
-            Scope.of()
+            Scope.from_segments()
 
     @pytest.mark.parametrize("segments", [("",), ("T", ""), ("T", "a/b")])
     def test_rejects_invalid_segments(self, segments: tuple[str, ...]) -> None:
         with pytest.raises(ValueError, match="segment"):
-            Scope.of(*segments)
+            Scope.from_segments(*segments)
 
     def test_child_rejects_invalid_segments(self) -> None:
         with pytest.raises(ValueError, match="segment"):

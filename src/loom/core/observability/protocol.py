@@ -1,4 +1,4 @@
-"""Structural contracts of the observability runtime."""
+"""Structural contracts of observability."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ from loom.core.observability.event import LifecycleEvent
 
 
 class LifecycleObserver(Protocol):
-    """Observer that receives lifecycle events from an ``ObservabilityRuntime``.
+    """Observer that receives lifecycle events from an ``Observability``.
 
     Implementors must be safe to call from any thread. Raising inside
-    ``on_event`` is allowed — ``ObservabilityRuntime.emit`` isolates failures
+    ``on_event`` is allowed — ``Observability.emit`` isolates failures
     per-observer so one broken observer never interrupts the others.
 
     Example::
@@ -19,7 +19,7 @@ class LifecycleObserver(Protocol):
         class MyObserver:
             def on_event(self, event: LifecycleEvent) -> None:
                 if event.kind is EventKind.ERROR:
-                    alert(event.error)
+                    alert(event.failure)
     """
 
     def on_event(self, event: LifecycleEvent) -> None:

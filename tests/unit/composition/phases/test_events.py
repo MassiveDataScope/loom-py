@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 import pytest
 
-from loom.composition import Application, phases
+from loom.composition import Application
+from loom.composition.event import CompositionEvent, CompositionKey
 from loom.core.di.container import LoomContainer
-from tests.helpers.loggers import RecordingLogger
+from loom.core.log_names import LogField
+from tests.helpers.loggers import CapturedLog
 
-_PHASES = ("plan", "build_stores", "register", "analysed", "wire_ai", "seal")
+_PHASES = ("scan", "plan", "build_stores", "register", "analysed", "wire_ai", "seal")
 
 
 def _acme_module(container: LoomContainer) -> None:
@@ -19,30 +22,19 @@ def _acme_module(container: LoomContainer) -> None:
 
 class TestComposedEvent:
     def test_one_event_carries_the_counts_and_each_phase_duration(
-        self, overridden: Callable[..., Application], monkeypatch: pytest.MonkeyPatch
+        self, overridden: Callable[..., Application], caplog: pytest.LogCaptureFixture
     ) -> None:
-        logger = RecordingLogger()
-        monkeypatch.setattr(phases, "get_logger", lambda name: logger)
+        caplog.set_level(logging.INFO, logger="loom.composition.project")
 
         overridden(modules=(_acme_module,))
 
-        [(event, fields)] = [
-            call for call in logger.calls if call[0].startswith("loom.composition.")
-        ]
-        assert event == "loom.composition.composed"
-        phase_ms = fields.pop("phase_ms")
-        total = fields.pop("duration_ms")
+        [fields] = CapturedLog(caplog).named(CompositionEvent.APPLICATION_COMPOSED)
+        phase_ms = {
+            key.removeprefix(f"{CompositionKey.PHASE_MS}."): fields.pop(key)
+            for key in [key for key in fields if key.startswith(CompositionKey.PHASE_MS)]
+        }
+        total = fields.pop(LogField.DURATION_MS)
         assert tuple(phase_ms) == _PHASES
         assert all(isinstance(ms, float) for ms in phase_ms.values())
         assert total >= sum(phase_ms.values())
-        assert fields.pop("keys") > 10
-        assert fields == {
-            "adapter": "Serving",
-            "use_cases": 1,
-            "jobs": 1,
-            "backends": {"default": "sqlalchemy"},
-            "modules": 1,
-            "overrides": 0,
-            "agents": 0,
-            "mcp_servers": 0,
-        }
+        assert fields == {LogField.USE_CASE_COUNT: 1}

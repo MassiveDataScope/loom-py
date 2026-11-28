@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 import msgspec
 import pytest
 
+from loom.core.errors.summary import ErrorSummary
 from tests.helpers.version_limited_extras import require_bytewax
 
 require_bytewax()
@@ -26,7 +27,7 @@ from loom.core.observability.event import (  # noqa: E402
     LifecycleStatus,
     Scope,
 )
-from loom.core.observability.runtime import ObservabilityRuntime  # noqa: E402
+from loom.core.observability.observability import Observability  # noqa: E402
 from loom.streaming import Drain, FromMongoCDC, Process, StreamFlow  # noqa: E402
 from loom.streaming.bytewax.runner import (  # noqa: E402
     BytewaxRuntimeConfig,
@@ -52,11 +53,11 @@ class TestStreamingRunner:
             def on_event(self, event: LifecycleEvent) -> None:
                 events.append(event)
 
-        runtime = ObservabilityRuntime([_RecordingObserver()])
+        runtime = Observability([_RecordingObserver()])
         runner = StreamingRunner.from_dict(
             bytewax_stream_flow,
             bytewax_runtime_config_dict,
-            observability_runtime=runtime,
+            observability=runtime,
         )
         dataflow = Dataflow("test")
 
@@ -181,7 +182,7 @@ class TestStreamingRunner:
         provider.add_span_processor(SimpleSpanProcessor(exporter))
         monkeypatch.setattr(trace, "_TRACER_PROVIDER", provider, raising=False)
 
-        with runner._observability_runtime.span(Scope.POLL_CYCLE, "orders"):
+        with runner._observability.span(Scope.POLL_CYCLE, "orders"):
             pass
 
         assert [span.name for span in exporter.get_finished_spans()] == ["poll_cycle:orders"]
@@ -256,7 +257,7 @@ class TestPrepareRun:
         def _fake_prepare_run(
             plan: object,
             *,
-            observability_runtime: object = None,
+            observability: object = None,
             runtime: object = None,
             **kwargs: object,
         ) -> object:
@@ -311,11 +312,11 @@ class TestRunFlowSpan:
             def on_event(self, event: LifecycleEvent) -> None:
                 events.append(event)
 
-        runtime = ObservabilityRuntime([_RecordingObserver()])
+        runtime = Observability([_RecordingObserver()])
         runner = StreamingRunner.from_dict(
             bytewax_stream_flow,
             bytewax_runtime_config_dict,
-            observability_runtime=runtime,
+            observability=runtime,
         )
         dataflow = Dataflow("test")
 
@@ -345,11 +346,11 @@ class TestRunFlowSpan:
             def on_event(self, event: LifecycleEvent) -> None:
                 events.append(event)
 
-        runtime = ObservabilityRuntime([_RecordingObserver()])
+        runtime = Observability([_RecordingObserver()])
         runner = StreamingRunner.from_dict(
             bytewax_stream_flow,
             bytewax_runtime_config_dict,
-            observability_runtime=runtime,
+            observability=runtime,
         )
         dataflow = Dataflow("test")
 
@@ -381,11 +382,11 @@ class TestRunFlowSpan:
             def on_event(self, event: LifecycleEvent) -> None:
                 events.append(event)
 
-        runtime = ObservabilityRuntime([_RecordingObserver()])
+        runtime = Observability([_RecordingObserver()])
         runner = StreamingRunner.from_dict(
             bytewax_stream_flow,
             bytewax_runtime_config_dict,
-            observability_runtime=runtime,
+            observability=runtime,
         )
 
         def _raise_prep_failed(**kwargs: object) -> None:
@@ -403,7 +404,7 @@ class TestRunFlowSpan:
         # OTEL span carries the exception.
         assert poll_cycle[1].kind is EventKind.ERROR
         assert poll_cycle[1].status is LifecycleStatus.FAILURE
-        assert poll_cycle[1].error == "prep failed"
+        assert poll_cycle[1].failure == ErrorSummary(type="RuntimeError")
 
 
 class TestPrepareRunErrorSinks:
@@ -428,7 +429,7 @@ class TestPrepareRunErrorSinks:
         def _fake_prepare_run(
             plan: object,
             *,
-            observability_runtime: object = None,
+            observability: object = None,
             runtime: object = None,
             **kwargs: object,
         ) -> object:
@@ -538,7 +539,7 @@ streaming:
         def _fake_prepare_run(
             plan: object,
             *,
-            observability_runtime: object = None,
+            observability: object = None,
             runtime: object = None,
             **kwargs: object,
         ) -> object:
@@ -593,7 +594,7 @@ streaming:
         def _fake_prepare_run(
             plan: object,
             *,
-            observability_runtime: object = None,
+            observability: object = None,
             runtime: object = None,
             **kwargs: object,
         ) -> object:
@@ -624,7 +625,7 @@ streaming:
         def _fake_prepare_run(
             plan: object,
             *,
-            observability_runtime: object = None,
+            observability: object = None,
             runtime: object = None,
             **kwargs: object,
         ) -> object:

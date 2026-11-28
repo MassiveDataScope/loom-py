@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from functools import singledispatch
 from typing import Any, Protocol, TypeVar
 
+from loom.core.errors import InvalidType
 from loom.etl.declarative.expr._params import ParamExpr, resolve_param_expr
 from loom.etl.declarative.expr._predicate import (
     AndPred,
@@ -19,7 +21,7 @@ from loom.etl.declarative.expr._predicate import (
     OrPred,
     PredicateNode,
 )
-from loom.etl.declarative.expr._refs import ColumnRef, UnboundColumnRef
+from loom.etl.declarative.expr._refs import UnboundColumnRef
 
 T = TypeVar("T")
 
@@ -53,21 +55,60 @@ class PredicateDialect(Protocol[T]):
 
 
 def fold_predicate(node: PredicateNode, params_instance: Any, dialect: PredicateDialect[T]) -> T:
-    """Fold a predicate AST using a backend-specific dialect."""
+    """Fold a predicate AST with a backend dialect, resolving params from *params_instance*."""
     return _fold(node, params_instance, dialect)
+
+
+def columns_in(*predicates: PredicateNode) -> tuple[str, ...]:
+    """The columns the predicates refer to, in order of appearance, once each."""
+    return tuple(dict.fromkeys(name for node in predicates for name in _columns(node)))
+
+
+def _columns(node: PredicateNode) -> Iterator[str]:
+    match node:
+        case AndPred(left=left, right=right) | OrPred(left=left, right=right):
+            yield from _columns(left)
+            yield from _columns(right)
+        case NotPred(operand=operand):
+            yield from _columns(operand)
+        case InPred(ref=ref):
+            yield from _column_name(ref)
+        case (
+            EqPred(left=left, right=right)
+            | NePred(left=left, right=right)
+            | GtPred(left=left, right=right)
+            | GePred(left=left, right=right)
+            | LtPred(left=left, right=right)
+            | LePred(left=left, right=right)
+        ):
+            yield from _column_name(left)
+            yield from _column_name(right)
+        case _:
+            raise InvalidType(f"columns_in: unsupported node type {type(node)!r}")
+
+
+def _column_name(term: Any) -> Iterator[str]:
+    if isinstance(term, UnboundColumnRef):
+        yield term.name
 
 
 @singledispatch
 def _fold(node: object, params_instance: Any, dialect: PredicateDialect[T]) -> T:
-    raise TypeError(f"fold_predicate: unsupported node type {type(node)!r}")
+    raise InvalidType(f"fold_predicate: unsupported node type {type(node)!r}")
 
 
 def _term(value: Any, params_instance: Any, dialect: PredicateDialect[T]) -> T:
-    if isinstance(value, (UnboundColumnRef, ColumnRef)):
+    if isinstance(value, UnboundColumnRef):
         return dialect.column(value.name)
     if isinstance(value, ParamExpr):
         return dialect.literal(resolve_param_expr(value, params_instance))
     return dialect.literal(value)
+
+
+def _in_values(values: Any, params_instance: Any) -> tuple[Any, ...]:
+    if isinstance(values, ParamExpr):
+        return tuple(resolve_param_expr(values, params_instance))
+    return tuple(values)
 
 
 def _binary(
@@ -91,7 +132,7 @@ def _binary(
         return dialect.lt(lhs, rhs)
     if op == "le":
         return dialect.le(lhs, rhs)
-    raise TypeError(f"fold_predicate: unsupported binary operator {op!r}")
+    raise InvalidType("fold_predicate: unsupported binary operator")
 
 
 @_fold.register(EqPred)
@@ -126,12 +167,7 @@ def _(node: LePred, params_instance: Any, dialect: PredicateDialect[T]) -> T:
 
 @_fold.register(InPred)
 def _(node: InPred, params_instance: Any, dialect: PredicateDialect[T]) -> T:
-    raw_values = (
-        resolve_param_expr(node.values, params_instance)
-        if isinstance(node.values, ParamExpr)
-        else node.values
-    )
-    values = tuple(raw_values)
+    values = _in_values(node.values, params_instance)
     ref = _term(node.ref, params_instance, dialect)
     return dialect.in_(ref, values)
 
@@ -157,4 +193,4 @@ def _(node: NotPred, params_instance: Any, dialect: PredicateDialect[T]) -> T:
     return dialect.not_(_fold(node.operand, params_instance, dialect))
 
 
-__all__ = ["PredicateDialect", "fold_predicate"]
+__all__ = ["PredicateDialect", "columns_in", "fold_predicate"]

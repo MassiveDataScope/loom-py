@@ -14,7 +14,9 @@ from typing import Any
 import msgspec
 
 from loom.core.config import is_cloud_uri, load_config
+from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment, parse_environment
+from loom.core.errors import InvalidValue
 from loom.core.model.redaction import RedactedMap
 from loom.prefect._meta import FlowTrigger
 
@@ -32,18 +34,18 @@ def read_yaml(config_path: str) -> dict[str, Any]:
     time. ``s3://``/``gs://``/… URIs are honoured.
 
     Raises:
-        ValueError: When the top level is not a mapping.
-        loom.core.config.errors.ConfigError: Underlying load failures.
+        loom.core.config.errors.ConfigError: When the top level is not a mapping, or on
+            underlying load failures.
     """
     from omegaconf import DictConfig, OmegaConf  # noqa: PLC0415
 
     _ensure_mapping_top_level(config_path)
     merged = load_config(config_path, keyed=("etls",))
     if not isinstance(merged, DictConfig):
-        raise ValueError(f"{config_path}: top-level YAML must be a mapping")
+        raise ConfigError("top-level YAML must be a mapping")
     container = OmegaConf.to_container(merged, resolve=False)
     if not isinstance(container, dict):
-        raise ValueError(f"{config_path}: top-level YAML must be a mapping")
+        raise ConfigError("top-level YAML must be a mapping")
     container.pop("includes", None)
     return {str(k): _resolve_oc_only(v) for k, v in container.items()}
 
@@ -108,13 +110,10 @@ def extract_trigger(raw_cfg: Mapping[str, Any]) -> FlowTrigger | None:
     try:
         trigger = msgspec.convert(raw, type=FlowTrigger)
     except msgspec.ValidationError as exc:
-        raise ValueError(f"trigger: {exc}") from exc
+        raise InvalidValue(f"trigger: {exc}") from exc
     parts = trigger.after.split("/")
     if len(parts) > 2 or not all(part and part == part.strip() for part in parts):
-        raise ValueError(
-            f"trigger.after: expected '<flow>/<deployment>' or a deployment name, "
-            f"got {trigger.after!r}"
-        )
+        raise InvalidValue("trigger.after: expected '<flow>/<deployment>' or a deployment name")
     return trigger
 
 
@@ -128,7 +127,7 @@ def _ensure_mapping_top_level(config_path: str) -> None:
     except (OSError, yaml.YAMLError):
         return
     if not isinstance(raw, DictConfig):
-        raise ValueError(f"{config_path}: top-level YAML must be a mapping")
+        raise ConfigError("top-level YAML must be a mapping")
 
 
 def _resolve_oc_only(value: Any) -> Any:

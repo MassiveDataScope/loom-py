@@ -6,7 +6,7 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
-from loom.core.errors.base import DomainError
+from loom.core.errors.base import DomainError, InvalidValue
 from loom.core.errors.codes import ErrorCode
 
 
@@ -55,7 +55,7 @@ class RateLimited(DomainError):
         message: Human-readable description of the refusal.
 
     Raises:
-        ValueError: ``retry_after`` is not finite.
+        InvalidValue: ``retry_after`` is not finite.
 
     Example::
 
@@ -64,7 +64,7 @@ class RateLimited(DomainError):
 
     def __init__(self, retry_after: float, message: str = "Too many requests.") -> None:
         if not math.isfinite(retry_after):
-            raise ValueError(f"RateLimited.retry_after must be finite, got {retry_after!r}")
+            raise InvalidValue("RateLimited.retry_after must be finite")
         super().__init__(message, code=ErrorCode.RATE_LIMITED)
         self.retry_after = max(1, math.ceil(retry_after))
 
@@ -73,7 +73,7 @@ BODY_FIELD = "body"
 """Field a violation names when it concerns the request body as a whole."""
 
 
-class RuleViolation(DomainError):
+class RuleViolationError(DomainError):
     """Raised when a single business rule is violated.
 
     Args:
@@ -82,7 +82,7 @@ class RuleViolation(DomainError):
 
     Example::
 
-        raise RuleViolation("email", "Disposable emails not allowed")
+        raise RuleViolationError("email", "Disposable emails not allowed")
     """
 
     def __init__(self, field: str, message: str) -> None:
@@ -91,7 +91,7 @@ class RuleViolation(DomainError):
         self.message = message
 
 
-class RuleViolations(DomainError):
+class RuleViolationsError(DomainError):
     """Raised when one or more business rules are violated.
 
     Accumulates all violations from rule evaluation instead of failing
@@ -101,8 +101,8 @@ class RuleViolations(DomainError):
         violations: Sequence of individual rule violations.
     """
 
-    def __init__(self, violations: Sequence[RuleViolation]) -> None:
-        self.violations: tuple[RuleViolation, ...] = tuple(violations)
+    def __init__(self, violations: Sequence[RuleViolationError]) -> None:
+        self.violations: tuple[RuleViolationError, ...] = tuple(violations)
         messages = "; ".join(str(v) for v in self.violations)
         super().__init__(messages, code=ErrorCode.RULE_VIOLATIONS)
 
@@ -121,7 +121,7 @@ class UnsupportedQuery(DomainError):
 
     Args:
         reason: What cannot be done with the given arguments.
-        backend: Name of the persistence backend, when known where it is raised.
+        backend: Name of the store backend, when known where it is raised.
         model: Qualified name of the model being queried, when known.
     """
 

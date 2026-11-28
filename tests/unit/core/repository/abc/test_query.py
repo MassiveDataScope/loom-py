@@ -3,7 +3,7 @@ from __future__ import annotations
 import msgspec
 import pytest
 
-from loom.core.repository.abc import (
+from loom.core.stores.repository import (
     FilterGroup,
     FilterOp,
     FilterParams,
@@ -14,6 +14,7 @@ from loom.core.repository.abc import (
     SortSpec,
     build_page_result,
 )
+from loom.testing import make
 
 
 class AcmeQueryOutput(msgspec.Struct):
@@ -22,7 +23,7 @@ class AcmeQueryOutput(msgspec.Struct):
 
 class TestPageParams:
     def test_offset_calculation(self) -> None:
-        params = PageParams(page=3, limit=25)
+        params = make(PageParams, page=3, limit=25)
         assert params.offset == 50
 
     @pytest.mark.parametrize(
@@ -34,7 +35,7 @@ class TestPageParams:
     )
     def test_invalid_page_params_raise_error(self, match: str, page: int, limit: int) -> None:
         with pytest.raises(ValueError, match=match):
-            PageParams(page=page, limit=limit)
+            make(PageParams, page=page, limit=limit)
 
 
 class TestBuildPageResult:
@@ -86,13 +87,14 @@ class TestQueryContracts:
         assert query.cursor == "cursor-1"
 
     def test_value_objects_are_frozen(self) -> None:
-        query = QuerySpec()
+        query = make(QuerySpec)
 
         with pytest.raises(AttributeError):
             query.limit = 100  # type: ignore[misc]
 
     def test_value_objects_roundtrip_with_msgspec(self) -> None:
-        original = QuerySpec(
+        original = make(
+            QuerySpec,
             filters=FilterGroup(
                 filters=(FilterSpec("price", FilterOp.LTE, 99.0),),
                 op="AND",

@@ -6,8 +6,8 @@ import pytest
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import LoomStruct
-from loom.core.persistence.database import PoolConfig
-from loom.core.persistence.stores import load_catalog
+from loom.core.stores.catalog import load_catalog
+from loom.core.stores.database import PoolConfig
 from loom.streaming.nodes._table import IntoTable, SqlAlchemySinkConfig
 from loom.streaming.nodes._table.config import (
     ResolvedSqlAlchemyTableConfig,
@@ -135,5 +135,5 @@ class TestSqlAlchemySinkConfig:
     def test_a_relational_sink_names_the_renamed_database_key(self) -> None:
         config = {"streaming": {"sinks": {"orders_sink": {"database": "warehouse"}}}}
 
-        with pytest.raises(ValueError, match="'database' was renamed to 'store'"):
+        with pytest.raises(ConfigError, match="'database' was renamed to 'store'"):
             _resolve(config)

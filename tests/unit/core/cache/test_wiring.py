@@ -29,19 +29,22 @@ from loom.core.cache import (
 )
 from loom.core.cache.calls import AsyncCallable, _ConfiguredCalls, _UnconfiguredCalls
 from loom.core.cache.decorators import cached
+from loom.core.cache.event import CacheEvent, CacheKey
 from loom.core.cache.keys import call_key
 from loom.core.cache.wiring import CacheGateways, cache_module, cache_module_for
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer, ResolutionError
+from loom.core.errors import InvalidType
 from loom.core.model.redaction import RedactedMap
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository import (
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import (
     RepositoryBuildContext,
     RepositoryDecorator,
     RepositoryRegistration,
     build_repository_registration_module,
 )
-from loom.core.repository.abc.repo_for import Listable, Readable
+from loom.core.stores.repository.capabilities import Listable, Readable
+from tests.helpers.loggers import CapturedLog
 
 from ._doubles import (
     MEMORY_BACKEND,
@@ -216,13 +219,9 @@ class TestDecoration:
         with caplog.at_level(logging.WARNING, logger="loom.core.cache.wiring"):
             cache_module(_single_alias())(container)
 
-        warnings = [
-            record
-            for record in caplog.records
-            if "CacheDecoratorAlreadyRegistered" in record.getMessage()
+        assert CapturedLog(caplog).named(CacheEvent.BINDING_KEPT) == [
+            {CacheKey.SLOT: "RepositoryDecorator", CacheKey.KEPT_BINDING: "_TaggingDecorator"}
         ]
-        assert len(warnings) == 1
-        assert "_TaggingDecorator" in warnings[0].getMessage()
 
     def test_two_aliases_open_two_gateways(self) -> None:
         container = _container(cache_module(_two_aliases()))
@@ -258,14 +257,14 @@ class TestIncompleteRepository:
             )
             container = _container(module, cache_module(_single_alias()))
 
-            with pytest.raises(RuntimeError, match="ReadOnlyWidgetRepository") as info:
+            with pytest.raises(InvalidType, match="ReadOnlyWidgetRepository") as info:
                 container.resolve_repo(AcmeCacheWidget)
 
         assert "create" in str(info.value)
         assert "list_paginated" in str(info.value)
 
-    def test_boot_validation_names_the_offending_repository(self) -> None:
-        """``validate()`` wraps the refusal, so the aborted boot still names the class."""
+    def test_boot_validation_keeps_the_refusal_naming_the_offending_repository(self) -> None:
+        """``validate()`` chains the refusal, so the aborted boot still names the class."""
         with registered_repository(AcmeCacheWidget, ReadOnlyWidgetRepository):
             module = build_repository_registration_module(
                 models=(),
@@ -276,11 +275,13 @@ class TestIncompleteRepository:
             )
             container = _container(module, cache_module(_single_alias()))
 
-            with pytest.raises(ResolutionError, match="ReadOnlyWidgetRepository") as info:
+            with pytest.raises(ResolutionError) as info:
                 container.validate()
 
-        assert "create" in str(info.value)
-        assert "list_paginated" in str(info.value)
+        refusal = str(info.value.__cause__)
+        assert "ReadOnlyWidgetRepository" in refusal
+        assert "create" in refusal
+        assert "list_paginated" in refusal
 
 
 class TestInvalidationThroughTheContainer:
@@ -317,15 +318,7 @@ class TestInvalidationThroughTheContainer:
         assert not await _backend("data").exists("tag:widget:list")
 
 
-def _not_configured_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
-    return [
-        record
-        for record in caplog.records
-        if record.levelno == logging.WARNING and "CacheNotConfigured" in record.getMessage()
-    ]
-
-
-class TestCacheNotConfigured:
+class TestRepositoryNotConfigured:
     @pytest.fixture
     def _capture_wiring_warnings(self, caplog: pytest.LogCaptureFixture) -> None:
         caplog.set_level(logging.WARNING, logger="loom.core.cache.wiring")
@@ -345,9 +338,9 @@ class TestCacheNotConfigured:
 
         container.validate()
 
-        warnings = _not_configured_warnings(caplog)
-        assert len(warnings) == 1
-        assert "CachedWidgetRepository" in warnings[0].getMessage()
+        assert CapturedLog(caplog).levels(CacheEvent.REPOSITORY_NOT_CONFIGURED) == [logging.WARNING]
+        (text,) = CapturedLog(caplog).rendered(CacheEvent.REPOSITORY_NOT_CONFIGURED)
+        assert "CachedWidgetRepository" in text
         assert isinstance(container.resolve_repo(AcmeCacheWidget), CachedWidgetRepository)
 
     def test_resolving_after_validate_warns_no_further(
@@ -363,7 +356,7 @@ class TestCacheNotConfigured:
         container.resolve_repo(AcmeCacheWidget)
         container.resolve(Readable[AcmeCacheWidget])
 
-        assert _not_configured_warnings(caplog) == []
+        assert CapturedLog(caplog).levels(CacheEvent.REPOSITORY_NOT_CONFIGURED) == []
 
     def test_an_unmarked_class_is_never_announced(
         self,
@@ -374,10 +367,8 @@ class TestCacheNotConfigured:
         container = _container(repository_module, cache_module_for(ConfigContext.from_dict({})))
         container.validate()
 
-        assert all(
-            "PlainCodeWidgetRepository" not in record.getMessage()
-            for record in _not_configured_warnings(caplog)
-        )
+        announced = CapturedLog(caplog).rendered(CacheEvent.REPOSITORY_NOT_CONFIGURED)
+        assert all("PlainCodeWidgetRepository" not in text for text in announced)
 
     def test_an_enabled_section_wraps_and_stays_quiet(
         self,
@@ -393,7 +384,7 @@ class TestCacheNotConfigured:
         container.validate()
 
         assert isinstance(container.resolve_repo(AcmeCacheWidget), CachedRepository)
-        assert _not_configured_warnings(caplog) == []
+        assert CapturedLog(caplog).levels(CacheEvent.REPOSITORY_NOT_CONFIGURED) == []
 
 
 class Answer(msgspec.Struct):
@@ -421,15 +412,9 @@ class _UserCalls:
     def wrap(self, func: AsyncCallable) -> AsyncCallable:
         return func
 
-    def bind(self, obj: object) -> list[AsyncCallable]:
+    def wrap_methods(self, obj: object) -> list[AsyncCallable]:
         del obj
         return []
-
-
-def _already_registered_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
-    return [
-        record for record in caplog.records if "CacheCallsAlreadyRegistered" in record.getMessage()
-    ]
 
 
 class TestCachedCallsBinding:
@@ -451,7 +436,7 @@ class TestCachedCallsBinding:
         no binding at all, so an ``isinstance`` check alone would pass with no
         registration whatsoever. The registration is what makes every factory
         in one container share a binder — and with it the once-set that keeps
-        ``CacheCallNotConfigured`` to one record per marked coroutine.
+        ``loom.cache.call_not_configured`` to one record per marked coroutine.
         """
         container = _container(cache_module_for(ConfigContext.from_dict(raw)))
 
@@ -470,9 +455,9 @@ class TestCachedCallsBinding:
             cache_module(_single_alias())(container)
 
         assert cached_calls(container) is user_calls
-        warnings = _already_registered_warnings(caplog)
-        assert len(warnings) == 1
-        assert "_UserCalls" in warnings[0].getMessage()
+        assert CapturedLog(caplog).named(CacheEvent.BINDING_KEPT) == [
+            {CacheKey.SLOT: "CachedCalls", CacheKey.KEPT_BINDING: "_UserCalls"}
+        ]
 
     def test_a_container_holding_a_decorator_still_gets_the_configured_binder(self) -> None:
         """The decorator block returns early; the binder must be bound before it."""
@@ -553,8 +538,8 @@ class TestTheBinderReportsAnAbandonedLoad:
 
         records = _abandoned_warnings(caplog)
         assert len(records) == 1
-        assert "upstream down" in records[0].getMessage()
+        assert CapturedLog(caplog).exception_types(CacheEvent.LOAD_ABANDONED) == [RuntimeError]
 
 
 def _abandoned_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
-    return [record for record in caplog.records if "CacheCallLoadAbandoned" in record.getMessage()]
+    return [record for record in caplog.records if CacheEvent.LOAD_ABANDONED in record.getMessage()]

@@ -260,7 +260,7 @@ class TestEmittedPythonCapability:
 class TestSchemaLocation:
     def test_agent_spec_json_schema_fails_for_an_unpublished_version(self) -> None:
         """An unpublished spec version is a programming error, not an empty document."""
-        with pytest.raises(ValueError, match="spec version 2"):
+        with pytest.raises(ValueError, match="no JSON Schema is published"):
             agent_spec_json_schema(2)
 
     def test_the_published_schema_lives_inside_the_package(self) -> None:
@@ -277,7 +277,7 @@ class TestSchemaLocation:
 
     def test_locating_the_schema_fails_for_an_unpublished_version(self) -> None:
         """An unpublished spec version is a programming error, not a missing file."""
-        with pytest.raises(ValueError, match="spec version 2"):
+        with pytest.raises(ValueError, match="no JSON Schema is published"):
             agent_spec_schema_path(2)
 
 

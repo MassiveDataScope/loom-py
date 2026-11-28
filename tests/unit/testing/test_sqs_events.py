@@ -1,4 +1,4 @@
-"""``LambdaEvent.jobs(...)`` feeds the real Lambda SQS handler what ``SQSJobService`` sends."""
+"""``LambdaEvent.jobs(...)`` feeds the real Lambda SQS handler what ``SQSServiceFixture`` sends."""
 
 from __future__ import annotations
 
@@ -10,16 +10,19 @@ from typing import Any
 
 import pytest
 
-from loom.composition import AppConfig, compose_application
+from loom.composition import AppConfig
 from loom.core.config import ConfigContext
 from loom.core.identity import Identity, current_identity
 from loom.core.job.context import clear_pending_dispatches, flush_pending_dispatches
 from loom.core.job.job import Job
-from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler
-from loom.testing import LambdaEvent
-from tests.helpers.composition import composition_source
+from loom.serverless.aws.lambda_ import LambdaHandler, LambdaRuntime
+from loom.testing import TEST_QUEUE, LambdaEvent
+from tests.helpers.aws import REGION
+from tests.helpers.aws_island import FakeAwsIsland
+from tests.helpers.composition import composition_project
 from tests.helpers.delegation import acting_as
 from tests.helpers.jobs import SQSClient, sqs_service
+from tests.helpers.sqs import FakeSqs
 
 pytestmark = pytest.mark.timeout(30)
 
@@ -28,8 +31,6 @@ _ALICE = Identity(subject="alice", roles=("buyer",), mechanism="jwt")
 
 
 class MarkJob(Job[None]):
-    __retries__ = 0
-
     def execute(self, marker: str) -> None:
         _SEEN.append((marker, current_identity().subject))
         if marker == "fail":
@@ -44,17 +45,33 @@ def seen() -> Iterator[list[tuple[str, str]]]:
 
 
 @pytest.fixture
-def handler(tmp_path: Path) -> Iterator[LambdaHandler]:
-    source = composition_source(
+def sqs() -> FakeSqs:
+    return FakeSqs()
+
+
+@pytest.fixture
+def handler(
+    tmp_path: Path, sqs: FakeSqs, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[LambdaHandler]:
+    project = composition_project(
         ConfigContext.from_dict(
-            {"lambda": {"functions": {"worker": {"trigger": {"source": "jobs"}}}}}
+            {
+                "aws": {"region": REGION},
+                "sqs": {"queues": {"jobs": TEST_QUEUE}},
+                "lambda": {
+                    "functions": {
+                        "worker": {"trigger": {"source": "jobs", "queue": {"name": "jobs"}}}
+                    }
+                },
+            }
         ),
         app=AppConfig(name="sqs-events", job_service="inline", entry="worker"),
         code_path=tmp_path,
         config_root=tmp_path,
     )
-    adapter = LambdaAdapter(jobs=[MarkJob])
-    yield adapter.bind(compose_application(source, adapter))
+    adapter = LambdaRuntime(jobs=[MarkJob])
+    FakeAwsIsland(client=sqs).install(monkeypatch)
+    yield adapter.mount(project.compose(adapter))
     adapter.close()
 
 
@@ -68,7 +85,7 @@ def _marked(marker: str, message_id: str, **options: Any) -> dict[str, Any]:
     return record
 
 
-class TestSqsEvents:
+class TestSQSEvents:
     def test_a_batch_that_succeeds_retries_nothing(
         self, handler: LambdaHandler, seen: list[tuple[str, str]]
     ) -> None:
@@ -104,21 +121,30 @@ class TestSqsEvents:
 
         assert seen == [("a", "alice")]
 
-    def test_a_raw_body_loom_cannot_read_is_retried(
-        self, handler: LambdaHandler, seen: list[tuple[str, str]]
+    def test_a_raw_body_loom_cannot_read_is_abandoned_not_reported(
+        self, handler: LambdaHandler, seen: list[tuple[str, str]], sqs: FakeSqs
     ) -> None:
         result = handler(LambdaEvent.sqs_record("{", message_id="poison"), None)
 
-        assert (_failed(result), seen) == (["poison"], [])
+        assert (_failed(result), seen, sqs.batches) == ([], [], [])
+
+    def test_the_default_queue_of_an_event_settles_through_the_test_queue_entry(
+        self, handler: LambdaHandler, sqs: FakeSqs
+    ) -> None:
+        result = handler({"Records": [_marked("fail", "1")]}, None)
+
+        assert (_failed(result), sqs.calls["change_message_visibility_batch"]) == (["1"], 1)
 
     async def test_the_body_is_the_one_sqs_job_service_sends(self) -> None:
-        """All but the caller's deadline: an event's caller gets one at the worker."""
+        """All but the caller's deadline and the task id SQS dispatch adds."""
         client = SQSClient()
         service = sqs_service(client)
         deadline = time.time() + 60
         try:
             with acting_as(_ALICE, until=deadline):
-                service.dispatch(MarkJob, params={"marker": "a"}, payload={"n": 1}, queue="emails")
+                service.dispatch_after_commit(
+                    MarkJob, params={"marker": "a"}, payload={"n": 1}, queue="emails"
+                )
                 await flush_pending_dispatches()
         finally:
             clear_pending_dispatches()
@@ -126,4 +152,7 @@ class TestSqsEvents:
         event = LambdaEvent.jobs(MarkJob, {"n": 1}, params={"marker": "a"}, identity=_ALICE)
         expected = json.loads(event["Records"][0]["body"])
         expected["identity"]["until"] = deadline
-        assert [json.loads(request["MessageBody"]) for request in client.requests] == [expected]
+        del expected["task_id"]
+        (sent,) = [json.loads(request["MessageBody"]) for request in client.requests]
+        assert sent.pop("task_id")
+        assert sent == expected

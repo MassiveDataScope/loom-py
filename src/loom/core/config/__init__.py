@@ -18,7 +18,7 @@ from loom.core.config.configurable import ConfigBinding, Configurable
 from loom.core.config.context import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.config.file import FileResolver
-from loom.core.config.keys import ConfigKey
+from loom.core.config.keys import ConfigSection
 from loom.core.config.loader import load_config, section
 from loom.core.config.observability import OtelConfig
 from loom.core.config.resolver import (
@@ -28,20 +28,16 @@ from loom.core.config.resolver import (
     with_default_resolvers,
 )
 from loom.core.config.retired import reject_retired_keys, reject_retired_sections
-from loom.core.config.secrets import SecretsManagerResolver
-from loom.core.config.ssm import SsmResolver
 
 __all__ = [
     "ConfigBinding",
     "ConfigContext",
     "ConfigError",
-    "ConfigKey",
+    "ConfigSection",
     "ConfigResolver",
     "Configurable",
     "FileResolver",
     "OtelConfig",
-    "SecretsManagerResolver",
-    "SsmResolver",
     "StructBinder",
     "default_resolvers",
     "expand_config_glob",

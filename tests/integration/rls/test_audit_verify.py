@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy.exc import DBAPIError
 
-from loom.core.locator import Application
-from loom.core.repository.sqlalchemy.rls import create_schema, verify
+from loom.stores.sqlalchemy.alembic import StoreSchema
+from loom.stores.sqlalchemy.rls import create_schema, verify
 from tests.integration.agnosticism import bookkeeping
 from tests.integration.rls.conftest import (
     BootstrapFactory,
@@ -23,7 +23,7 @@ pytestmark = pytest.mark.integration
 
 async def _created(
     factory: BootstrapFactory, tmp_path: Path, schema: str
-) -> tuple[ScopedDatabase, Application]:
+) -> tuple[ScopedDatabase, StoreSchema]:
     database = await factory(schema)
     application = application_for(bookkeeping, database, tmp_path, schema=schema)
     await create_schema(database.migrator, application)

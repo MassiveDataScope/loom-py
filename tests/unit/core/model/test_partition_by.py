@@ -4,6 +4,7 @@ import datetime as dt
 
 import pytest
 
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.introspection import declared_partition
 from loom.core.model.partition import PartitionRange, RangePartition, range_partitions
@@ -49,16 +50,24 @@ class TestPartitionDeclaration:
     def test_list_and_hash_are_refused_by_name(self, strategy: str) -> None:
         model = _model((strategy, "at"))
         with pytest.raises(
-            ValueError, match=rf"Bad: __partition_by__ strategy {strategy!r}.*RANGE"
+            InvalidValue, match=rf"Bad: __partition_by__ strategy {strategy!r}.*RANGE"
         ):
             declared_partition(model)
 
-    @pytest.mark.parametrize("value", ["RANGE", ("RANGE",), ("RANGE", "at", "x"), ("RANGE", 3)])
-    def test_a_malformed_declaration_is_refused(self, value: object) -> None:
+    @pytest.mark.parametrize(
+        ("value", "error"),
+        [
+            ("RANGE", InvalidType),
+            (("RANGE",), InvalidValue),
+            (("RANGE", "at", "x"), InvalidValue),
+            (("RANGE", 3), InvalidType),
+        ],
+    )
+    def test_a_malformed_declaration_is_refused(
+        self, value: object, error: type[Exception]
+    ) -> None:
         model = _model(value)
-        with pytest.raises(
-            ValueError, match=r"Bad: __partition_by__ must be \('RANGE', <column>\)"
-        ):
+        with pytest.raises(error, match=r"Bad: __partition_by__"):
             declared_partition(model)
 
     def test_an_unknown_column_is_refused(self) -> None:
@@ -136,7 +145,7 @@ class TestPartitionDeclaration:
 
     def test_an_unknown_interval_is_refused(self) -> None:
         start, end = dt.date(2026, 1, 1), dt.date(2026, 2, 1)
-        with pytest.raises(ValueError, match="interval 'week'"):
+        with pytest.raises(ValueError, match="interval is not one of"):
             range_partitions("events", start, end, "week")  # type: ignore[arg-type]
 
     def test_a_partition_name_over_63_bytes_is_refused(self) -> None:

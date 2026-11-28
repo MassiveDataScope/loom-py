@@ -24,7 +24,9 @@ from loom.etl.compiler import (
     ParallelStepGroup,
 )
 from loom.etl.declarative.target import SchemaMode
-from loom.etl.testing import StubCatalog
+from loom.etl.event import EtlEvent, EtlKey
+from loom.etl.testing import InMemoryCatalog
+from tests.helpers.loggers import CapturedLog
 from tests.unit.etl.doubles import RunDateCountriesParams, RunDateIgnoredParams
 
 
@@ -341,8 +343,10 @@ class TestCompileStep:
     ) -> None:
         with caplog.at_level(logging.WARNING, logger="loom.etl.compiler._compiler"):
             ETLCompiler().compile_step(AppendWarningStep)
-        assert (
-            "compile append target step=AppendWarningStep table=staging.append_warn" in caplog.text
+        [fields] = CapturedLog(caplog).named(EtlEvent.APPEND_TARGET_COMPILED)
+        assert (fields[EtlKey.STEP], fields[EtlKey.TABLE]) == (
+            "AppendWarningStep",
+            "staging.append_warn",
         )
 
     def test_compile_step_cached_append_warning_is_logged_once(
@@ -353,10 +357,7 @@ class TestCompileStep:
             compiler.compile_step(AppendWarningStep)
             compiler.compile_step(AppendWarningStep)
 
-        messages = [
-            r.getMessage() for r in caplog.records if "compile append target" in r.getMessage()
-        ]
-        assert len(messages) == 1
+        assert CapturedLog(caplog).messages.count(EtlEvent.APPEND_TARGET_COMPILED) == 1
 
     @pytest.mark.parametrize(
         "step_type,error,code",
@@ -503,7 +504,7 @@ class TestCatalogValidation:
         catalog_tables: dict[str, tuple[str, ...]],
         error: str | None,
     ) -> None:
-        compiler = ETLCompiler(StubCatalog(tables=catalog_tables))
+        compiler = ETLCompiler(InMemoryCatalog(tables=catalog_tables))
         if error is None:
             compiler.compile(pipeline_type)
             return

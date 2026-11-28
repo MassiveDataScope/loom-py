@@ -7,14 +7,14 @@ from typing import Any
 
 import pytest
 
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import active_channel
 from loom.core.errors import UndeclaredStoreWrite
 from loom.core.job.context import add_pending_dispatch
-from loom.core.repository.mutation import MutationEvent
-from loom.core.repository.sqlalchemy.transactional import transactional
-from loom.core.uow.scope import current_scope
+from loom.core.stores.repository.mutation import MutationEvent
+from loom.core.stores.uow.scope import current_scope
 from loom.core.use_case.use_case import UseCase
+from loom.stores.sqlalchemy.transactional import transactional
 
 from .._lifecycle_doubles import Broker, Dispatching, Log, Ok, context_is_clean
 from .conftest import CountingSessionManager, LifecycleCase, sqlite_session_manager
@@ -38,12 +38,12 @@ class _Service:
 
 class TestNestedExecutionOwnership:
     async def test_inner_joins_the_outer_unit_of_work_and_channel_one_drain(
-        self, case: LifecycleCase, executor: RuntimeExecutor, broker: Broker, log: Log
+        self, case: LifecycleCase, executor: UseCaseExecutor, broker: Broker, log: Log
     ) -> None:
         class _Outer(UseCase[Any, str]):
             async def execute(self, value: str) -> str:
                 inner = await executor.execute(Dispatching(broker), params={"value": "inner"})
-                broker.dispatch("outer")
+                broker.dispatch_after_commit("outer")
                 return inner
 
         await executor.execute(_Outer(), params={"value": "x"})
@@ -65,7 +65,7 @@ class TestNestedExecutionOwnership:
         assert context_is_clean()
 
     async def test_a_writing_inner_under_a_read_only_outer_is_refused(
-        self, case: LifecycleCase, executor: RuntimeExecutor, broker: Broker
+        self, case: LifecycleCase, executor: UseCaseExecutor, broker: Broker
     ) -> None:
         class _ReadOnlyOuter(UseCase[Any, str]):
             read_only = True
@@ -81,7 +81,7 @@ class TestNestedExecutionOwnership:
         assert context_is_clean()
 
     async def test_an_execution_started_from_a_post_commit_action_opens_its_own_lifecycle(
-        self, case: LifecycleCase, executor: RuntimeExecutor, log: Log
+        self, case: LifecycleCase, executor: UseCaseExecutor, log: Log
     ) -> None:
         class _FromAction(UseCase[Any, str]):
             async def execute(self, value: str) -> str:

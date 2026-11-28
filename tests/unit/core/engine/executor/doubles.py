@@ -11,8 +11,8 @@ from loom.core.authz.elevation import elevate_scope, elevated_scopes
 from loom.core.command import Command
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope as DiScope
-from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import active_channel
 from loom.core.execution import (
     ExecutionContext,
@@ -23,12 +23,12 @@ from loom.core.execution import (
 from loom.core.identity import Identity, current_caller, current_identity
 from loom.core.job.job import Job
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import RepoFor
-from loom.core.repository.registration import classify_key
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import Participant
-from loom.core.uow.scope import Frame, InvocationScope, current_scope
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.repository import RepoFor
+from loom.core.stores.repository.registration import classify_key
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.coordinator import Participant
+from loom.core.stores.uow.scope import Frame, InvocationScope, current_scope
 from loom.core.use_case import Joined
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.kinds import declare_kinds
@@ -54,64 +54,13 @@ PROMOTED_ALICE = Identity(subject="acme-alice", mechanism="test", roles=("admin"
 # ---------------------------------------------------------------------------
 
 
-class AcmeRecordingLogger:
-    """A logger keeping every line it is given, with its fields."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-
-    @property
-    def messages(self) -> list[str]:
-        return [event for event, _ in self.calls]
-
-    def bind(self, **fields: Any) -> AcmeRecordingLogger:
-        return self
-
-    def debug(self, event: str, **fields: Any) -> None:
-        self.calls.append((event, fields))
-
-    def info(self, event: str, **fields: Any) -> None:
-        self.calls.append((event, fields))
-
-    def warning(self, event: str, **fields: Any) -> None:
-        self.calls.append((event, fields))
-
-    def error(self, event: str, **fields: Any) -> None:
-        self.calls.append((event, fields))
-
-    def exception(self, event: str, **fields: Any) -> None:
-        self.calls.append((event, fields))
-
-
-class AcmeErrorRecorder:
-    """A logger keeping each error line it is given, with its fields."""
-
-    def __init__(self) -> None:
-        self.errors: list[tuple[str, dict[str, Any]]] = []
-
-    def bind(self, **fields: Any) -> AcmeErrorRecorder:
-        return self
-
-    def debug(self, event: str, **fields: Any) -> None: ...
-
-    def info(self, event: str, **fields: Any) -> None: ...
-
-    def warning(self, event: str, **fields: Any) -> None: ...
-
-    def error(self, event: str, **fields: Any) -> None:
-        self.errors.append((event, fields))
-
-    def exception(self, event: str, **fields: Any) -> None:
-        self.errors.append((event, fields))
-
-
 class AcmeJournal:
     """What happened, in order: constructors, executions and runtime events."""
 
     def __init__(self) -> None:
         self.entries: list[str] = []
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         self.entries.append(event.kind.name)
 
 
@@ -126,7 +75,7 @@ class AcmeSlowStart:
     def __init__(self) -> None:
         self.done_ms: float | None = None
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         if event.kind is EventKind.EXEC_START:
             time.sleep(self.DELAY_S)
         elif event.kind is EventKind.EXEC_DONE:
@@ -171,23 +120,27 @@ class AcmeBroken(UseCase[Any, None]):
         return None
 
 
+class AcmeUnrecoverableError(LookupError):
+    is_retryable = False
+
+
 class AcmeBrokenJob(Job[None]):
-    """Its constructor fails."""
+    """Its constructor fails, for good."""
 
     def __init__(self) -> None:
-        raise LookupError("acme job constructor failed")
+        raise AcmeUnrecoverableError("acme job constructor failed")
 
     async def execute(self) -> None:
         return None
 
 
 class AcmeOnFailure:
-    """A job failure callback recording each message it is given."""
+    """A job failure callback recording the type and code of each failure it is given."""
 
-    calls: list[str] = []
+    calls: list[tuple[str, str | None]] = []
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
-        self.calls.append(exc_msg)
+    def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None:
+        self.calls.append((exc_type, exc_code))
 
 
 def serves_session(container: LoomContainer) -> None:
@@ -255,7 +208,7 @@ class AcmeAnyone(UseCase[Any, Seen]):
 class AcmeNests(UseCase[Any, Seen]):
     """Runs ``inner`` nested, as ``identity`` (``None`` to inherit)."""
 
-    def __init__(self, executor: RuntimeExecutor, inner: UseCase[Any, Seen], identity: Any) -> None:
+    def __init__(self, executor: UseCaseExecutor, inner: UseCase[Any, Seen], identity: Any) -> None:
         self.executor, self.inner, self.identity = executor, inner, identity
 
     async def execute(self) -> Seen:
@@ -395,7 +348,7 @@ class AcmeAudited(Run):
 
 WRITE = Permission("rows.write")
 CATALOG = RoleCatalog((WRITE,), (Role("editor", (WRITE,)),))
-BOUNDARY = Scope.of("b1")
+BOUNDARY = Scope.from_segments("b1")
 DECISION = Decision(allowed=True, grant=Grant(subject="ana", role="editor", scope=BOUNDARY))
 
 

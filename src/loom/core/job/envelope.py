@@ -9,6 +9,7 @@ from typing import Any
 import msgspec
 
 from loom.core.errors import MalformedJobMessage
+from loom.core.errors.summary import ErrorSummary
 from loom.core.identity import Delegation, Identity, reset_identity, set_identity
 from loom.core.job.job import Job
 from loom.core.tracing import active_trace_id
@@ -26,10 +27,13 @@ class JobEnvelope(msgspec.Struct, frozen=True, kw_only=True):
     """Public JSON wire contract: ``job``, ``payload``, ``params``, ``trace_id``, ``identity``.
 
     ``job`` accepts a bare job qualname or ``loom.job.<qualname>``.
+    ``task_id`` is optional.
     ``payload`` may be null; consumers treat it as an empty mapping.
     ``identity`` carries the deadline of the caller's delegation under
     ``until`` (a Unix time); the worker gives a caller without one a
-    delegation from its own clock.
+    delegation from its own clock. ``task_id`` is the id of the message the
+    transport assigned, for a transport that cannot read it from the message
+    itself; it is absent from a message that was never sent.
     """
 
     job: str
@@ -37,6 +41,7 @@ class JobEnvelope(msgspec.Struct, frozen=True, kw_only=True):
     params: dict[str, Any] | None = None
     trace_id: str | None = None
     identity: dict[str, Any] | None = None
+    task_id: str | None = None
 
     @property
     def job_name(self) -> str:
@@ -51,6 +56,7 @@ def encode_job_message(
     params: dict[str, Any] | None,
     identity: Identity | Delegation | None,
     trace_id: str | None = None,
+    task_id: str | None = None,
 ) -> bytes:
     """The JSON :class:`JobEnvelope` that runs *job_type* as *identity*.
 
@@ -61,6 +67,7 @@ def encode_job_message(
         identity: The caller, or the caller with the deadline of its
             delegation (:func:`~loom.core.identity.captured_delegation`).
         trace_id: The trace the job continues.
+        task_id: The id the transport gave the message, when it carries it in the body.
 
     Returns:
         The encoded envelope.
@@ -68,7 +75,14 @@ def encode_job_message(
     delegation = identity if isinstance(identity, Delegation) else Delegation(identity, None)
     job, who = wire_job_name(job_type.__qualname__), delegation.encoded()
     return msgspec.json.encode(
-        JobEnvelope(job=job, payload=payload or {}, params=params, trace_id=trace_id, identity=who)
+        JobEnvelope(
+            job=job,
+            payload=payload or {},
+            params=params,
+            trace_id=trace_id,
+            identity=who,
+            task_id=task_id,
+        )
     )
 
 
@@ -77,7 +91,7 @@ def decode_job_envelope(body: str) -> JobEnvelope:
     try:
         return msgspec.json.decode(body, type=JobEnvelope)
     except (msgspec.DecodeError, msgspec.ValidationError, TypeError) as exc:
-        raise MalformedJobMessage(str(exc)) from exc
+        raise MalformedJobMessage(ErrorSummary.of(exc).describe()) from exc
 
 
 @contextmanager
@@ -91,9 +105,21 @@ def job_context(trace_id: str | None, identity: dict[str, Any] | None) -> Iterat
     unreadable deadline has expired, so the job's execution is refused.
     """
     delegation = Delegation.decoded(identity)
+    with resumed_delegation(delegation, trace_id):
+        yield delegation.caller
+
+
+@contextmanager
+def resumed_delegation(delegation: Delegation, trace_id: str | None) -> Iterator[None]:
+    """Act as *delegation*'s caller until its deadline, in *trace_id*, restoring both after.
+
+    What every consumer of a job does before running it: the caller and the
+    trace are the dispatch's, never what the consumer's context held. No caller
+    acts as no one; no trace leaves the context's trace untouched.
+    """
     token = set_identity(delegation.caller, until=delegation.until)
     try:
         with active_trace_id(trace_id or None):
-            yield delegation.caller
+            yield
     finally:
         reset_identity(token)

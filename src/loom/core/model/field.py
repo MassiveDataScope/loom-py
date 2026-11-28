@@ -6,18 +6,11 @@ from typing import Any, Literal, cast
 
 import msgspec
 
-from loom.core.model.enums import OnDelete, ServerDefault, ServerOnUpdate
+from loom.core.model.enums import KeyFill, OnDelete, ServerDefault, ServerOnUpdate
+from loom.core.model.keys import KeyHash
+from loom.core.model.types import ColumnType
 
 Reach = Literal["read", "write", "both"]
-
-
-@dataclass(frozen=True, slots=True)
-class ColumnType:
-    """Backend column type descriptor stored inside ``Annotated[...]``."""
-
-    type_name: str
-    args: tuple[Any, ...] = ()
-    kwargs: dict[str, Any] = dataclass_field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +36,18 @@ class Field:
     scope: str | None = None
     on: Reach = "both"
     elevable: bool = False
+    derived: KeyHash | None = None
+
+    @property
+    def key_fill(self) -> KeyFill | None:
+        """How the store fills this column when it is a key, ``None`` when the frame supplies it."""
+        if self.autoincrement:
+            return KeyFill.AUTOINCREMENT
+        if self.derived is not None:
+            return KeyFill.DERIVED
+        if self.server_default is not None:
+            return KeyFill.SERVER_DEFAULT
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,8 +73,13 @@ def ColumnField(
     default: Any = msgspec.UNSET,
     length: int | None = None,
     db_type: ColumnType | None = None,
+    derived: KeyHash | None = None,
 ) -> Any:
-    """Declare column metadata without using explicit ``Annotated`` syntax."""
+    """Declare column metadata without using explicit ``Annotated`` syntax.
+
+    ``derived`` marks the single primary-key field the repository fills from the
+    model's ``__business_key__`` with that formula.
+    """
     selected_type = db_type or column_type
     return cast(
         Any,
@@ -87,9 +97,20 @@ def ColumnField(
                 on_delete=on_delete,
                 default=default,
                 length=length,
+                derived=derived,
             ),
         ),
     )
+
+
+def CreatedAtField() -> Any:
+    """Declare the column the store stamps with the time of the row's insertion."""
+    return ColumnField(server_default=ServerDefault.NOW)
+
+
+def UpdatedAtField() -> Any:
+    """Declare the column the store stamps with the time of the row's insertion and every update."""
+    return ColumnField(server_default=ServerDefault.NOW, server_onupdate=ServerOnUpdate.NOW)
 
 
 def ScopedField(

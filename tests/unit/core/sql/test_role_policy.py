@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from loom.core.errors import Forbidden, NotFound
-from loom.core.sql.abc import (
+from loom.core.stores.sql.abc import (
     RoleNotAllowedError,
     RoleRequiredError,
     UnknownConnectionError,

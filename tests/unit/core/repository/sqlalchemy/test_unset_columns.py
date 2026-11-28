@@ -9,13 +9,13 @@ import msgspec
 import pytest
 from sqlalchemy import text
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import CursorCodec
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+from loom.stores.sqlalchemy.session_manager import SessionManager
 
 
 class _Badge(BaseModel):
@@ -48,12 +48,12 @@ async def session_manager() -> AsyncIterator[SessionManager]:
     async with manager.engine.begin() as connection:
         await connection.run_sync(compiled.metadata.create_all)
     yield manager
-    await manager.dispose()
+    await manager.close()
 
 
 @pytest.fixture
-def repo(session_manager: SessionManager) -> RepositorySQLAlchemy[_Badge, int]:
-    return RepositorySQLAlchemy(
+def repo(session_manager: SessionManager) -> SQLAlchemyRepository[_Badge, int]:
+    return SQLAlchemyRepository(
         session_manager=session_manager,
         model=_Badge,
         cursor_codec=CursorCodec(signing="ephemeral"),
@@ -71,7 +71,7 @@ async def _stored_row(session_manager: SessionManager, badge_id: int) -> tuple[A
 
 class TestUnsetColumns:
     async def test_an_unset_field_left_out_on_create_is_stored_as_null(
-        self, repo: RepositorySQLAlchemy[_Badge, int], session_manager: SessionManager
+        self, repo: SQLAlchemyRepository[_Badge, int], session_manager: SessionManager
     ) -> None:
         created = await repo.create(_CreateBadge(label="first"))
 
@@ -79,7 +79,7 @@ class TestUnsetColumns:
         assert await repo.get_by_id(created.id) == _Badge(id=created.id, label="first", note=None)
 
     async def test_an_unset_field_given_on_create_is_stored_as_its_scalar_value(
-        self, repo: RepositorySQLAlchemy[_Badge, int], session_manager: SessionManager
+        self, repo: SQLAlchemyRepository[_Badge, int], session_manager: SessionManager
     ) -> None:
         created = await repo.create(_CreateBadge(label="first", note="kept"))
 

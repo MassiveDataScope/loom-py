@@ -32,6 +32,8 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
+from loom.core.errors import InvalidType, InvalidValue
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io.sources._serialization import _record_serialization_failure
 
 _log = logging.getLogger(__name__)
@@ -63,10 +65,10 @@ def normalize_bson_doc(
         New dict safe to pass to ``pl.from_dicts()``.
 
     Raises:
-        ValueError: When document nesting exceeds :data:`_MAX_DEPTH`.
+        InvalidValue: When document nesting exceeds :data:`_MAX_DEPTH`.
     """
     if _depth > _MAX_DEPTH:
-        raise ValueError(
+        raise InvalidValue(
             f"normalize_bson_doc: document exceeds maximum nesting depth of {_MAX_DEPTH}."
         )
     return {str(k): _normalize(v, _depth + 1, extended_json) for k, v in doc.items()}
@@ -78,25 +80,18 @@ def _normalize_bson_type(value: object, depth: int, extjson: bool) -> object:
     if callable(getattr(value, "items", None)):
         if type_name not in _warned_bson_types:
             _warned_bson_types.add(type_name)
-            _log.warning(
-                "normalize_bson_doc: unknown bson dict-like %s"
-                " — normalizing via .items(); add handler to _NORMALIZERS if frequent",
-                type_name,
-            )
+            _log.warning(EtlEvent.BSON_MAPPING_UNKNOWN, extra={EtlKey.VALUE_TYPE: type_name})
         try:
             return {str(k): _normalize(v, depth + 1, extjson) for k, v in value.items()}  # type: ignore[attr-defined]
         except (TypeError, AttributeError, ValueError) as exc:
             _log.warning(
-                "normalize_bson_doc: .items() failed for %s: %s — replacing with null",
-                type_name,
-                exc,
+                EtlEvent.BSON_MAPPING_FAILED,
+                extra={EtlKey.VALUE_TYPE: type_name},
+                exc_info=exc,
             )
     elif type_name not in _warned_bson_types:
         _warned_bson_types.add(type_name)
-        _log.warning(
-            "normalize_bson_doc: unknown bson type %s — cannot normalize, replacing with null",
-            type_name,
-        )
+        _log.warning(EtlEvent.BSON_TYPE_UNKNOWN, extra={EtlKey.VALUE_TYPE: type_name})
     return None
 
 
@@ -192,10 +187,7 @@ def _normalize_mapping(value: Mapping[str, Any], depth: int, extjson: bool) -> o
 
 def _normalize_unknown(value: object) -> object:
     """Non-bson unknown type: str() fallback preserved (avoids Polars Object dtype columns)."""
-    _log.warning(
-        "normalize_bson_doc: unknown non-bson type %s — using str() fallback",
-        type(value).__name__,
-    )
+    _log.warning(EtlEvent.SOURCE_TYPE_STRINGIFIED, extra={EtlKey.VALUE_TYPE: type(value).__name__})
     try:
         return str(value)
     except Exception as exc:  # noqa: BLE001
@@ -205,7 +197,9 @@ def _normalize_unknown(value: object) -> object:
 
 def _normalize(value: object, depth: int, extjson: bool = False) -> object:
     if depth > _MAX_DEPTH:
-        raise ValueError(f"normalize_bson_doc: nested value exceeds maximum depth of {_MAX_DEPTH}.")
+        raise InvalidValue(
+            f"normalize_bson_doc: nested value exceeds maximum depth of {_MAX_DEPTH}."
+        )
     if value is None or isinstance(value, (bool, int, float, str, bytes)):
         return value
     if isinstance(value, datetime):
@@ -236,7 +230,7 @@ def _normalize_decimal128(value: object) -> float:
 def _normalize_binary(value: object) -> bytes:
     if isinstance(value, (bytes, bytearray)):
         return bytes(value)
-    raise TypeError(f"Expected bytes-like BSON Binary, got {type(value)!r}")
+    raise InvalidType(f"Expected bytes-like BSON Binary, got {type(value)!r}")
 
 
 def _normalize_timestamp(value: object) -> int:

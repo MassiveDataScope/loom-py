@@ -9,17 +9,18 @@ from __future__ import annotations
 
 import copy
 import re
-import types
 from collections.abc import Iterator, Mapping, Sequence
 from functools import cache
-from typing import Any, Generic, TypeVar, Union, get_args, get_origin
+from typing import Any, Generic, TypeVar, get_origin
 
 import msgspec
+
+from loom.core.errors import InvalidType, InvalidValue
+from loom.core.model.inference import Annotation
 
 T = TypeVar("T")
 
 MASK = "***"
-_UNION = (Union, types.UnionType)
 _SECRET_TOKENS = frozenset({"password", "passwd", "pwd", "secret", "token", "apikey", "credential"})
 _EXACT_NAMES = frozenset({"webhook_url", "authorization", "cookie", "authmechanismproperties"})
 _KEY_EXCEPTIONS = frozenset({"primary_key", "foreign_key", "partition_key", "sort_key"})
@@ -33,14 +34,14 @@ class Secret(Generic[T]):
         value: The credential. A blank string is refused.
 
     Raises:
-        ValueError: When *value* is a blank string. The message does not include it.
+        InvalidValue: When *value* is a blank string. The message does not include it.
     """
 
     __slots__ = ("_value",)
 
     def __init__(self, value: T) -> None:
         if isinstance(value, str) and not value.strip():
-            raise ValueError("must not be empty")
+            raise InvalidValue("must not be empty")
         self._value = value
 
     def reveal(self) -> T:
@@ -80,8 +81,8 @@ class Dsn:
         value: The address as written.
 
     Raises:
-        TypeError: When *value* is not text.
-        ValueError: When the address carries an empty password. The message
+        InvalidType: When *value* is not text.
+        InvalidValue: When the address carries an empty password. The message
             does not include the address.
     """
 
@@ -89,7 +90,7 @@ class Dsn:
 
     def __init__(self, value: str) -> None:
         if not isinstance(value, str):
-            raise TypeError("Expected `str`")
+            raise InvalidType("Expected `str`")
         _reject_empty_password(value)
         self._value = value
 
@@ -143,15 +144,15 @@ class RedactedMap(Mapping[str, Any]):
         value: The mapping as written.
 
     Raises:
-        TypeError: When *value* is not a mapping.
-        ValueError: When a secret-named entry is a blank string.
+        InvalidType: When *value* is not a mapping.
+        InvalidValue: When a secret-named entry is a blank string.
     """
 
     __slots__ = ("_value",)
 
     def __init__(self, value: Mapping[str, Any]) -> None:
         if not isinstance(value, Mapping):
-            raise TypeError("Expected `object`")
+            raise InvalidType("Expected `object`")
         copied = _owned_mapping(value)
         _reject_blank_secret_entries(copied, "")
         self._value = copied
@@ -301,17 +302,17 @@ def ensure_redacted(struct: msgspec.Struct) -> None:
     leak, because a frozen struct cannot wrap it afterwards.
 
     Raises:
-        TypeError: Naming the field and the type it must hold, never the value.
-        ValueError: When an address field is blank, naming the field.
+        InvalidType: Naming the field and the type it must hold, never the value.
+        InvalidValue: When an address field is blank, naming the field.
     """
     for name, kind in _redacted_fields(type(struct)):
         value = getattr(struct, name)
         if value is None:
             continue
         if not isinstance(value, kind):
-            raise TypeError(f"{name} must be {kind.__name__}")
+            raise InvalidType(f"{name} must be {kind.__name__}")
         if kind is Dsn and not str(value).strip():
-            raise ValueError(f"{name} must not be empty")
+            raise InvalidValue(f"{name} must not be empty")
 
 
 @cache
@@ -327,7 +328,7 @@ def _redacted_fields(
 
 
 def _redaction_kind(annotation: Any) -> type[Any] | None:
-    for option in _union_members(annotation):
+    for option in Annotation(annotation).inner_args or (annotation,):
         origin = get_origin(option) or option
         if origin is Secret:
             return Secret
@@ -336,12 +337,6 @@ def _redaction_kind(annotation: Any) -> type[Any] | None:
         if option is RedactedMap:
             return RedactedMap
     return None
-
-
-def _union_members(annotation: Any) -> tuple[Any, ...]:
-    if get_origin(annotation) in _UNION:
-        return tuple(arg for arg in get_args(annotation) if arg is not type(None))
-    return (annotation,)
 
 
 def _tokens(name: str) -> list[str]:
@@ -379,10 +374,10 @@ def _reject_empty_password(value: str) -> None:
         if at != -1:
             userinfo = rest[:at]
             if ":" in userinfo and not userinfo.partition(":")[2]:
-                raise ValueError("password must not be empty")
+                raise InvalidValue("password must not be empty")
     for name, mark, item in _query_items(query):
         if mark and is_secret_name(name) and not item.strip():
-            raise ValueError("password must not be empty")
+            raise InvalidValue("password must not be empty")
 
 
 def _query_items(query: str) -> list[tuple[str, str, str]]:
@@ -463,7 +458,7 @@ def _reject_blank_secret_entries(value: object, prefix: str) -> None:
             name = str(key)
             path = f"{prefix}.{name}" if prefix else name
             if is_secret_name(name) and isinstance(item, str) and not item.strip():
-                raise ValueError(f"{path} must not be empty")
+                raise InvalidValue("a secret entry must not be empty")
             _reject_blank_secret_entries(item, path)
         return
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):

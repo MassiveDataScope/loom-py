@@ -19,12 +19,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
 from loom.core.config import ConfigContext, ConfigError
-from loom.core.locator import Application
-from loom.core.persistence.profile import SERVER_PROFILE
-from loom.core.repository.sqlalchemy.backend import SQLAlchemyBackend
-from loom.core.repository.sqlalchemy.rls import create_schema, verify
-from loom.core.repository.sqlalchemy.rls.integrity import startup_problems
-from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources, register_scope_source
+from loom.core.stores.profile import SERVER_PROFILE
+from loom.stores.sqlalchemy.alembic import StoreSchema
+from loom.stores.sqlalchemy.plugin import SQLAlchemyStorePlugin
+from loom.stores.sqlalchemy.rls import create_schema, verify
+from loom.stores.sqlalchemy.rls.integrity import startup_problems
+from loom.stores.sqlalchemy.rls.sources import clear_scope_sources, register_scope_source
 from tests.helpers.persistence import build_backend
 from tests.integration.agnosticism import notes
 from tests.integration.rls.conftest import BootstrapFactory, ScopedDatabase, application_for
@@ -39,7 +39,7 @@ class Installed:
     schema: str
     guard: str
     database: ScopedDatabase
-    application: Application
+    application: StoreSchema
 
 
 def _raw(url: str) -> str:
@@ -403,14 +403,17 @@ class TestStaticGuard:
                         "scopes": dict(notes.SCOPE_BINDINGS),
                         "guard": installed.guard,
                     },
-                }
+                },
+                "settings": {"cursors": {"signing": "ephemeral"}},
             },
-            "persistence": {"cursors": {"signing": "ephemeral"}},
         }
         register_scope_source("editor", lambda: None)
         try:
             wiring = build_backend(
-                SQLAlchemyBackend(), ConfigContext.from_dict(config), notes.MODELS, SERVER_PROFILE
+                SQLAlchemyStorePlugin(),
+                ConfigContext.from_dict(config),
+                notes.MODELS,
+                SERVER_PROFILE,
             )
             wiring.prepare_models(notes.MODELS)
             with pytest.raises(ConfigError, match="guard.relation_grants"):

@@ -29,29 +29,34 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
-from loom.core.checks import REST_CHECKS, Finding, deploy_check
-from loom.core.config.keys import ConfigKey
+from loom.core.checks import CheckSet, Finding
+from loom.core.config.keys import ConfigSection
 
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
 
-AUTHENTICATION_CHECK: Final = f"{REST_CHECKS}.E001"
+CHECKS: Final = CheckSet()
+"""Checks of ``app.rest``, run when the process serves HTTP or declares that section."""
+
+_AREA: Final = "loom.rest"
+
+AUTHENTICATION_CHECK: Final = f"{_AREA}.E001"
 """Id of the check refusing a deployed API that authenticates no caller."""
 
-SCHEMA_CHECK: Final = f"{REST_CHECKS}.W001"
+SCHEMA_CHECK: Final = f"{_AREA}.W001"
 """Id of the check warning that a deployed API publishes its schema."""
 
-AUDIENCE_CHECK: Final = f"{REST_CHECKS}.E002"
+AUDIENCE_CHECK: Final = f"{_AREA}.E002"
 """Id of the check refusing a deployed jwt section that names no audience."""
 
-ISSUER_CHECK: Final = f"{REST_CHECKS}.E003"
+ISSUER_CHECK: Final = f"{_AREA}.E003"
 """Id of the check refusing a deployed jwt section that names no issuer."""
 
 _AUTH_KEY = "app.rest.auth"
 _SCHEMA_KEYS = ("docs_url", "redoc_url", "openapi_url")
 
 
-@deploy_check(AUTHENTICATION_CHECK)
+@CHECKS.register(AUTHENTICATION_CHECK)
 def _authentication_configured(config: ConfigContext) -> Finding | None:
     unauthenticated = [auth.key for auth in _auth_sections(config) if not auth.authenticates]
     if not unauthenticated:
@@ -97,7 +102,7 @@ class _AuthSection:
 
 def _auth_sections(config: ConfigContext) -> list[_AuthSection]:
     """``app.rest.auth`` and the trigger ``auth`` of each function of ``lambda.functions``."""
-    keys = [_AUTH_KEY, *_trigger_auth_keys(config.raw(f"{ConfigKey.LAMBDA}.functions", {}))]
+    keys = [_AUTH_KEY, *_trigger_auth_keys(config.raw(f"{ConfigSection.LAMBDA}.functions", {}))]
     return [_AuthSection.read(key, config.raw(key)) for key in keys]
 
 
@@ -105,7 +110,7 @@ def _trigger_auth_keys(functions: object) -> list[str]:
     """The ``trigger.auth`` key of each function that declares one."""
     declared = functions.items() if isinstance(functions, dict) else ()
     return [
-        f"{ConfigKey.LAMBDA}.functions.{name}.trigger.auth"
+        f"{ConfigSection.LAMBDA}.functions.{name}.trigger.auth"
         for name, function in declared
         if _trigger_of(function).get("auth") is not None
     ]
@@ -116,7 +121,7 @@ def _trigger_of(function: object) -> dict[str, Any]:
     return trigger if isinstance(trigger, dict) else {}
 
 
-@deploy_check(SCHEMA_CHECK)
+@CHECKS.register(SCHEMA_CHECK)
 def _schema_published(config: ConfigContext) -> Finding | None:
     rest = config.raw("app.rest", {})
     written = rest if isinstance(rest, dict) else {}
@@ -129,12 +134,12 @@ def _schema_published(config: ConfigContext) -> Finding | None:
     )
 
 
-@deploy_check(AUDIENCE_CHECK)
+@CHECKS.register(AUDIENCE_CHECK)
 def _jwt_audience_named(config: ConfigContext) -> Finding | None:
     return _jwt_claim_named(config, "audience", "aud")
 
 
-@deploy_check(ISSUER_CHECK)
+@CHECKS.register(ISSUER_CHECK)
 def _jwt_issuer_named(config: ConfigContext) -> Finding | None:
     return _jwt_claim_named(config, "issuer", "iss")
 

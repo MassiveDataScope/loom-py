@@ -1,43 +1,51 @@
-"""Per-context log fields, bound without the caller importing the logging backend."""
+"""Fields that every record emitted inside a block carries."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from typing import Any
+from contextvars import ContextVar
+from types import MappingProxyType
 
-from structlog.contextvars import bind_contextvars, reset_contextvars
+_NO_FIELDS: Mapping[str, object] = MappingProxyType({})
+_fields: ContextVar[Mapping[str, object]] = ContextVar("loom_log_fields", default=_NO_FIELDS)
+
+
+def current_log_fields() -> Mapping[str, object]:
+    """The fields of the enclosing :func:`log_context` blocks, innermost wins."""
+    return _fields.get()
 
 
 @contextmanager
-def log_context(**values: Any) -> Iterator[None]:
-    """Add *values* to every log record emitted inside the block.
+def log_context(fields: Mapping[str, object] = _NO_FIELDS, /, **named: object) -> Iterator[None]:
+    """Add *fields* to every log record emitted inside the block.
 
-    Records emitted through :func:`~loom.core.logger.get_logger` with its
-    default factory carry them; plain stdlib records carry them only under the
-    formatter :func:`~loom.core.logger.configure_logging` installs.
+    The records of the application and of its libraries carry them once
+    :func:`~loom.core.logger.install.configure_logging` has installed loom's
+    formats, which derive them when they write a record. The fields live in a context
+    variable, so they follow the current thread or asyncio task and never reach a
+    concurrent request. Blocks nest: an inner key shadows an outer one and the outer
+    value returns on exit, normal or by exception. Enter and exit a block in the same context. As a
+    decorator it binds only while the call itself runs, which for an ``async
+    def`` is the creation of the coroutine: use a ``with`` block inside it.
 
-    The values live in a context variable, so they follow the current thread
-    or asyncio task and never reach a concurrent request.  On exit, normal or
-    by exception, each key regains the value it had before the block.  The
-    block must be entered and exited in the same context: exiting it in
-    another one raises ``ValueError``.  As a decorator it binds only while the
-    call itself runs, which for an ``async def`` is the creation of the
-    coroutine, so use it as a ``with`` block inside the coroutine instead.
+    A dotted key is not a keyword: pass the fields as a mapping,
+    ``log_context({LogField.JOB: name})``.
 
     Args:
-        **values: Fields to attach, e.g. ``request_id="..."``.
+        fields: Fields to attach under their key, ``LogField`` members included.
+        **named: Fields to attach under their keyword, e.g. ``invoice_id="..."``.
 
     Yields:
-        ``None``, with *values* bound.
+        ``None``, with *fields* bound.
 
     Example::
 
-        with log_context(request_id=request_id):
-            logger.info("audit.recorded")  # carries request_id
+        with log_context(invoice_id=invoice_id):
+            log.info(InvoiceEvent.ISSUED)
     """
-    tokens = bind_contextvars(**values)
+    token = _fields.set({**_fields.get(), **fields, **named})
     try:
         yield
     finally:
-        reset_contextvars(**tokens)
+        _fields.reset(token)

@@ -5,7 +5,7 @@ from typing import Any, cast
 import pytest
 
 from loom.core.command import Command, Patch
-from loom.core.errors import RuleViolation, RuleViolations
+from loom.core.errors import InvalidUse, RuleViolationError, RuleViolationsError
 from loom.core.use_case import F
 from loom.core.use_case.rule import Rule
 
@@ -23,14 +23,14 @@ class AcmeRuledPatch(Command, frozen=True):
 def email_not_disposable(command: AcmeRuledUser, fields_set: frozenset[str]) -> None:
     del fields_set
     if command.email.endswith("@throwaway.com"):
-        raise RuleViolation("email", "Disposable emails not allowed")
+        raise RuleViolationError("email", "Disposable emails not allowed")
 
 
 def email_format_rule_patch(cmd: AcmeRuledPatch, fields_set: frozenset[str]) -> None:
     if "email" not in fields_set:
         return
     if isinstance(cmd.email, str) and "@" not in cmd.email:
-        raise RuleViolation("email", "Invalid email format")
+        raise RuleViolationError("email", "Invalid email format")
 
 
 def is_disposable(command: Command, _fields_set: frozenset[str]) -> bool:
@@ -58,35 +58,35 @@ def forbid_user_one(
     return user_id == "1"
 
 
-class TestRuleViolation:
+class TestRuleViolationError:
     def test_exposes_field_and_message(self) -> None:
-        exc = RuleViolation("email", "Invalid email")
+        exc = RuleViolationError("email", "Invalid email")
 
         assert exc.field == "email"
         assert exc.message == "Invalid email"
         assert str(exc) == "email: Invalid email"
 
 
-class TestRuleViolations:
+class TestRuleViolationsError:
     def test_accumulates_multiple_violations(self) -> None:
-        v1 = RuleViolation("email", "Invalid email")
-        v2 = RuleViolation("name", "Name required")
-        exc = RuleViolations([v1, v2])
+        v1 = RuleViolationError("email", "Invalid email")
+        v2 = RuleViolationError("name", "Name required")
+        exc = RuleViolationsError([v1, v2])
 
         assert len(exc.violations) == 2
         assert exc.violations[0].field == "email"
         assert exc.violations[1].field == "name"
 
     def test_violations_stored_as_tuple(self) -> None:
-        v1 = RuleViolation("email", "Bad")
-        exc = RuleViolations([v1])
+        v1 = RuleViolationError("email", "Bad")
+        exc = RuleViolationsError([v1])
 
         assert isinstance(exc.violations, tuple)
 
     def test_str_joins_violation_messages(self) -> None:
-        v1 = RuleViolation("email", "Invalid")
-        v2 = RuleViolation("name", "Required")
-        exc = RuleViolations([v1, v2])
+        v1 = RuleViolationError("email", "Invalid")
+        v2 = RuleViolationError("name", "Required")
+        exc = RuleViolationsError([v1, v2])
 
         assert str(exc) == "email: Invalid; name: Required"
 
@@ -100,7 +100,7 @@ class TestRule:
         cmd = AcmeRuledUser(email="test@throwaway.com", name="Bob")
         fields_set = frozenset({"email", "name"})
 
-        with pytest.raises(RuleViolation) as exc_info:
+        with pytest.raises(RuleViolationError) as exc_info:
             email_not_disposable(cmd, fields_set)
 
         assert exc_info.value.field == "email"
@@ -124,7 +124,7 @@ class TestRuleDsl:
         cmd = AcmeRuledUser(email="invalid", name="Alice")
         fields_set = frozenset({"email", "name"})
 
-        with pytest.raises(RuleViolation) as exc_info:
+        with pytest.raises(RuleViolationError) as exc_info:
             rule(cmd, fields_set)
 
         assert exc_info.value.field == "email"
@@ -136,10 +136,10 @@ class TestRuleDsl:
         rule(AcmeRuledUser(email="a@b.com", name="Alice"), frozenset({"email", "name"}))
 
     def test_check_raises_returned_rule_violation(self) -> None:
-        violation = RuleViolation("contact", "Contact rejected")
+        violation = RuleViolationError("contact", "Contact rejected")
         rule = Rule.check(F(AcmeRuledUser).email, via=lambda _email: violation)
 
-        with pytest.raises(RuleViolation) as exc_info:
+        with pytest.raises(RuleViolationError) as exc_info:
             rule(AcmeRuledUser(email="a@b.com", name="Alice"), frozenset({"email", "name"}))
 
         assert exc_info.value is violation
@@ -150,7 +150,7 @@ class TestRuleDsl:
     ) -> None:
         rule = Rule.check(F(AcmeRuledUser).email, via=cast(Any, lambda _email: outcome))
 
-        with pytest.raises(TypeError, match=r"field 'email'.*returned .*or None"):
+        with pytest.raises(TypeError, match=r"returned .*or None"):
             rule(AcmeRuledUser(email="a@b.com", name="Alice"), frozenset({"email", "name"}))
 
     def test_check_rejects_message_keyword(self) -> None:
@@ -168,7 +168,7 @@ class TestRuleDsl:
         if not fails:
             rule(cmd, fields_set)
             return
-        with pytest.raises(RuleViolation) as exc_info:
+        with pytest.raises(RuleViolationError) as exc_info:
             rule(cmd, fields_set)
         assert exc_info.value.message == "Forbidden state"
 
@@ -182,7 +182,7 @@ class TestRuleDsl:
         rule(cmd_missing, fields_missing)
 
         cmd_invalid, fields_invalid = AcmeRuledPatch.from_payload({"email": "invalid"})
-        with pytest.raises(RuleViolation):
+        with pytest.raises(RuleViolationError):
             rule(cmd_invalid, fields_invalid)
 
     def test_check_when_present_supports_or_expression(self) -> None:
@@ -195,7 +195,7 @@ class TestRuleDsl:
         rule(cmd_missing, fields_missing)
 
         cmd_invalid, fields_invalid = AcmeRuledPatch.from_payload({"email": "invalid"})
-        with pytest.raises(RuleViolation):
+        with pytest.raises(RuleViolationError):
             rule(cmd_invalid, fields_invalid)
 
     def test_forbid_blocks_condition(self) -> None:
@@ -207,7 +207,7 @@ class TestRuleDsl:
         cmd = AcmeRuledUser(email="spam@throwaway.com", name="Spammer")
         fields_set = frozenset({"email", "name"})
 
-        with pytest.raises(RuleViolation):
+        with pytest.raises(RuleViolationError):
             rule(cmd, fields_set)
 
     def test_forbid_from_params_uses_runtime_context(self) -> None:
@@ -219,7 +219,7 @@ class TestRuleDsl:
         cmd = AcmeRuledUser(email="ok@example.com", name="Alice")
         fields_set = frozenset({"email", "name"})
 
-        with pytest.raises(RuleViolation) as exc_info:
+        with pytest.raises(RuleViolationError) as exc_info:
             rule(cmd, fields_set, {"user_id": "1"})
 
         assert exc_info.value.field == "user_id"
@@ -233,7 +233,7 @@ class TestRuleDsl:
         cmd = AcmeRuledUser(email="ok@example.com", name="Alice")
         fields_set = frozenset({"email", "name"})
 
-        with pytest.raises(ValueError, match="runtime context"):
+        with pytest.raises(InvalidUse, match="runtime context"):
             rule(cmd, fields_set)
 
     def test_require_present_for_non_patch_field(self) -> None:
@@ -244,7 +244,7 @@ class TestRuleDsl:
         rule = Rule.require_present(F(AcmeRuledPatch).email)
         cmd, fields_set = AcmeRuledPatch.from_payload({"name": "Alice"})
 
-        with pytest.raises(RuleViolation) as exc_info:
+        with pytest.raises(RuleViolationError) as exc_info:
             rule(cmd, fields_set)
 
         assert exc_info.value.field == "email"
@@ -255,7 +255,7 @@ class TestRuleDsl:
         ).when_present(F(AcmeRuledPatch).name)
         cmd, fields_set = AcmeRuledPatch.from_payload({"name": "Alice"})
 
-        with pytest.raises(RuleViolation) as exc_info:
+        with pytest.raises(RuleViolationError) as exc_info:
             rule(cmd, fields_set)
 
         assert (exc_info.value.field, exc_info.value.message) == ("contact", "contact needed")
@@ -286,7 +286,7 @@ class TestRuleValue:
         rule = Rule.require_present(F(AcmeRuledPatch).email).from_params("user_id")
         cmd, fields_set = AcmeRuledPatch.from_payload({"name": "Alice"})
 
-        with pytest.raises(RuleViolation):
+        with pytest.raises(RuleViolationError):
             rule(cmd, fields_set, {"user_id": 7})
 
     def test_equal_declarations_are_equal_rules(self) -> None:

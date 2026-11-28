@@ -7,15 +7,19 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Literal, Protocol, cast
 
 from confluent_kafka import Consumer as _Consumer
+from confluent_kafka import KafkaError, TopicPartition
 from confluent_kafka import Message as _RawMessage
-from confluent_kafka import TopicPartition
 
+from loom.core.errors import InternalError
+from loom.core.log_names import LogField
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
+from loom.streaming.event import StreamingEvent, StreamingKey
 from loom.streaming.kafka._config import ConsumerSettings
 from loom.streaming.kafka._errors import KafkaCommitError, KafkaPollError
 from loom.streaming.kafka._message import HEADER_CORRELATION_ID, HEADER_TRACE_ID
 from loom.streaming.kafka._record import KafkaRecord
+from loom.streaming.kafka.client._failure import failure_message
 from loom.streaming.kafka.client._retry import (
     DEFAULT_COORDINATOR_RETRY,
     CoordinatorRetryPolicy,
@@ -42,7 +46,7 @@ class KafkaConsumerClient:
 
     Args:
         settings: Typed consumer settings.
-        obs: Optional observability runtime.
+        obs: Optional observability.
         retry_policy: Backoff schedule for transient group-coordinator errors
             on offset fetch and commit.
     """
@@ -50,7 +54,7 @@ class KafkaConsumerClient:
     def __init__(
         self,
         settings: ConsumerSettings,
-        obs: ObservabilityRuntime | None = None,
+        obs: Observability | None = None,
         *,
         retry_policy: CoordinatorRetryPolicy = DEFAULT_COORDINATOR_RETRY,
         _subscribe: bool = True,
@@ -67,7 +71,7 @@ class KafkaConsumerClient:
     def unassigned(
         cls,
         settings: ConsumerSettings,
-        observability: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
         *,
         retry_policy: CoordinatorRetryPolicy = DEFAULT_COORDINATOR_RETRY,
     ) -> KafkaConsumerClient:
@@ -79,7 +83,7 @@ class KafkaConsumerClient:
 
         Args:
             settings: Typed consumer settings.
-            observability: Optional observability runtime.
+            observability: Optional observability.
             retry_policy: Backoff schedule for transient group-coordinator
                 errors.
 
@@ -126,12 +130,12 @@ class KafkaConsumerClient:
                 policy=self._retry_policy,
             )
         except Exception as exc:
-            raise KafkaCommitError(str(exc)) from exc
+            raise KafkaCommitError(failure_message(exc)) from exc
         if not results:
             return None
         result = results[0]
         if result.error is not None:
-            raise KafkaCommitError(str(result.error))
+            raise KafkaCommitError(failure_message(result.error))
         offset = result.offset
         if offset is None or offset < 0:
             return None
@@ -153,7 +157,7 @@ class KafkaConsumerClient:
         try:
             message = self._consumer.poll(timeout_ms / 1000)
         except Exception as exc:
-            raise KafkaPollError(str(exc)) from exc
+            raise KafkaPollError(failure_message(exc)) from exc
         if message is None:
             return None
         record = _checked_record(message)
@@ -183,12 +187,12 @@ class KafkaConsumerClient:
         try:
             messages = self._consumer.consume(max_records, timeout=0.001)
         except Exception as exc:
-            raise KafkaPollError(str(exc)) from exc
+            raise KafkaPollError(failure_message(exc)) from exc
         records: list[KafkaRecord[bytes]] = []
         for message in messages:
             error = message.error()
             if error is not None:
-                raise KafkaPollError(str(error))
+                raise KafkaPollError(failure_message(error))
             if message.value() is None:
                 continue
             record = _to_record(message)
@@ -234,7 +238,7 @@ class KafkaConsumerClient:
                 policy=self._retry_policy,
             )
         except Exception as exc:
-            raise KafkaCommitError(str(exc)) from exc
+            raise KafkaCommitError(failure_message(exc)) from exc
 
     def commit_offset(
         self,
@@ -261,9 +265,9 @@ class KafkaConsumerClient:
                 policy=self._retry_policy,
             )
         except Exception as exc:
-            raise KafkaCommitError(str(exc)) from exc
+            raise KafkaCommitError(failure_message(exc)) from exc
 
-    def _on_commit(self, error: object | None, partitions: list[TopicPartition]) -> None:
+    def _on_commit(self, error: KafkaError | None, partitions: list[TopicPartition]) -> None:
         """Report the outcome of an asynchronous offset commit.
 
         Asynchronous commits return before the broker answers, so a rejection
@@ -280,10 +284,13 @@ class KafkaConsumerClient:
         if error is None:
             return
         logger.error(
-            "kafka asynchronous offset commit failed: %s (partitions: %s); the group "
-            "offset did not advance, so these records will be reprocessed on restart",
-            error,
-            ", ".join(f"{part.topic}:{part.partition}@{part.offset}" for part in partitions),
+            StreamingEvent.OFFSET_COMMIT_FAILED,
+            extra={
+                LogField.ERROR_CODE: error.name(),
+                StreamingKey.PARTITIONS: [
+                    f"{part.topic}:{part.partition}@{part.offset}" for part in partitions
+                ],
+            },
         )
 
     def close(self) -> None:
@@ -308,21 +315,21 @@ def _checked_record(message: _RawMessage) -> KafkaRecord[bytes]:
     """Translate one confluent message, raising on broker-reported errors."""
     error = message.error()
     if error is not None:
-        raise KafkaPollError(str(error))
+        raise KafkaPollError(failure_message(error))
     return _to_record(message)
 
 
 def _to_record(message: _RawMessage) -> KafkaRecord[bytes]:
     value_bytes = message.value()
     if value_bytes is None:
-        raise TypeError("KafkaConsumerClient received a record without a value")
+        raise InternalError("KafkaConsumerClient received a record without a value")
     _, timestamp_ms = message.timestamp()
     headers = _normalize_headers(message.headers())
     key = message.key()
     normalized_key: bytes | str | None = None if key is None else key
     topic = message.topic()
     if topic is None:
-        raise TypeError("KafkaConsumerClient received a record without a topic")
+        raise InternalError("KafkaConsumerClient received a record without a topic")
     return KafkaRecord(
         topic=topic,
         key=normalized_key,

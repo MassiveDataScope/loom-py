@@ -38,19 +38,33 @@ Lifetime:
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable, Hashable
 from contextvars import Token
 from types import TracebackType
 from typing import Any, cast
 
-from loom.core.errors import Unauthenticated
+from loom.core.errors import InvalidUse, Unauthenticated
 from loom.core.execution.errors import ExecutionClosed, ExecutionRequired
 from loom.core.identity import Acting, Identity
 from loom.core.identity.context import _acting  # pyright: ignore[reportPrivateUsage]
-from loom.core.logger import get_logger
+from loom.core.log_names import LogEvent, LogKey
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
+
+
+class ExecutionContextEvent(LogEvent):
+    """What the execution context logs."""
+
+    CLOSED = "loom.execution.context_closed"
+
+
+class ExecutionContextKey(LogKey):
+    """The fields of an execution context record."""
+
+    READ = "loom.execution.read"
+
 
 _acting_now = _acting.get
 
@@ -71,8 +85,9 @@ _LEFT_OPEN_MESSAGE = (
     "An execution was left open or misused inside NoExecution; the execution context was closed."
 )
 _BACKGROUND_WORK = (
-    "Run a use case (executor.run(UseCase)) or dispatch a job (JobService.dispatch) from "
-    "the task: they act as the same caller, in resources of their own."
+    "Run a use case (executor.run(UseCase)) or dispatch a job "
+    "(JobService.dispatch_after_commit) from the task: they act as the same caller, "
+    "in resources of their own."
 )
 _ENDED_MESSAGE = (
     "The execution this task or thread copied its context from has ended: its resources "
@@ -157,7 +172,7 @@ class ExecutionContext:
         as the same caller.
 
         Raises:
-            RuntimeError: When this is not the execution in progress (closed
+            InvalidUse: When this is not the execution in progress (closed
                 twice, out of order, or with an execution entered over it and
                 not closed). The current :mod:`contextvars` context is then
                 closed for good: it reads as no execution and acts as no one
@@ -168,7 +183,7 @@ class ExecutionContext:
         token = self._token
         if token is None or _acting_now().work is not self:
             _acting.set(_CLOSED_CONTEXT_ACTING)
-            raise RuntimeError(_MISUSED_TOKEN_MESSAGE)
+            raise InvalidUse(_MISUSED_TOKEN_MESSAGE)
         _acting.reset(token)
         self._token = None
         self._cache = _ENDED
@@ -238,7 +253,7 @@ class _EndedCache(dict[Hashable, object]):
     def __contains__(self, key: object) -> bool:
         raise _closed(_PER_EXECUTION_VALUE)
 
-    def get(self, key: Hashable, default: object = None) -> object:  # type: ignore[override]
+    def get(self, key: Hashable, default: object = None) -> object:
         raise _closed(_PER_EXECUTION_VALUE)
 
     def __setitem__(self, key: Hashable, value: object) -> None:
@@ -250,7 +265,7 @@ _ENDED = _EndedCache()
 
 def _closed(read: str) -> ExecutionClosed:
     """Log the supported paths for background work and return the error to raise."""
-    _log.warning("execution_closed", read=read, guidance=_BACKGROUND_WORK)
+    _log.warning(ExecutionContextEvent.CLOSED, extra={ExecutionContextKey.READ: read})
     return ExecutionClosed(_ENDED_MESSAGE)
 
 
@@ -279,8 +294,8 @@ def current_execution() -> ExecutionContext | None:
     Returns:
         The current :class:`ExecutionContext`, or ``None``.
     """
-    context: Any = _acting_now().work
-    if context is None or context is _NO_EXECUTION or context.ended:
+    context = _acting_now().work
+    if not isinstance(context, ExecutionContext) or context is _NO_EXECUTION or context.ended:
         return None
     return context
 
@@ -375,9 +390,9 @@ def execution_identity() -> Identity:
     """
     acting = _acting_now()
     identity, context = acting.caller, acting.work
-    if identity is None or context is None:
+    if identity is None or not isinstance(context, ExecutionContext):
         raise _no_identity(context)
-    if context.ended:  # pyright: ignore[reportAttributeAccessIssue]
+    if context.ended:
         acting.refuse_expired()
     return identity
 
@@ -439,7 +454,7 @@ class ExecutionScope:
 
     def __enter__(self) -> None:
         if self._execution is not None:
-            raise RuntimeError("This ExecutionScope is already open")
+            raise InvalidUse("This ExecutionScope is already open")
         self._execution = ExecutionContext.entered(self._identity, self._what)
 
     def __exit__(
@@ -450,7 +465,7 @@ class ExecutionScope:
     ) -> None:
         execution = self._execution
         if execution is None:
-            raise RuntimeError("This ExecutionScope is not open")
+            raise InvalidUse("This ExecutionScope is not open")
         self._execution = None
         execution.close()
 
@@ -478,7 +493,7 @@ class NoExecution:
 
     def __enter__(self) -> None:
         if self._token is not None:
-            raise RuntimeError("This NoExecution is already open")
+            raise InvalidUse("This NoExecution is already open")
         self._token = _acting.set(_NO_EXECUTION_ACTING)
 
     def __exit__(
@@ -491,5 +506,5 @@ class NoExecution:
         self._token = None
         if _acting_now() is not _NO_EXECUTION_ACTING:
             _acting.set(_CLOSED_CONTEXT_ACTING)
-            raise RuntimeError(_LEFT_OPEN_MESSAGE)
+            raise InvalidUse(_LEFT_OPEN_MESSAGE)
         _acting.reset(token)

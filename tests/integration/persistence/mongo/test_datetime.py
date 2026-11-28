@@ -14,8 +14,8 @@ import pytest
 from pymongo import AsyncMongoClient
 
 from loom.core.model import BaseModel, ColumnField, ServerDefault
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.mongo.repository import RepositoryMongo
+from loom.core.stores.repository import CursorCodec
+from loom.stores.mongo.repository import MongoRepository
 from tests.unit.core.repository.contract.conftest import SEED
 
 from .conftest import _SessionDatabase
@@ -40,8 +40,8 @@ class EventCreate(BaseModel):
 @pytest.fixture
 async def events(
     mongo_client: AsyncMongoClient[Any], mongo_database: _SessionDatabase
-) -> RepositoryMongo[Event, str]:
-    return RepositoryMongo(
+) -> MongoRepository[Event, str]:
+    return MongoRepository(
         Event,
         mongo_client[mongo_database.name]["events"],
         cursor_codec=CursorCodec(signing="ephemeral"),
@@ -51,7 +51,7 @@ async def events(
 class TestDatetime:
     async def test_aware_column_reads_back_as_utc_with_millisecond_precision(
         self,
-        events: RepositoryMongo[Event, str],
+        events: MongoRepository[Event, str],
     ) -> None:
         created = await events.create(
             EventCreate(at=datetime(2026, 1, 3, 12, 0, 0, 123_456, tzinfo=UTC))

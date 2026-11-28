@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import queue
 import threading
 import time
@@ -12,10 +13,13 @@ from typing import Any
 
 import polars as pl
 
-from loom.core.logger import get_logger
-from loom.etl.backends.polars._dtype import loom_type_to_polars
-from loom.etl.declarative.source._from_dynamodb import FromDynamoDb
-from loom.etl.declarative.source._specs import DynamoDbSourceSpec, ExtraFieldsMode
+from loom.core.errors import InvalidUse
+from loom.core.log_names import LogField
+from loom.core.observability.span import elapsed_ms
+from loom.etl.declarative.source._from_dynamodb import FromDynamoDB
+from loom.etl.declarative.source._specs import DynamoDBSourceSpec, ExtraFieldsMode
+from loom.etl.engines.polars._dtype import frame_type_to_polars
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io.sources._dynamodb_items import normalize_dynamo_item
 from loom.etl.io.sources._dynamodb_predicate import predicate_to_dynamo
 from loom.etl.io.sources._mongo_batch import (
@@ -27,14 +31,13 @@ from loom.etl.io.sources._mongo_batch import (
 from loom.etl.io.sources._serialization import _serialization_stats
 from loom.etl.schema._schema import LoomDtype
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 _QUEUE_POLL_S = 0.1
-_SOURCE_LABEL = "DynamoDbSourceReader"
 
 
-class DynamoDbSourceReader:
-    """Read a :class:`~loom.etl.declarative.source.DynamoDbSourceSpec` into a Polars LazyFrame.
+class DynamoDBSourceReader:
+    """Read a :class:`~loom.etl.declarative.source.DynamoDBSourceSpec` into a Polars LazyFrame.
 
     DynamoDB I/O is deferred until ``.collect()`` is called. With ``schema``
     declared, zero requests are issued during ``read()`` — the scan starts
@@ -57,8 +60,8 @@ class DynamoDbSourceReader:
         from polars.io.plugins import register_io_source
 
         if self._client is None:
-            raise RuntimeError(
-                "DynamoDbSourceReader: no client configured. "
+            raise InvalidUse(
+                "DynamoDBSourceReader: no client configured. "
                 "Pass a boto3 dynamodb client at construction time."
             )
 
@@ -68,7 +71,7 @@ class DynamoDbSourceReader:
         batch_processor: BatchProcessorProtocol = MongoBatchProcessor(
             schema_str_fields=schema_str_fields,
             declared_schema=declared_schema or None,
-            source_label=_SOURCE_LABEL,
+            table=spec.table,
         )
         registered_schema = self._prepare_scan(
             spec, client, scan_kwargs, declared_schema, batch_processor
@@ -99,17 +102,17 @@ class DynamoDbSourceReader:
         )
 
     def _resolve_declared_schema(
-        self, spec: DynamoDbSourceSpec
+        self, spec: DynamoDBSourceSpec
     ) -> tuple[dict[str, pl.DataType], frozenset[str]]:
         if not spec.schema:
             return {}, frozenset()
-        field_dtypes = {col.name: loom_type_to_polars(col.dtype) for col in spec.schema}
+        field_dtypes = {col.name: frame_type_to_polars(col.dtype) for col in spec.schema}
         str_field_names = frozenset(col.name for col in spec.schema if col.dtype == LoomDtype.UTF8)
         return (field_dtypes, str_field_names)
 
     def _prepare_scan(
         self,
-        spec: DynamoDbSourceSpec,
+        spec: DynamoDBSourceSpec,
         client: Any,
         scan_kwargs: dict[str, Any],
         declared_schema: dict[str, pl.DataType],
@@ -123,7 +126,7 @@ class DynamoDbSourceReader:
         return _infer_schema_from_sample(client, scan_kwargs, spec, batch_processor)
 
 
-def _build_scan_kwargs(spec: DynamoDbSourceSpec, params_instance: Any) -> dict[str, Any]:
+def _build_scan_kwargs(spec: DynamoDBSourceSpec, params_instance: Any) -> dict[str, Any]:
     """Compile the spec into the base ``client.scan()`` keyword arguments."""
     kwargs: dict[str, Any] = {"TableName": spec.table, "Limit": spec.batch_size}
     if spec.consistent_read:
@@ -275,9 +278,9 @@ class _ParallelSegmentScanner:
             exc = future.exception()
             if exc is not None:
                 _log.warning(
-                    "dynamodb segment failed",
-                    segment=segment,
-                    error=f"{type(exc).__name__}: {exc}",
+                    EtlEvent.DYNAMODB_SEGMENT_FAILED,
+                    extra={EtlKey.SEGMENT: segment},
+                    exc_info=exc,
                 )
 
     def close(self) -> None:
@@ -293,19 +296,10 @@ class _ParallelSegmentScanner:
 def _open_item_source(
     client: Any,
     scan_kwargs: dict[str, Any],
-    spec: DynamoDbSourceSpec,
+    spec: DynamoDBSourceSpec,
     effective_limit: int | None,
 ) -> Generator[dict[str, Any], None, None] | _ParallelSegmentScanner:
-    _log.info(
-        "dynamodb scan",
-        table=spec.table,
-        filter=scan_kwargs.get("FilterExpression"),
-        projection=scan_kwargs.get("ProjectionExpression"),
-        batch_size=spec.batch_size,
-        limit=effective_limit,
-        consistent_read=spec.consistent_read,
-        total_segments=spec.total_segments,
-    )
+    _log.info(EtlEvent.SOURCE_QUERY_STARTED, extra={EtlKey.TABLE: spec.table})
     if spec.total_segments is not None:
         return _ParallelSegmentScanner(client, scan_kwargs, spec.total_segments)
     return _sequential_items(client, scan_kwargs, effective_limit)
@@ -327,7 +321,7 @@ def _normalize_null_dtypes(schema: dict[str, pl.DataType]) -> dict[str, pl.DataT
 def _infer_schema_from_sample(
     client: Any,
     scan_kwargs: dict[str, Any],
-    spec: DynamoDbSourceSpec,
+    spec: DynamoDBSourceSpec,
     batch_processor: BatchProcessorProtocol,
 ) -> dict[str, pl.DataType]:
     inference_size = min(spec.batch_size, 1024)
@@ -342,15 +336,13 @@ def _infer_schema_from_sample(
     finally:
         source.close()
     if not items:
-        _log.info("dynamodb schema inferred", table=spec.table, sampled=0, columns=0)
+        _log.info(EtlEvent.SOURCE_SCHEMA_INFERRED, extra={EtlKey.TABLE: spec.table, EtlKey.ROWS: 0})
         return {}
     frame = batch_processor.build_frame(items)
     schema = _normalize_null_dtypes(dict(zip(frame.columns, frame.dtypes, strict=True)))
     _log.info(
-        "dynamodb schema inferred",
-        table=spec.table,
-        sampled=len(items),
-        columns=len(schema),
+        EtlEvent.SOURCE_SCHEMA_INFERRED,
+        extra={EtlKey.TABLE: spec.table, EtlKey.ROWS: len(items)},
     )
     return schema  # noqa: RET504
 
@@ -371,11 +363,9 @@ def _finalize_batch(
     n_rows: int | None,
 ) -> pl.DataFrame:
     if declared_schema:
-        frame = apply_declared_schema(
-            frame, declared_schema, extra_fields_mode, schema_name, source_label=_SOURCE_LABEL
-        )
+        frame = apply_declared_schema(frame, declared_schema, extra_fields_mode, schema_name)
     else:
-        frame = align_to_schema(frame, registered_schema, source_label=_SOURCE_LABEL)
+        frame = align_to_schema(frame, registered_schema, table=schema_name)
     if with_columns:
         present = [c for c in with_columns if c in frame.columns]
         frame = frame.select(present) if present else frame.head(0)
@@ -391,48 +381,50 @@ class _ScanTracker:
         self._table = table
         self._batches = 0
         self._rows = 0
-        self._started = time.monotonic()
+        self._started = time.perf_counter()
         self._failures_mark = _serialization_stats.failures
 
     def record(self, frame: pl.DataFrame, remaining: int | None) -> int | None:
         rows = len(frame)
         self._rows += rows
         self._batches += 1
-        payload = {
-            "table": self._table,
-            "batch": self._batches,
-            "rows": rows,
-            "total_rows": self._rows,
-            "elapsed_s": round(time.monotonic() - self._started, 3),
+        payload: dict[str, object] = {
+            EtlKey.TABLE: self._table,
+            EtlKey.BATCHES: self._batches,
+            EtlKey.ROWS: rows,
+            LogField.DURATION_MS: elapsed_ms(self._started),
         }
         if self._batches == 1:
-            _log.info("dynamodb first batch", **payload)
+            _log.info(EtlEvent.SOURCE_BATCH_READ, extra=payload)
         else:
-            _log.debug("dynamodb batch", **payload)
+            _log.debug(EtlEvent.SOURCE_BATCH_READ, extra=payload)
         return remaining - rows if remaining is not None else None
 
     def log_complete(self) -> None:
         serialization_failures = _serialization_stats.failures - self._failures_mark
         if serialization_failures:
             _log.warning(
-                "dynamodb read degraded",
-                table=self._table,
-                serialization_failures=serialization_failures,
-                last_error=_serialization_stats.last_error,
+                EtlEvent.SOURCE_READ_DEGRADED,
+                extra={
+                    EtlKey.TABLE: self._table,
+                    EtlKey.SERIALIZATION_FAILURES: serialization_failures,
+                },
             )
         _log.info(
-            "dynamodb read complete",
-            table=self._table,
-            items=self._rows,
-            batches=self._batches,
-            serialization_failures=serialization_failures,
-            duration_s=round(time.monotonic() - self._started, 3),
+            EtlEvent.SOURCE_READ_COMPLETED,
+            extra={
+                EtlKey.TABLE: self._table,
+                EtlKey.ROWS: self._rows,
+                EtlKey.BATCHES: self._batches,
+                EtlKey.SERIALIZATION_FAILURES: serialization_failures,
+                LogField.DURATION_MS: elapsed_ms(self._started),
+            },
         )
 
 
 def _frames_from_items(
     items: Generator[dict[str, Any], None, None] | _ParallelSegmentScanner,
-    spec: DynamoDbSourceSpec,
+    spec: DynamoDBSourceSpec,
     batch_processor: BatchProcessorProtocol,
     declared_schema: dict[str, pl.DataType],
     registered_schema: dict[str, pl.DataType],
@@ -474,7 +466,7 @@ def _frames_from_items(
 def _scan(
     client: Any,
     scan_kwargs: dict[str, Any],
-    spec: DynamoDbSourceSpec,
+    spec: DynamoDBSourceSpec,
     batch_processor: BatchProcessorProtocol,
     declared_schema: dict[str, pl.DataType],
     registered_schema: dict[str, pl.DataType],
@@ -500,4 +492,4 @@ def _scan(
         tracker.log_complete()
 
 
-__all__ = ["DynamoDbSourceReader", "DynamoDbSourceSpec", "FromDynamoDb"]
+__all__ = ["DynamoDBSourceReader", "DynamoDBSourceSpec", "FromDynamoDB"]

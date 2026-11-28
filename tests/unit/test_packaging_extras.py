@@ -43,8 +43,13 @@ class TestPackagingExtras:
         assert not requirements["pymongo"].specifier.contains("4.18.2")
         assert not requirements["pymongo"].specifier.contains("5.0")
 
-    def test_sqs_extra_installs_boto3(self) -> None:
-        assert "boto3" in _extra_requirements("sqs")
+    @pytest.mark.parametrize("extra", ["aws", "config-ssm", "prefect"])
+    def test_the_extras_that_call_aws_install_boto3(self, extra: str) -> None:
+        assert "boto3" in _extra_requirements(extra)
+
+    @pytest.mark.parametrize("extra", ["dynamodb", "sqs"])
+    def test_the_per_service_aws_extras_are_gone(self, extra: str) -> None:
+        assert _extra_requirements(extra) == {}
 
     def test_sqlalchemy_extra_pins_greenlet_explicitly(self) -> None:
         requirements = _extra_requirements("sqlalchemy")

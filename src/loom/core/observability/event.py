@@ -9,6 +9,7 @@ from typing import Self
 import msgspec
 from opentelemetry.util.types import AttributeValue
 
+from loom.core.errors.summary import ErrorSummary
 from loom.core.model import LoomFrozenStruct
 
 
@@ -20,7 +21,7 @@ def _as_attribute(value: object) -> AttributeValue:
 
 
 class EventKind(StrEnum):
-    """Lifecycle phase emitted by an ``ObservabilityRuntime`` span."""
+    """Lifecycle phase emitted by an ``Observability`` span."""
 
     START = "start"
     END = "end"
@@ -109,10 +110,10 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
         duration_ms: Wall-clock duration in milliseconds. Set on ``END``
             and ``ERROR`` events only.
         status: Short outcome label. Set on ``END`` and exposed as a stable enum.
-        error: Human-readable error description. Set on ``ERROR`` only.
+        failure: The failure's type and code, never its message. Set on ``ERROR`` only.
         meta: Domain-specific fields forwarded as top-level keys by all
             observer backends. Adapters use this to carry rich context
-            (``flow``, ``node_idx``, ``run_id``, …) without coupling
+            (``flow``, ``node_index``, ``run_id``, …) without coupling
             ``LifecycleEvent`` to domain types.
     """
 
@@ -124,7 +125,7 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
     id: str | None = None
     duration_ms: float | None = None
     status: LifecycleStatus | None = None
-    error: str | None = None
+    failure: ErrorSummary | None = None
     meta: dict[str, object] = msgspec.field(default_factory=dict)
 
     @classmethod
@@ -185,11 +186,11 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
         correlation_id: str | None = None,
         id: str | None = None,
         duration_ms: float | None = None,
-        error: str | None = None,
+        error: BaseException,
         status: LifecycleStatus = LifecycleStatus.FAILURE,
         meta: Mapping[str, object] | None = None,
     ) -> Self:
-        """Build an ``ERROR`` lifecycle event."""
+        """Build the ``ERROR`` lifecycle event of *error*, which keeps its type and code only."""
         return cls(
             scope=scope,
             name=name,
@@ -199,7 +200,7 @@ class LifecycleEvent(LoomFrozenStruct, frozen=True, kw_only=True):
             id=id,
             duration_ms=duration_ms,
             status=status,
-            error=error,
+            failure=ErrorSummary.of(error),
             meta=dict(meta or {}),
         )
 

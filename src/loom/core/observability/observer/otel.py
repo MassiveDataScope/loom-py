@@ -5,40 +5,59 @@ exporters are extras-only, so every import that touches them is deferred to the
 call that needs them and guarded with an actionable error.
 
 Spans are not opened here: they are opened by
-:class:`~loom.core.observability.runtime.ObservabilityRuntime`, the only place
+:class:`~loom.core.observability.observability.Observability`, the only place
 that owns one lexical scope covering both ends of a unit of work.
 """
 
 from __future__ import annotations
 
-import atexit
 import logging
 import os
-from collections.abc import Callable, MutableMapping
-from typing import TYPE_CHECKING, Any, cast
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Final, cast
 
-from opentelemetry import _logs as otel_logs
 from opentelemetry import trace
+from opentelemetry._logs import SeverityNumber
 from opentelemetry.trace import Tracer
+from opentelemetry.util.types import Attributes
 
-from loom.core.config.observability import OtelConfig
+from loom.core.config.observability import DEFAULT_SERVICE_NAME, OtelConfig
+from loom.core.errors import InvalidValue
+from loom.core.log_names import LogField
+from loom.core.logger.formats import RecordFields
+from loom.core.logger.identity import LogIdentity
+from loom.core.logger.install import EXPORT_HANDLER_NAME
 from loom.core.model.redaction import reveal_for_driver
+from loom.core.observability.diagnostic import ObservabilityEvent, ObservabilityKey
 from loom.core.observability.protocol import SpanFlusher
+from loom.core.plugins.optional import MissingExtraError
 
 if TYPE_CHECKING:
-    from opentelemetry.sdk._logs import LoggingHandler
+    from opentelemetry.sdk._logs import LoggerProvider
     from opentelemetry.sdk._logs.export import LogRecordExporter
 
-_ERR_MISSING_GRPC = "OTel protocol='grpc' requires 'opentelemetry-exporter-otlp-proto-grpc'."
-_ERR_MISSING_HTTP = (
-    "OTel protocol='http/protobuf' requires 'opentelemetry-exporter-otlp-proto-http'."
-)
+_OTEL_EXTRA: Final = "etl-otel"
 _ERR_MISSING_SDK = (
     "OTEL span and log export requires 'opentelemetry-sdk'. "
     "Install it with: pip install 'loom-py[etl-otel]'"
 )
 _V1_LOGS_SUFFIX = "/v1/logs"
 _log = logging.getLogger(__name__)
+
+_INSTRUMENTATION_SCOPE: Final = "loom"
+_NANOSECONDS_PER_SECOND: Final = 1_000_000_000
+
+_SEVERITIES: Final = MappingProxyType(
+    {
+        logging.NOTSET: SeverityNumber.UNSPECIFIED,
+        logging.DEBUG: SeverityNumber.DEBUG,
+        logging.INFO: SeverityNumber.INFO,
+        logging.WARNING: SeverityNumber.WARN,
+        logging.ERROR: SeverityNumber.ERROR,
+        logging.CRITICAL: SeverityNumber.FATAL,
+    }
+)
+"""The severity of each standard level; its name is the severity text."""
 
 
 def _load_span_exporter_cls(protocol: str) -> type[Any]:
@@ -54,20 +73,20 @@ def _load_span_exporter_cls(protocol: str) -> type[Any]:
         The OTLP span exporter class for the protocol.
 
     Raises:
-        ValueError: If the matching exporter package is not installed.
+        MissingExtraError: If the matching exporter package is not installed.
     """
     if protocol == "grpc":
         try:
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
         except ImportError as exc:
-            raise ValueError(_ERR_MISSING_GRPC) from exc
+            raise MissingExtraError(__name__, _OTEL_EXTRA, exc.name) from exc
         return OTLPSpanExporter
     try:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
             OTLPSpanExporter as HttpSpanExporter,
         )
     except ImportError as exc:
-        raise ValueError(_ERR_MISSING_HTTP) from exc
+        raise MissingExtraError(__name__, _OTEL_EXTRA, exc.name) from exc
     return HttpSpanExporter
 
 
@@ -81,27 +100,29 @@ def _load_log_exporter_cls(protocol: str) -> type[Any]:
         The OTLP log exporter class for the protocol.
 
     Raises:
-        ValueError: If the protocol is unsupported or its exporter package
-            is not installed.
+        InvalidValue: If the protocol is unsupported.
+        MissingExtraError: If its exporter package is not installed.
     """
     if protocol == "grpc":
         try:
             from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
         except ImportError as exc:
-            raise ValueError(_ERR_MISSING_GRPC) from exc
+            raise MissingExtraError(__name__, _OTEL_EXTRA, exc.name) from exc
         return OTLPLogExporter
     if protocol != "http/protobuf":
-        raise ValueError(_ERR_MISSING_HTTP)
+        raise InvalidValue("OTLP protocol must be 'http/protobuf' or 'grpc'.")
     try:
         from opentelemetry.exporter.otlp.proto.http._log_exporter import (
             OTLPLogExporter as HttpLogExporter,
         )
     except ImportError as exc:
-        raise ValueError(_ERR_MISSING_HTTP) from exc
+        raise MissingExtraError(__name__, _OTEL_EXTRA, exc.name) from exc
     return HttpLogExporter
 
 
-def build_tracer(config: OtelConfig) -> tuple[Tracer, SpanFlusher | None]:
+def build_tracer(
+    config: OtelConfig, *, service_name: str = DEFAULT_SERVICE_NAME
+) -> tuple[Tracer, SpanFlusher | None]:
     """Build the tracer Loom opens its spans on, and the exporter to flush.
 
     Where spans go and what trace ids they get are orthogonal. ``endpoint``
@@ -117,13 +138,14 @@ def build_tracer(config: OtelConfig) -> tuple[Tracer, SpanFlusher | None]:
 
     Args:
         config: OTLP exporter configuration.
+        service_name: The Resource's ``service.name``, resolved by the caller.
 
     Returns:
         The tracer, and the provider to force-flush when Loom owns one.
 
     Raises:
-        ValueError: If the protocol is unsupported or its OTLP exporter
-            package is not installed.
+        ConfigError: If the protocol is unsupported.
+        MissingExtraError: If its OTLP exporter package is not installed.
         ImportError: If ``opentelemetry-sdk`` is not installed.
     """
     config.validate()
@@ -140,7 +162,10 @@ def build_tracer(config: OtelConfig) -> tuple[Tracer, SpanFlusher | None]:
 
     from loom.core.observability.otel_ids import LoomMessageIdGenerator, build_sampler
 
-    resource_attrs = {SERVICE_NAME: config.service_name, **config.resource_attributes}
+    resource_attrs = {
+        SERVICE_NAME: service_name,
+        **config.resource_attributes,
+    }
     provider = TracerProvider(
         resource=Resource.create(resource_attrs),
         id_generator=LoomMessageIdGenerator(),
@@ -164,15 +189,8 @@ def _host_tracer(config: OtelConfig) -> Tracer:
     provider = trace.get_tracer_provider()
     if not config.adopt_host_id_generator:
         _log.info(
-            "otel_host_provider_random_trace_ids",
-            extra={
-                "setting": "observability.otel.config.adopt_host_id_generator",
-                "provider": type(provider).__name__,
-                "consequence": (
-                    "spans are emitted with random trace ids; a streaming message "
-                    "cannot be followed from ingestion to death under one trace"
-                ),
-            },
+            ObservabilityEvent.HOST_ID_GENERATOR_KEPT,
+            extra={ObservabilityKey.PROVIDER: type(provider).__name__},
         )
         return trace.get_tracer(config.tracer_name, config.tracer_version or None)
 
@@ -196,85 +214,111 @@ def _build_exporter(config: OtelConfig) -> Any:
     return exporter_cls(**kwargs)
 
 
-def build_log_correlation_processor() -> Callable[
-    [Any, str, MutableMapping[str, Any]],
-    MutableMapping[str, Any],
-]:
-    """Build a structlog processor that adds the active OTEL span IDs.
+class OtelLogHandler(logging.Handler):
+    """Export each record through the OpenTelemetry Logs API, with no exception.
 
-    Returns:
-        A processor function compatible with ``structlog``.
+    The body is the record's message and the attributes are its fields as loom's formats
+    write them, under their own names: a ``Secret`` is masked, an object is its type name
+    and no private attribute of the record is exported. The provider's ``Resource`` carries
+    the service, its version and the environment; the process's runtime, which is known
+    only after the provider is built, is an attribute of each record. Inside a recording
+    span neither of its ids is an attribute: the Logs API takes them from the context. The
+    exception is never handed over, so the SDK adds no ``exception.message``: the
+    attributes hold its type, its code and its stack.
+
+    Closing the handler shuts the provider down, which the standard library does for every
+    handler when the process exits.
+
+    Args:
+        provider: The provider the records are emitted through.
+        identity: The process the records come from, for its runtime.
     """
 
-    def _processor(
-        logger: Any,
-        method: str,
-        event_dict: MutableMapping[str, Any],
-    ) -> MutableMapping[str, Any]:
-        span = trace.get_current_span()
-        if span.is_recording():
-            ctx = span.get_span_context()
-            event_dict.setdefault("otel_trace_id", format(ctx.trace_id, "032x"))
-            event_dict.setdefault("otel_span_id", format(ctx.span_id, "016x"))
-        return event_dict
+    def __init__(self, provider: LoggerProvider, identity: LogIdentity) -> None:
+        super().__init__()
+        self.set_name(EXPORT_HANDLER_NAME)
+        self._provider = provider
+        self._logger = provider.get_logger(_INSTRUMENTATION_SCOPE)
+        self._identity = identity
 
-    return _processor
+    def emit(self, record: logging.LogRecord) -> None:
+        """Emit *record* with its fields rendered and no exception; a failure is handled."""
+        try:
+            view = RecordFields(record)
+            attributes = view.fields()
+            attributes[LogField.RUNTIME.value] = self._identity.runtime.value
+            if LogField.SPAN_ID in attributes:
+                del attributes[LogField.TRACE_ID], attributes[LogField.SPAN_ID]
+            stack = view.stack
+            if stack is not None:
+                attributes[LogField.EXCEPTION_STACKTRACE.value] = stack
+            severity = _SEVERITIES[view.standard_level]
+            self._logger.emit(
+                timestamp=int(record.created * _NANOSECONDS_PER_SECOND),
+                severity_number=severity,
+                severity_text=severity.name,
+                body=view.message,
+                attributes=cast("Attributes", attributes),
+            )
+        except Exception:
+            self.handleError(record)
+
+    def flush(self) -> None:
+        """Flush the provider's processors."""
+        self._provider.force_flush()
+
+    def close(self) -> None:
+        """Shut the provider down."""
+        self._provider.shutdown()
+        super().close()
 
 
-_LOG_EXPORT_STATE: tuple[Any, LoggingHandler] | None = None
-
-
-def install_otel_log_export(
+def build_log_export(
     config: OtelConfig,
+    identity: LogIdentity,
     *,
+    service_name: str = DEFAULT_SERVICE_NAME,
     exporter: LogRecordExporter | None = None,
-) -> LoggingHandler | None:
-    """Install a stdlib log handler that exports OTEL logs.
+) -> OtelLogHandler:
+    """Build the stdlib log handler that exports OTEL logs, with a provider of its own.
 
-    The helper is idempotent for the current process. Subsequent calls return
-    the already-installed handler.
+    Like Loom's tracer provider, the logger provider is private to the handler and never
+    installed globally. The handler is not attached to the root logger: pass it to
+    :func:`~loom.core.logger.install.configure_logging`, which attaches it.
 
     Args:
         config: OTLP exporter configuration.
+        identity: The process the records come from; its service, version and environment
+            are the Resource's.
+        service_name: The Resource's ``service.name``, resolved by the caller.
         exporter: Optional pre-built log record exporter. When omitted, one is
             built from ``config``.
 
     Returns:
-        The installed logging handler.
+        The export handler.
 
     Raises:
         ImportError: If ``opentelemetry-sdk`` is not installed.
-        ValueError: If the configured protocol has no installed OTLP exporter.
+        ConfigError: If the configured protocol is unsupported.
+        MissingExtraError: If its OTLP exporter package is not installed.
     """
-    global _LOG_EXPORT_STATE
     config.validate()
-    if _LOG_EXPORT_STATE is not None:
-        return _LOG_EXPORT_STATE[1]
-
     try:
-        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+        from opentelemetry.sdk._logs import LoggerProvider
         from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
         from opentelemetry.sdk.resources import SERVICE_NAME, Resource
     except ImportError as exc:
         raise ImportError(_ERR_MISSING_SDK) from exc
 
     log_exporter = exporter or _build_log_exporter(config)
+    process = {key: value for key, value in identity.fields().items() if key != LogField.RUNTIME}
     provider = LoggerProvider(
         resource=Resource.create(
-            {
-                SERVICE_NAME: config.service_name,
-                **config.resource_attributes,
-            }
+            {**process, SERVICE_NAME: service_name, **config.resource_attributes}
         )
     )
     provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
-    otel_logs.set_logger_provider(provider)
-
-    handler = LoggingHandler(level=logging.NOTSET, logger_provider=provider)
-    logging.getLogger().addHandler(handler)
-    atexit.register(provider.shutdown)
-    _LOG_EXPORT_STATE = (provider, handler)
-    return handler
+    return OtelLogHandler(provider, identity)
 
 
 def _build_log_exporter(config: OtelConfig) -> LogRecordExporter:
@@ -316,7 +360,7 @@ def _resolve_log_protocol(config: OtelConfig) -> str:
 
 
 __all__ = [
-    "build_log_correlation_processor",
+    "OtelLogHandler",
+    "build_log_export",
     "build_tracer",
-    "install_otel_log_export",
 ]

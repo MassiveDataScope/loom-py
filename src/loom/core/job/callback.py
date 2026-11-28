@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any
 
+from loom.core.errors import InvalidValue
 from loom.core.execution import ExecutionScope
 from loom.core.identity import current_caller
 
@@ -12,20 +13,22 @@ if TYPE_CHECKING:
     from loom.core.use_case.factory import UseCaseFactory
 
 
-@runtime_checkable
-class JobCallback(Protocol):
-    """Protocol for job lifecycle hooks.
+class JobCallback:
+    """Base of job lifecycle hooks; both hooks do nothing until overridden.
 
-    Implement this to react to job completion or failure.  Both methods
-    may be plain ``def`` or ``async def`` — the runner detects the kind
-    via ``inspect.iscoroutinefunction`` at execution time.
+    Subclass it in a package listed in ``app.packages`` and override the
+    hook, or hooks, to run: the scan finds the class, and the dispatcher
+    names it in ``dispatch_after_commit(Job, on_success=..., on_failure=...)``.  Each hook
+    may be plain ``def`` or ``async def``.  An abstract intermediate class
+    inherits ``JobCallback`` and ``ABC``; it is not collected when it declares
+    an abstract method.
 
-    Implementations are instantiated by the factory, so constructor
-    dependencies are injected via DI like any other service.
+    Subclasses are instantiated by the factory, so constructor dependencies
+    are injected via DI like any other service.
 
     Example::
 
-        class AuditCallback:
+        class AuditCallback(JobCallback):
             def __init__(self, audit_repo: AuditRepository) -> None:
                 self._repo = audit_repo
 
@@ -33,11 +36,6 @@ class JobCallback(Protocol):
                 self, job_id: str, result: Any, **context: Any
             ) -> None:
                 await self._repo.record_success(job_id, result)
-
-            async def on_failure(
-                self, job_id: str, exc_type: str, exc_msg: str, **context: Any
-            ) -> None:
-                await self._repo.record_failure(job_id, exc_type, exc_msg)
     """
 
     def on_success(self, job_id: str, result: Any, **context: Any) -> Any:
@@ -48,38 +46,21 @@ class JobCallback(Protocol):
             result: Value returned by ``Job.execute()``.
             **context: Original dispatch payload forwarded as keyword args.
         """
-        ...
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> Any:
+    def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> Any:
         """Called when the job raises an unrecoverable exception.
 
         Args:
             job_id: UUID of the failed job.
-            exc_type: Fully-qualified exception class name.
-            exc_msg: String representation of the exception.
+            exc_type: The exception's fully qualified class name, ``module.QualName``;
+                a builtin's bare name, ``ValueError``.
+            exc_code: The error's loom code, ``None`` for an error that is not
+                a :class:`~loom.core.errors.CodedError`. Never its message.
             **context: Original dispatch payload forwarded as keyword args.
         """
-        ...
 
 
-class NullJobCallback:
-    """No-op callback for tests and contexts that do not need lifecycle hooks.
-
-    Satisfies the ``JobCallback`` protocol without any side effects.
-
-    Example::
-
-        service = InlineJobService(factory, executor, callback=NullJobCallback())
-    """
-
-    def on_success(self, job_id: str, result: Any, **context: Any) -> None:
-        """Accept success notification and do nothing."""
-
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
-        """Accept failure notification and do nothing."""
-
-
-_HOOK_ARGUMENTS = frozenset({"job_id", "result", "exc_type", "exc_msg"})
+_HOOK_ARGUMENTS = frozenset({"job_id", "result", "exc_type", "exc_code"})
 
 
 class CallbackOutcome(StrEnum):
@@ -97,27 +78,71 @@ class CallbackOutcome(StrEnum):
         Returns:
             Its ``on_success`` or ``on_failure``.
         """
-        return getattr(callback, f"on_{self}")
+        hook: Callable[..., Any] = getattr(callback, f"on_{self}")
+        return hook
 
 
-def refuse_reserved_payload(payload: Mapping[str, object]) -> None:
-    """Refuse a dispatch payload naming an argument a callback hook receives.
-
-    The payload reaches the hooks as keyword arguments beside ``job_id``,
-    ``result``, ``exc_type`` and ``exc_msg``.
+class DispatchableCallbacks:
+    """The callbacks a dispatch may attach, and the payload it may carry with one.
 
     Args:
-        payload: The payload of a dispatch that attaches a callback.
-
-    Raises:
-        ValueError: Naming each reserved key the payload holds.
+        discovered: The callback classes the scan found.
     """
-    reserved = sorted(_HOOK_ARGUMENTS.intersection(payload))
-    if reserved:
-        raise ValueError(
-            f"A job payload with a callback cannot hold {', '.join(reserved)}: "
-            "the callback hooks receive these arguments"
-        )
+
+    def __init__(self, discovered: Collection[type[JobCallback]]) -> None:
+        self._discovered = frozenset(discovered)
+
+    @classmethod
+    def any(cls) -> DispatchableCallbacks:
+        """The callbacks of a service built by hand: any class may be attached."""
+        return ANY_CALLBACKS
+
+    def refuse(
+        self, payload: Mapping[str, object], *callback_types: type[JobCallback] | None
+    ) -> None:
+        """Refuse a dispatch attaching an undiscovered callback or a payload naming a hook argument.
+
+        The payload reaches the hooks as keyword arguments beside ``job_id``,
+        ``result``, ``exc_type`` and ``exc_code``.
+
+        Args:
+            payload: The payload of the dispatch.
+            *callback_types: The callbacks the dispatch attaches; ``None`` for none.
+
+        Raises:
+            InvalidValue: Naming a callback the scan did not find, or each reserved
+                key the payload holds when a callback is attached.
+        """
+        attached = [callback_type for callback_type in callback_types if callback_type is not None]
+        if not attached:
+            return
+        self._refuse_undiscovered(attached)
+        reserved = sorted(_HOOK_ARGUMENTS.intersection(payload))
+        if reserved:
+            raise InvalidValue(
+                f"A job payload with a callback cannot hold {', '.join(reserved)}: "
+                "the callback hooks receive these arguments"
+            )
+
+    def _refuse_undiscovered(self, attached: Sequence[type[JobCallback]]) -> None:
+        for callback_type in attached:
+            if callback_type not in self._discovered:
+                raise InvalidValue(
+                    f"Job callback {callback_type.__module__}.{callback_type.__qualname__} was "
+                    "not discovered: inherit from JobCallback in a package listed in app.packages"
+                )
+
+
+class _AnyCallbacks(DispatchableCallbacks):
+    def __init__(self) -> None:
+        super().__init__(())
+
+    def _refuse_undiscovered(self, attached: Sequence[type[JobCallback]]) -> None:
+        return None
+
+
+ANY_CALLBACKS = _AnyCallbacks()
+"""The callbacks of a service built by hand: any class may be attached."""
 
 
 async def notify(
@@ -132,7 +157,7 @@ async def notify(
         callback_type: The :class:`JobCallback` class to build.
         outcome: How the job ended.
         **arguments: The hook's keyword arguments: ``job_id``, then
-            ``result`` or ``exc_type`` and ``exc_msg``, then the dispatch
+            ``result`` or ``exc_type`` and ``exc_code``, then the dispatch
             payload.
 
     Raises:

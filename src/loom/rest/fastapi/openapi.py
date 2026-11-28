@@ -20,7 +20,7 @@ from loom.core.command.introspection import (
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.model import pydantic_type
 from loom.core.model._json_schema import DEFS, DEFS_PREFIX, REF
-from loom.core.repository.abc.query import PaginationMode
+from loom.core.stores.repository.query import PaginationMode
 from loom.rest.compiler import CompiledRoute, QueryField, names_query_spec
 from loom.rest.constants import LIMIT_DEFAULT, LOCATION_HEADER, QueryParam
 

@@ -7,10 +7,14 @@ from urllib.parse import urlparse
 
 import msgspec
 
+from loom.core.config.errors import ConfigError
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Dsn, RedactedMap
 
 _LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+DEFAULT_SERVICE_NAME = "loom"
+"""The Resource's ``service.name`` when neither the configuration nor the application names one."""
 
 SAMPLERS: frozenset[str] = frozenset(
     {
@@ -33,7 +37,8 @@ class OtelConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     """OpenTelemetry SDK/exporter configuration.
 
     Args:
-        service_name: Resource attribute ``service.name``.
+        service_name: Resource attribute ``service.name``; when absent, the application's
+            name, else ``loom``.
         tracer_name: Tracer instrumentation name.
         tracer_version: Optional tracer instrumentation version.
         protocol: OTLP protocol (``http/protobuf`` or ``grpc``).
@@ -60,7 +65,7 @@ class OtelConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
             bound is hit the span is marked with ``loom.links_truncated``.
     """
 
-    service_name: str = "loom"
+    service_name: str | None = None
     tracer_name: str = "loom"
     tracer_version: str = ""
     protocol: str = "http/protobuf"
@@ -76,33 +81,30 @@ class OtelConfig(LoomFrozenStruct, frozen=True, forbid_unknown_fields=True):
     sampler_ratio: float = 1.0
     max_span_links: int = 128
 
+    def resolve_service_name(self, app_name: str | None) -> str:
+        """The Resource's ``service.name``: the configured one, else *app_name*, else ``loom``."""
+        return self.service_name or app_name or DEFAULT_SERVICE_NAME
+
     def validate(self) -> None:
         """Validate the transport protocol, the sampler, and the link bound.
 
         Raises:
-            ValueError: If protocol is unsupported.
-            ValueError: If the sampler name is unknown, the sampled ratio is
+            ConfigError: If protocol is unsupported.
+            ConfigError: If the sampler name is unknown, the sampled ratio is
                 outside ``[0.0, 1.0]``, or the link bound is not positive.
         """
         if self.protocol not in {"http/protobuf", "grpc"}:
-            raise ValueError(
+            raise ConfigError(
                 "observability.otel_config.protocol must be either 'http/protobuf' or 'grpc'."
             )
         if self.sampler not in SAMPLERS:
-            raise ValueError(
-                "observability.otel_config.sampler must be one of "
-                f"{sorted(SAMPLERS)}, got {self.sampler!r}."
+            raise ConfigError(
+                f"observability.otel_config.sampler must be one of {sorted(SAMPLERS)}."
             )
         if not 0.0 <= self.sampler_ratio <= 1.0:
-            raise ValueError(
-                "observability.otel_config.sampler_ratio must be within [0.0, 1.0], "
-                f"got {self.sampler_ratio!r}."
-            )
+            raise ConfigError("observability.otel_config.sampler_ratio must be within [0.0, 1.0].")
         if self.max_span_links < 1:
-            raise ValueError(
-                "observability.otel_config.max_span_links must be >= 1, "
-                f"got {self.max_span_links!r}."
-            )
+            raise ConfigError("observability.otel_config.max_span_links must be >= 1.")
         if (
             self.insecure
             and self.endpoint is not None

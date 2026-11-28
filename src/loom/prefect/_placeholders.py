@@ -29,6 +29,9 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from loom.core.config.keys import INTERPOLATION
+from loom.core.errors import InvalidValue
+
 _TODAY_RE = re.compile(r"^\$\{today(?:([+-])(\d+)d)?\}$")
 _YESTERDAY_RE = re.compile(r"^\$\{yesterday\}$")
 _NOW_RE = re.compile(r"^\$\{now(?:([+-])(\d+)([dhm]))?\}$")
@@ -83,7 +86,7 @@ def _resolve_now(match: re.Match[str], base: datetime) -> Any:
 
 def is_placeholder(value: Any) -> bool:
     """Return ``True`` when *value* is a string written as ``${...}``."""
-    return isinstance(value, str) and value.startswith("${")
+    return isinstance(value, str) and value.startswith(INTERPOLATION)
 
 
 def resolve_placeholder(value: Any, *, anchor: datetime | None = None) -> Any:
@@ -119,7 +122,9 @@ def resolve_placeholder(value: Any, *, anchor: datetime | None = None) -> Any:
         return _resolve_now(now_match, base)
 
     if _ANY_DOLLAR.match(value) is not None:
-        raise ValueError(f"invalid placeholder: {value!r}")
+        raise InvalidValue(
+            "invalid placeholder: a value starting with $ must be a loom placeholder"
+        )
     return value
 
 

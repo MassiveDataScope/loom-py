@@ -23,11 +23,13 @@ from loom.core.checks import run_deploy_checks
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.environment import Environment
+from loom.core.log_names import LogField
 from loom.core.model.redaction import Dsn, Secret
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.rest.auth import JwtAuthConfig, JwtAuthenticator, RequestCredentials
 from loom.rest.auth.config import JwtIssuerConfig, JwtPublicKey
 from loom.rest.checks import AUDIENCE_CHECK, ISSUER_CHECK
+from loom.rest.event import RestEvent
 from loom.rest.fastapi._auto_ai import _bind_agent_surfaces
 from loom.rest.fastapi._auto_auth import _AuthWiring, _require_deployed_jwt_claims
 from loom.rest.fastapi.auto import create_app
@@ -267,7 +269,7 @@ class TestResolvedClaims:
         project = tmp_path / "app"
         project.mkdir()
         config = write_project(
-            project, rest={**_NO_DOCS, "auth": {"jwt": jwt}}, persistence=_signed_cursors(project)
+            project, rest={**_NO_DOCS, "auth": {"jwt": jwt}}, settings=_signed_cursors(project)
         )
 
         with pytest.raises(ConfigError, match=AUDIENCE_CHECK):
@@ -292,7 +294,7 @@ class TestIssuedType:
 
 class TestTestingHelperOwnsItsKey:
     def test_it_refuses_to_override_its_own_key(self) -> None:
-        with pytest.raises(TypeError, match="algorithms"):
+        with pytest.raises(ValueError, match="algorithms"):
             jwt_test_auth(algorithms=("HS512",))
 
 
@@ -739,9 +741,10 @@ class TestIssuingFailureLog:
         with caplog.at_level("ERROR"), pytest.raises(RuntimeError):
             issuer.issue(identity)
 
-        record = next(r for r in caplog.records if "issuing failed" in r.getMessage())
+        record = next(r for r in caplog.records if r.msg == RestEvent.TOKEN_SIGNING_FAILED)
         assert record.exc_info is None
-        assert "ValueError" in record.getMessage()
+        assert getattr(record, LogField.ERROR_TYPE) == "ValueError"
+        assert "backend detail" not in caplog.text
 
 
 class TestOtherDerEncodingsAreRefused:
@@ -853,7 +856,7 @@ class TestAgentSurfaceAudience:
         auth = _AuthWiring(
             authenticator=JwtAuthenticator(jwt_config), exclude_paths=(), jwt_config=jwt_config
         )
-        wiring = AiWiring(config=ai_config, runtime=cast(Any, object()))
+        wiring = AiWiring(config=ai_config, agent_host=cast(Any, object()))
 
         with pytest.raises(ConfigError, match=r"Agent 'analyst'.*audience"):
-            _bind_agent_surfaces(FastAPI(), wiring, auth, ObservabilityRuntime.noop())
+            _bind_agent_surfaces(FastAPI(), wiring, auth, Observability.noop())

@@ -21,9 +21,8 @@ from loom.core.model import (
     Postgres,
     RelationField,
 )
-from loom.core.model.field import ColumnType
+from loom.core.model.inference import Annotation
 from loom.core.model.introspection import (
-    _union_inner_args,
     extract_model_from_hint,
     generic_type_arg,
     get_column_fields,
@@ -32,12 +31,13 @@ from loom.core.model.introspection import (
     scalar_column_annotations,
 )
 from loom.core.model.types import (
+    BigInteger,
     Bytes,
+    ColumnType,
     Date,
     DateTime,
     Float,
     Integer,
-    Numeric,
     String,
     Time,
     Uuid,
@@ -94,19 +94,19 @@ class TestResolveTypeHints:
 
 class TestUnionInnerArgs:
     def test_drops_none_from_a_pep604_union(self) -> None:
-        assert _union_inner_args(int | None) == (int,)
+        assert Annotation(int | None).inner_args == (int,)
 
     def test_drops_unset_type_from_a_pep604_union(self) -> None:
-        assert _union_inner_args(AcmeNote | msgspec.UnsetType) == (AcmeNote,)
+        assert Annotation(AcmeNote | msgspec.UnsetType).inner_args == (AcmeNote,)
 
     def test_normalises_the_typing_union_form(self) -> None:
         # The legacy spelling is the point of this test, so it stays verbatim.
         hint = typing.Union[int, str]  # noqa: UP007
 
-        assert _union_inner_args(hint) == (int, str)
+        assert Annotation(hint).inner_args == (int, str)
 
     def test_returns_none_for_a_non_union_annotation(self) -> None:
-        assert _union_inner_args(list[int]) is None
+        assert Annotation(list[int]).inner_args is None
 
 
 class TestExtractModelFromHint:
@@ -160,7 +160,7 @@ class _Optionals(msgspec.Struct):
 
 class TestOptionalColumnTypes:
     def test_maps_a_pep604_optional_to_its_inner_column_type(self) -> None:
-        assert get_column_fields(_Optionals)["count"].column_type == Integer
+        assert get_column_fields(_Optionals)["count"].column_type == BigInteger
 
     def test_maps_a_typing_optional_to_its_inner_column_type(self) -> None:
         assert get_column_fields(_Optionals)["label"].column_type == String()
@@ -179,7 +179,7 @@ class _Unsettable(BaseModel):
 class TestUnsetColumnTypes:
     @pytest.mark.parametrize(
         ("name", "column_type"),
-        [("label", String()), ("count", Integer), ("note", String()), ("code", String(20))],
+        [("label", String()), ("count", BigInteger), ("note", String()), ("code", String(20))],
     )
     def test_unset_type_does_not_change_the_inferred_column_type(
         self, name: str, column_type: ColumnType
@@ -329,7 +329,7 @@ class TestEnumColumnTypes:
         assert get_column_fields(_Enums)["maybe"].column_type == String()
 
     def test_an_int_enum_follows_the_int_rule(self) -> None:
-        assert get_column_fields(_Enums)["priority"].column_type == Integer
+        assert get_column_fields(_Enums)["priority"].column_type == BigInteger
 
     def test_a_declared_column_type_wins(self) -> None:
         fields = get_column_fields(_Enums)
@@ -352,8 +352,8 @@ class TestEnumColumnTypes:
         ("field", "expected"),
         [
             ("status", String()),
-            ("priority", Integer),
-            ("mask", Integer),
+            ("priority", BigInteger),
+            ("mask", BigInteger),
             ("ratio", Float),
             ("day", Date),
             ("moment", DateTime(tz=True)),
@@ -366,7 +366,7 @@ class TestEnumColumnTypes:
     ) -> None:
         info = get_column_fields(_MixedEnums)[field]
 
-        assert (info.column_type, info.needs_declared_type) == (expected, False)
+        assert (info.column_type, info.resolved.is_undeclared) == (expected, False)
 
     @pytest.mark.parametrize(
         ("model", "field"),
@@ -377,26 +377,26 @@ class TestEnumColumnTypes:
     ) -> None:
         info = get_column_fields(model)[field]
 
-        assert (info.column_type, info.needs_declared_type) == (JSON, True)
+        assert (info.column_type, info.resolved.is_undeclared) == (None, True)
 
     def test_a_decimal_enum_without_a_column_type_needs_one_declared(self) -> None:
         info = get_column_fields(_MixedEnums)["amount"]
 
-        assert (info.column_type, info.needs_declared_type) == (Numeric(), True)
+        assert (info.column_type, info.resolved.is_undeclared) == (None, True)
 
     def test_declared_and_inferable_fields_need_no_declared_type(self) -> None:
-        assert not any(info.needs_declared_type for info in get_column_fields(_Enums).values())
+        assert not any(info.resolved.is_undeclared for info in get_column_fields(_Enums).values())
 
 
 class TestAnnotatedColumnFields:
     def test_a_field_in_annotated_without_a_column_type_takes_effect(self) -> None:
         fields = get_column_fields(_AnnotatedFields)
 
-        assert (fields["key"].field.primary_key, fields["key"].column_type) == (True, Integer)
+        assert (fields["key"].field.primary_key, fields["key"].column_type) == (True, BigInteger)
         assert (fields["note"].field.nullable, fields["note"].column_type) == (True, String())
 
     def test_an_optional_inside_annotated_follows_its_scalar_type(self) -> None:
-        assert get_column_fields(_AnnotatedFields)["count"].column_type == Integer
+        assert get_column_fields(_AnnotatedFields)["count"].column_type == BigInteger
 
 
 class _Shelf(BaseModel):
@@ -439,5 +439,5 @@ class TestScalarColumnAnnotations:
     def test_json_array_and_text_search_columns_are_not_scalar(self) -> None:
         assert set(scalar_column_annotations(_Shelf)) == {"id", "label"}
 
-    def test_a_decimal_without_a_column_type_is_scalar(self) -> None:
-        assert scalar_column_annotations(_Priced) == {"price": Decimal, "maybe": Decimal | None}
+    def test_a_decimal_without_a_column_type_is_not_listed(self) -> None:
+        assert scalar_column_annotations(_Priced) == {}

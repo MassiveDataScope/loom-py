@@ -1,3 +1,3 @@
-from loom.core.transport.adapter import AdapterRequest, LoomAdapter
+from loom.core.transport.dispatcher import ExecutionRequest, UseCaseDispatcher
 
-__all__ = ["AdapterRequest", "LoomAdapter"]
+__all__ = ["ExecutionRequest", "UseCaseDispatcher"]

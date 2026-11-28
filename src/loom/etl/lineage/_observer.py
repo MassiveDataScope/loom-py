@@ -127,10 +127,6 @@ def _build_pipeline_record(
     *,
     event: LifecycleEvent,
 ) -> PipelineRunRecord:
-    error_type, error_message = _error_details(event)
-    failure = _failure_details(
-        event, step_run_id=None, step=None, error_type=error_type, error_message=error_message
-    )
     return PipelineRunRecord(
         event=EventName.PIPELINE_END,
         run_id=entity_ctx.run_ctx.run_id,
@@ -140,11 +136,8 @@ def _build_pipeline_record(
         started_at=entity_ctx.started_at,
         status=_event_status(event),
         duration_ms=_duration_ms(event),
-        error=event.error,
-        error_type=error_type,
-        error_message=error_message,
-        failed_step_run_id=failure.step_run_id,
-        failed_step=failure.step,
+        error_type=_error_type(event),
+        error_code=_error_code(event),
     )
 
 
@@ -154,10 +147,6 @@ def _build_process_record(
     process_run_id: str,
     event: LifecycleEvent,
 ) -> ProcessRunRecord:
-    error_type, error_message = _error_details(event)
-    failure = _failure_details(
-        event, step_run_id=None, step=None, error_type=error_type, error_message=error_message
-    )
     return ProcessRunRecord(
         event=EventName.PROCESS_END,
         run_id=entity_ctx.run_ctx.run_id,
@@ -168,11 +157,8 @@ def _build_process_record(
         started_at=entity_ctx.started_at,
         status=_event_status(event),
         duration_ms=_duration_ms(event),
-        error=event.error,
-        error_type=error_type,
-        error_message=error_message,
-        failed_step_run_id=failure.step_run_id,
-        failed_step=failure.step,
+        error_type=_error_type(event),
+        error_code=_error_code(event),
     )
 
 
@@ -182,7 +168,6 @@ def _build_step_record(
     step_run_id: str,
     event: LifecycleEvent,
 ) -> StepRunRecord:
-    error_type, error_message = _error_details(event)
     return StepRunRecord(
         event=EventName.STEP_END,
         run_id=entity_ctx.run_ctx.run_id,
@@ -193,42 +178,18 @@ def _build_step_record(
         started_at=entity_ctx.started_at,
         status=_event_status(event),
         duration_ms=_duration_ms(event),
-        error=event.error,
         process_run_id=entity_ctx.run_ctx.process_run_id,
-        error_type=error_type,
-        error_message=error_message,
+        error_type=_error_type(event),
+        error_code=_error_code(event),
     )
 
 
-@dataclass(frozen=True)
-class _FailureDetails:
-    step_run_id: str | None
-    step: str | None
-    error_type: str | None
-    error_message: str | None
+def _error_type(event: LifecycleEvent) -> str | None:
+    return event.failure.type if event.failure else None
 
 
-def _failure_details(
-    event: LifecycleEvent,
-    *,
-    step_run_id: str | None,
-    step: str | None,
-    error_type: str | None,
-    error_message: str | None,
-) -> _FailureDetails:
-    return _FailureDetails(
-        step_run_id=step_run_id,
-        step=step,
-        error_type=error_type,
-        error_message=error_message,
-    )
-
-
-def _error_details(event: LifecycleEvent) -> tuple[str | None, str | None]:
-    if event.kind is EventKind.ERROR:
-        error_type = _meta_str(event, "error_type") or "Exception"
-        return error_type, event.error
-    return None, None
+def _error_code(event: LifecycleEvent) -> str | None:
+    return event.failure.code if event.failure else None
 
 
 def _event_id(event: LifecycleEvent) -> str:

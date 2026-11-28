@@ -16,9 +16,9 @@ import pytest
 
 from loom.ai.abc import McpHandle
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._handle import McpMarkerResolver
-from loom.ai.runtime._lifecycle import UseCaseMcpGrant
+from loom.ai.execution import AgentHost
+from loom.ai.execution._handle import McpMarkerResolver
+from loom.ai.execution._lifecycle import UseCaseMcpGrant
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
@@ -55,28 +55,28 @@ class TestAUseCaseOnlyServerIsLeftOutOfTheProbe:
             usecase="orders.get_order_status",
             parameter="gateway",
         )
-        runtime = AgentRuntime(
+        host = AgentHost(
             plans=[make_plan(_AGENT)],  # declares no 'mcp' capability at all
             config=make_ai_config(
                 mcp_servers=make_mcp_servers(_SERVER),
                 remote_clients="optional",
                 health_cache_ttl_ms=5,
             ),
-            engine_provider=CountingEngineProvider(),  # type: ignore[arg-type]
+            engine_plugin=CountingEngineProvider(),  # type: ignore[arg-type]
             deps=deps,
             container=container,
             mcp_client_factory=mcp_client_factory({_SERVER: client}),  # type: ignore[arg-type]
             use_case_mcp=(grant,),
         )
 
-        async with runtime:
-            await _until(lambda: runtime._health.get(_AGENT) is not None)
-            health = await runtime.health(_AGENT)
+        async with host:
+            await _until(lambda: host._health.get(_AGENT) is not None)
+            health = await host.health(_AGENT)
 
             assert health.status == "ok"
             assert _SERVER not in health.checks
 
-            resolver = McpMarkerResolver(runtime, observability=None)
+            resolver = McpMarkerResolver(host, observability=None)
             handle = resolver.resolve(Mcp(_SERVER, include=["search"]), McpHandle)
             with ExecutionScope(identity), pytest.raises(AgentRunError) as excinfo:
                 await handle.call_untyped("search", {})

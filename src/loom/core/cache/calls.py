@@ -20,6 +20,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import inspect
+import logging
 import math
 import random
 from collections.abc import Awaitable, Callable, Mapping
@@ -29,13 +30,13 @@ from typing import Any, Protocol, cast
 import msgspec
 
 from loom.core.cache._single_flight import SingleFlight
-from loom.core.cache.abc.backend import CacheBackend
 from loom.core.cache.abc.config import CacheConfig
+from loom.core.cache.abc.store import CacheStore
 from loom.core.cache.decorators import _CallPolicy, declares_cache_call
+from loom.core.cache.event import CacheEvent, CacheKey
 from loom.core.cache.keys import call_key
 from loom.core.cache.result_codec import ResultCodec, build_call_codec
 from loom.core.di.container import LoomContainer
-from loom.core.logger import get_logger
 from loom.core.model.introspection import resolve_type_hints
 
 AsyncCallable = Callable[..., Awaitable[Any]]
@@ -55,7 +56,7 @@ class CachedCalls(Protocol):
         """Return the cached form of *func*, or *func* itself."""
         ...
 
-    def bind(self, obj: object) -> list[AsyncCallable]:
+    def wrap_methods(self, obj: object) -> list[AsyncCallable]:
         """Return the public coroutine methods of *obj*, cached where declared."""
         ...
 
@@ -323,7 +324,9 @@ def _log_abandoned_call(key: str, error: BaseException) -> None:
     The body of a cached call is arbitrary application code, so a failure the
     single flight can hand to nobody would otherwise disappear entirely.
     """
-    get_logger(__name__).warning("CacheCallLoadAbandoned", key=key, error=repr(error))
+    logging.getLogger(__name__).warning(
+        CacheEvent.LOAD_ABANDONED, extra={CacheKey.KEY: key}, exc_info=error
+    )
 
 
 def _coroutine_methods(obj: object, warn_once: _WarnOnce) -> list[AsyncCallable]:
@@ -339,7 +342,7 @@ def _coroutine_methods(obj: object, warn_once: _WarnOnce) -> list[AsyncCallable]
 
     A subclass that shadows a base's coroutine with something that is not one —
     a property, a plain ``def`` — unpublishes it, because the published object
-    would not be awaitable. That is announced (``CacheCallOverriddenBySync``):
+    would not be awaitable. That is announced (``CacheEvent.CALL_OVERRIDDEN_BY_SYNC``):
     a tool disappearing from a toolset is exactly the kind of change nobody
     notices until an agent stops using it.
 
@@ -360,9 +363,8 @@ def _coroutine_methods(obj: object, warn_once: _WarnOnce) -> list[AsyncCallable]
             elif name in names:
                 del names[name]
                 warn_once.emit(
-                    "CacheCallOverriddenBySync",
+                    CacheEvent.CALL_OVERRIDDEN_BY_SYNC,
                     f"{cls.__qualname__}.{name}",
-                    attribute=type(attribute).__name__,
                 )
     return [cast(AsyncCallable, getattr(obj, name)) for name in names]
 
@@ -378,20 +380,35 @@ class _WarnOnce:
     __slots__ = ("_log", "_seen")
 
     def __init__(self) -> None:
-        self._log = get_logger(__name__)
-        self._seen: set[tuple[str, str]] = set()
+        self._log = logging.getLogger(__name__)
+        self._seen: set[tuple[CacheEvent, str]] = set()
 
-    def __call__(self, event: str, func: AsyncCallable, **fields: Any) -> None:
+    def __call__(
+        self,
+        event: CacheEvent,
+        func: AsyncCallable,
+        fields: Mapping[str, object] | None = None,
+        *,
+        failure: BaseException | None = None,
+    ) -> None:
         """Log *event* for *func* the first time it happens.
 
         Args:
             event: Log event name.
             func: Declared coroutine the event is about.
-            **fields: Extra structured fields.
+            fields: Extra structured fields.
+            failure: The exception the event reports, written as the record's exception.
         """
-        self.emit(event, _function_name(func), **fields)
+        self.emit(event, _function_name(func), fields, failure=failure)
 
-    def emit(self, event: str, name: str, **fields: Any) -> None:
+    def emit(
+        self,
+        event: CacheEvent,
+        name: str,
+        fields: Mapping[str, object] | None = None,
+        *,
+        failure: BaseException | None = None,
+    ) -> None:
         """Log *event* for the dotted *name* the first time it happens.
 
         Args:
@@ -399,12 +416,15 @@ class _WarnOnce:
             name: Dotted name of what the event is about; the memo is keyed by
                 the pair, so two events about one name both get through and one
                 event about two names does too.
-            **fields: Extra structured fields.
+            fields: Extra structured fields.
+            failure: The exception the event reports, written as the record's exception.
         """
         if (event, name) in self._seen:
             return
         self._seen.add((event, name))
-        self._log.warning(event, function=name, **fields)
+        self._log.warning(
+            event, extra={CacheKey.FUNCTION: name, **(fields or {})}, exc_info=failure
+        )
 
 
 class _ConfiguredCalls:
@@ -421,7 +441,7 @@ class _ConfiguredCalls:
     def __init__(
         self,
         config: CacheConfig,
-        cache: CacheBackend,
+        cache: CacheStore,
         flight: SingleFlight,
         rng: random.Random,
     ) -> None:
@@ -452,7 +472,7 @@ class _ConfiguredCalls:
             return func
         codec = build_call_codec(func)
         if codec is None:
-            self._warn_once("CacheCallNotCacheable", func)
+            self._warn_once(CacheEvent.CALL_NOT_CACHEABLE, func)
             return func
         spec = _CallSpec(func, policy, codec, inspect.signature(func))
 
@@ -464,7 +484,7 @@ class _ConfiguredCalls:
         wrapper.__annotations__ = resolve_type_hints(func, include_extras=True)
         return wrapper
 
-    def bind(self, obj: object) -> list[AsyncCallable]:
+    def wrap_methods(self, obj: object) -> list[AsyncCallable]:
         """Return the public coroutine methods of *obj*, cached where declared.
 
         Every public coroutine method is published, so adding a public helper
@@ -483,7 +503,7 @@ class _ConfiguredCalls:
         try:
             key = spec.key(args, kwargs)
         except _Unrenderable as error:
-            self._warn_once("CacheCallKeyUnrenderable", spec.func, error=str(error))
+            self._warn_once(CacheEvent.CALL_KEY_UNRENDERABLE, spec.func, failure=error)
             return await spec.func(*args, **kwargs)
 
         payload = await self._read(spec, key)
@@ -509,7 +529,9 @@ class _ConfiguredCalls:
         try:
             return await self._cache.get_value(key)
         except Exception as error:
-            self._warn_once("CacheCallReadFailed", spec.func, key=key, error=type(error).__name__)
+            self._warn_once(
+                CacheEvent.CALL_READ_FAILED, spec.func, {CacheKey.KEY: key}, failure=error
+            )
             return None
 
     def _decode(self, spec: _CallSpec, key: str, payload: Any) -> Any:
@@ -528,7 +550,7 @@ class _ConfiguredCalls:
             return spec.codec.decode(payload)
         except (msgspec.ValidationError, ValueError, TypeError) as error:
             self._warn_once(
-                "CacheCallPayloadMismatch", spec.func, key=key, error=type(error).__name__
+                CacheEvent.PAYLOAD_MISMATCHED, spec.func, {CacheKey.KEY: key}, failure=error
             )
             return _UNDECODABLE
 
@@ -553,11 +575,10 @@ class _ConfiguredCalls:
             await self._cache.set_value(key, encoded.payload, ttl=self._write_ttl(spec.policy))
         except Exception as error:
             self._warn_once(
-                "CacheCallWriteFailed",
+                CacheEvent.CALL_WRITE_FAILED,
                 spec.func,
-                key=key,
-                value_type=type(result).__name__,
-                error=repr(error),
+                {CacheKey.KEY: key, CacheKey.RESULT_TYPE: type(result).__name__},
+                failure=error,
             )
         return encoded.value
 
@@ -605,10 +626,10 @@ class _UnconfiguredCalls:
             *func* itself.
         """
         if declares_cache_call(func) is not None:
-            self._warn_once("CacheCallNotConfigured", func)
+            self._warn_once(CacheEvent.CALL_NOT_CONFIGURED, func)
         return func
 
-    def bind(self, obj: object) -> list[AsyncCallable]:
+    def wrap_methods(self, obj: object) -> list[AsyncCallable]:
         """Return the public coroutine methods of *obj*, all uncached.
 
         Args:

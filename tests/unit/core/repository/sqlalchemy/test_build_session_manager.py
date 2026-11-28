@@ -9,16 +9,16 @@ import pytest
 from sqlalchemy.pool import NullPool
 
 from loom.core.model.redaction import Dsn, RedactedMap
-from loom.core.persistence.database import DatabaseConfig, PoolConfig
-from loom.core.persistence.profile import (
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.database import DatabaseConfig, PoolConfig, decode_database_config
+from loom.core.stores.profile import (
     SERVER_PROFILE,
     WORKER_PROFILE,
     PoolDefaults,
     RuntimeProfile,
 )
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.sqlalchemy import session_manager as session_manager_module
-from loom.core.repository.sqlalchemy.session_manager import (
+from loom.stores.sqlalchemy import session_manager as session_manager_module
+from loom.stores.sqlalchemy.session_manager import (
     SessionManager,
     build_session_manager,
 )
@@ -45,7 +45,7 @@ class TestBuildSessionManager:
             assert pool._recycle == 60
             assert pool._pre_ping is False
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_undeclared_keys_come_from_the_profile(self) -> None:
         manager = build_session_manager(
@@ -61,7 +61,7 @@ class TestBuildSessionManager:
             )
             assert pool._pre_ping is True
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_an_in_memory_sqlite_omits_the_sizing_keys_and_starts(self) -> None:
         manager = build_session_manager(
@@ -70,7 +70,7 @@ class TestBuildSessionManager:
         try:
             assert type(_pool_of(manager)).__name__ == "StaticPool"
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_a_sqlite_file_takes_every_key(self, tmp_path: Path) -> None:
         config = DatabaseConfig(url=Dsn(f"sqlite+aiosqlite:///{tmp_path / 'app.db'}"))
@@ -79,7 +79,7 @@ class TestBuildSessionManager:
             pool = _pool_of(manager)
             assert (pool.size(), pool._max_overflow, pool._timeout) == (5, 5, 10)
         finally:
-            await manager.dispose()
+            await manager.close()
 
     def test_connect_args_and_echo_reach_the_engine(self, monkeypatch: pytest.MonkeyPatch) -> None:
         seen: dict[str, Any] = {}
@@ -98,6 +98,20 @@ class TestBuildSessionManager:
 
         assert seen["connect_args"] == {"command_timeout": 5}
         assert seen["echo"] is True
+
+    @pytest.mark.parametrize(
+        ("section", "hidden"),
+        [({}, False), ({"hide_parameters": True}, True)],
+        ids=["default", "set"],
+    )
+    def test_hide_parameters_reaches_the_engine(
+        self, section: dict[str, bool], hidden: bool
+    ) -> None:
+        config = decode_database_config({"url": _POSTGRES, **section}, path="stores.db")
+
+        manager = build_session_manager(config, SERVER_PROFILE, database=DEFAULT_STORE)
+
+        assert manager.engine.sync_engine.hide_parameters is hidden
 
     def test_manager_options_pass_through(self, monkeypatch: pytest.MonkeyPatch) -> None:
         seen: dict[str, Any] = {}
@@ -130,7 +144,7 @@ class TestBuildSessionManager:
             pool = _pool_of(manager)
             assert (pool.size(), pool._max_overflow, pool._timeout, pool._recycle) == (1, 0, 5, 300)
         finally:
-            await manager.dispose()
+            await manager.close()
 
     async def test_a_caller_pool_class_is_honoured(self) -> None:
         manager = build_session_manager(
@@ -142,4 +156,4 @@ class TestBuildSessionManager:
         try:
             assert type(_pool_of(manager)) is NullPool
         finally:
-            await manager.dispose()
+            await manager.close()

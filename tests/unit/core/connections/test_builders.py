@@ -22,6 +22,7 @@ from loom.core.connections.aws import AwsPool
 from loom.core.connections.mongo import MongoPool
 from loom.core.model.redaction import Dsn, Secret
 from loom.core.plugins.optional import import_optional
+from tests.helpers.aws import OTHER_REGION
 
 
 class _Recorder:
@@ -43,18 +44,14 @@ class _Recorder:
 
 
 class TestAwsClientBuilder:
-    def test_aws_builder_uses_a_session_of_its_own_and_every_bound(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
+    def test_aws_builder_opens_a_session_of_the_profile_and_gives_every_bound(
+        self, mocked_aws: None, dev_profile: str
     ) -> None:
-        island = import_optional("loom.core.connections.aws.client", extra="dynamodb")
-        session = _Recorder()
-        session.client = _Recorder()  # type: ignore[attr-defined]
-        monkeypatch.setattr(island.boto3, "Session", session)
+        island = import_optional("loom.connections.aws.client", extra="aws")
         config = AwsClientConfig(
-            region="eu-west-1",
+            region=OTHER_REGION,
             url=Dsn("http://localhost:8000"),
-            profile="dev",
+            profile=dev_profile,
             pool=AwsPool(size=4),
             connect_timeout=1,
             read_timeout=7,
@@ -62,24 +59,17 @@ class TestAwsClientBuilder:
             retry_mode="adaptive",
         )
 
-        island.build_aws_client("dynamodb", config)
+        session = island.open_session(dev_profile)
+        client = island.build_aws_client(session, "dynamodb", config)
 
-        assert session.kwargs == {"profile_name": "dev", "region_name": "eu-west-1"}
-        client_args, client_kwargs = session.client.calls[-1]  # type: ignore[attr-defined]
-        assert client_args == ("dynamodb",)
-        assert client_kwargs["endpoint_url"] == "http://localhost:8000"
-        botocore = client_kwargs["config"]
+        assert session.profile_name == dev_profile
+        assert client.meta.service_model.service_name == "dynamodb"
+        assert client.meta.endpoint_url == "http://localhost:8000"
+        assert client.meta.region_name == OTHER_REGION
+        botocore = client.meta.config
         bounds = (botocore.connect_timeout, botocore.read_timeout, botocore.max_pool_connections)
         assert bounds == (1, 7, 4)
         assert botocore.retries == {"total_max_attempts": 2, "mode": "adaptive"}
-
-    def test_aws_builder_refuses_an_extra_the_config_decides(self) -> None:
-        island = import_optional("loom.core.connections.aws.client", extra="dynamodb")
-
-        with pytest.raises(ValueError, match="read_timeout"):
-            island.build_aws_client("dynamodb", AwsClientConfig(), read_timeout=60)
-        with pytest.raises(ValueError, match="region_name"):
-            island.build_aws_client("dynamodb", AwsClientConfig(), region_name="us-east-1")
 
 
 class TestMongoClientBuilder:
@@ -90,7 +80,7 @@ class TestMongoClientBuilder:
     def test_mongo_builders_forward_the_connection_and_the_context_options(
         self, monkeypatch: pytest.MonkeyPatch, builder: str, client_name: str
     ) -> None:
-        island = import_optional("loom.core.connections.mongo.client", extra="mongo")
+        island = import_optional("loom.connections.mongo.client", extra="mongo")
         client = _Recorder()
         monkeypatch.setattr(island, client_name, client)
         connection = MongoConnection(
@@ -113,7 +103,7 @@ class TestMongoClientBuilder:
     def test_mongo_builder_leaves_unset_options_to_the_driver(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        island = import_optional("loom.core.connections.mongo.client", extra="mongo")
+        island = import_optional("loom.connections.mongo.client", extra="mongo")
         client = _Recorder()
         monkeypatch.setattr(island, "MongoClient", client)
 
@@ -122,7 +112,7 @@ class TestMongoClientBuilder:
         assert client.kwargs == {"host": "mongodb://h"}
 
     def test_mongo_builder_refuses_an_extra_the_connection_decides(self) -> None:
-        island = import_optional("loom.core.connections.mongo.client", extra="mongo")
+        island = import_optional("loom.connections.mongo.client", extra="mongo")
         connection = MongoConnection(url=Dsn("mongodb://h"), database="app", pool=MongoPool(size=4))
 
         with pytest.raises(ValueError, match="maxPoolSize"):
@@ -132,7 +122,7 @@ class TestMongoClientBuilder:
 
     @pytest.mark.parametrize("option", ["maxpoolsize", "MAXPOOLSIZE", "SocketTimeoutMS", "Host"])
     def test_mongo_builder_compares_option_names_ignoring_case(self, option: str) -> None:
-        island = import_optional("loom.core.connections.mongo.client", extra="mongo")
+        island = import_optional("loom.connections.mongo.client", extra="mongo")
         connection = MongoConnection(
             url=Dsn("mongodb://h"), database="app", read_timeout=5, pool=MongoPool(size=4)
         )
@@ -152,7 +142,7 @@ class TestClickHouseClientBuilder:
     def test_clickhouse_builder_forwards_only_what_is_declared(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        island = import_optional("loom.core.connections.clickhouse.client", extra="clickhouse")
+        island = import_optional("loom.connections.clickhouse.client", extra="clickhouse")
         get_client = _Recorder()
         monkeypatch.setattr(island.clickhouse_connect, "get_client", get_client)
 
@@ -164,7 +154,7 @@ class TestClickHouseClientBuilder:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        island = import_optional("loom.core.connections.clickhouse.client", extra="clickhouse")
+        island = import_optional("loom.connections.clickhouse.client", extra="clickhouse")
         get_client = _Recorder()
         monkeypatch.setattr(island.clickhouse_connect, "get_client", get_client)
         connection = ClickHouseConnection(
@@ -188,7 +178,7 @@ class TestClickHouseClientBuilder:
     def test_async_clickhouse_builder_sizes_its_thread_pool(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        island = import_optional("loom.core.connections.clickhouse.client", extra="clickhouse")
+        island = import_optional("loom.connections.clickhouse.client", extra="clickhouse")
         recorded: dict[str, Any] = {}
 
         async def get_async_client(**kwargs: Any) -> str:
@@ -205,7 +195,7 @@ class TestClickHouseClientBuilder:
         assert recorded == {"dsn": "clickhouse://h/db", "executor_threads": 3, "query_retries": 0}
 
     def test_clickhouse_builder_refuses_an_extra_the_connection_decides(self) -> None:
-        island = import_optional("loom.core.connections.clickhouse.client", extra="clickhouse")
+        island = import_optional("loom.connections.clickhouse.client", extra="clickhouse")
 
         with pytest.raises(ValueError, match="password"):
             island.build_clickhouse_client(

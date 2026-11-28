@@ -5,11 +5,11 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import MetaData
 
-from loom.core.backend.sqlalchemy import audited_tables, compile_all
 from loom.core.config import ConfigError
 from loom.core.model import Audited, BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.audited import AuditedTable
 from loom.core.model.types import Integer, Text
+from loom.stores.sqlalchemy.schema import audited_tables, compile_all
 from tests.unit.core.doubles import Note, Plain
 
 
@@ -62,7 +62,7 @@ class TestAuditedTables:
             id: int = ColumnField(Integer, primary_key=True)
             body: str = ColumnField(Text)
 
-        with pytest.raises(ConfigError, match=r"typo.*bodyy"):
+        with pytest.raises(ConfigError, match=r"excludes unknown columns"):
             _compiled(Typo)
 
     def test_excluding_a_primary_key_column_is_refused(self) -> None:
@@ -71,7 +71,7 @@ class TestAuditedTables:
             __audit_exclude__ = frozenset({"id"})
             id: int = ColumnField(Integer, primary_key=True)
 
-        with pytest.raises(ConfigError, match=r"key_excluded.*id.*primary key"):
+        with pytest.raises(ConfigError, match=r"cannot exclude a primary-key column"):
             _compiled(KeyExcluded)
 
     def test_a_secret_primary_key_is_refused(self) -> None:
@@ -79,5 +79,5 @@ class TestAuditedTables:
             __tablename__ = "keys"
             api_key: str = ColumnField(Text, primary_key=True)
 
-        with pytest.raises(ConfigError, match=r"keys.*api_key.*primary key"):
+        with pytest.raises(ConfigError, match=r"cannot exclude a primary-key column"):
             _compiled(Keys)

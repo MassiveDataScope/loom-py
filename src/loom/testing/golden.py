@@ -26,7 +26,7 @@ from loom.core.bootstrap.kernel import KernelRecipe
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.identity import Identity
 from loom.core.use_case.factory import UseCaseFactory
@@ -303,7 +303,7 @@ class GoldenHarness:
         container = self._build_container()
         declarer = f"{use_case_type.__qualname__} or a dependency it builds"
         harness = type(self).__name__
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             self._compiler,
             resolvers=container.kinds,
             agent_resolver=_AgentDoubles(declarer, harness, self._agent_doubles),

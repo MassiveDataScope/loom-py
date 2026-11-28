@@ -14,11 +14,11 @@ from tests.integration.ai.conftest import _until
 
 class TestAdapterOnlyAgentHealth:
     async def test_is_listed_in_health(self, compose: Compose) -> None:
-        runtime = compose(quotes=AcmeFakeQuotes()).ai.runtime
-        assert runtime is not None
+        host = compose(quotes=AcmeFakeQuotes()).ai.agent_host
+        assert host is not None
 
-        async with runtime:
-            await _until(lambda: runtime._health.get(AGENT) is not None)  # noqa: SLF001
-            health = await runtime.health(AGENT)
+        async with host:
+            await _until(lambda: host._health.get(AGENT) is not None)  # noqa: SLF001
+            health = await host.health(AGENT)
 
         assert health.status == "ok"

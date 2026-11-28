@@ -96,7 +96,7 @@ def _gauges_for(registry: CollectorRegistry) -> _PoolGauges:
 
 
 class PrometheusPoolMetrics:
-    """:class:`~loom.core.persistence.profile.PoolMetricsSink` publishing to Prometheus.
+    """:class:`~loom.core.stores.profile.PoolMetricsSink` publishing to Prometheus.
 
     Args:
         registry: Target registry; ``None`` is the global default registry.

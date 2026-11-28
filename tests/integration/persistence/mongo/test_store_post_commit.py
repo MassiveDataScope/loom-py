@@ -15,23 +15,23 @@ from uuid import uuid4
 import pytest
 from pymongo import AsyncMongoClient
 
-from loom.core.backend.sqlalchemy import compile_all, get_compiled
 from loom.core.command import Command
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.errors import StoresNotCommitted
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.errors import StoresNotCommittedError
 from loom.core.job.context import add_pending_dispatch
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.mongo.repository import RepositoryMongo
-from loom.core.repository.mongo.uow import MongoSessions, MongoUnitOfWork
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import OrderedCommits
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.repository import CursorCodec
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case import UseCase
+from loom.stores.mongo.repository import MongoRepository
+from loom.stores.mongo.uow import MongoSessions, MongoUnitOfWork
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.schema import compile_all, get_compiled
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 
 pytestmark = [pytest.mark.integration, pytest.mark.mongo, pytest.mark.timeout(60)]
 
@@ -85,7 +85,7 @@ class _WriteEntry(UseCase[_Entry, None]):
 
 
 class _WriteOrderThenEntry(UseCase[_Order, None]):
-    def __init__(self, executor: RuntimeExecutor, orders: Any, nested: _WriteEntry) -> None:
+    def __init__(self, executor: UseCaseExecutor, orders: Any, nested: _WriteEntry) -> None:
         self.executor, self.orders, self.nested = executor, orders, nested
 
     async def execute(self) -> None:
@@ -112,7 +112,7 @@ async def sql() -> AsyncIterator[SessionManager]:
     try:
         yield manager
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 class TestStorePostCommit:
@@ -120,7 +120,7 @@ class TestStorePostCommit:
         ("refuse", "ran", "error", "stored"),
         [
             pytest.param(False, ["sql", "mongo"], None, 1, id="both-commit"),
-            pytest.param(True, ["sql"], StoresNotCommitted, 0, id="mongo-rolls-back"),
+            pytest.param(True, ["sql"], StoresNotCommittedError, 0, id="mongo-rolls-back"),
         ],
     )
     async def test_each_store_runs_its_actions_by_its_own_outcome(
@@ -137,7 +137,7 @@ class TestStorePostCommit:
         # A transaction cannot create the collection implicitly on 4.2.
         await collection.database.create_collection(collection.name)
         codec = CursorCodec(signing="ephemeral")
-        entries = RepositoryMongo(
+        entries = MongoRepository(
             _Entry,
             collection,
             session_provider=MongoSessions(mongo_client, AUDIT),
@@ -146,9 +146,9 @@ class TestStorePostCommit:
         coordinator = OrderedCommits(
             {DEFAULT_STORE: SQLAlchemyUnitOfWorkFactory(sql), AUDIT: _Mongo(mongo_client, refuse)}
         )
-        executor = RuntimeExecutor(UseCaseCompiler(), coordinator=coordinator)
+        executor = UseCaseExecutor(UseCaseCompiler(), coordinator=coordinator)
         labels: list[str] = []
-        orders = RepositorySQLAlchemy(sql, _Order, cursor_codec=codec)
+        orders = SQLAlchemyRepository(sql, _Order, cursor_codec=codec)
         use_case = _WriteOrderThenEntry(executor, orders, _WriteEntry(entries, labels))
 
         with nullcontext() if error is None else pytest.raises(error):

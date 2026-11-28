@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
 import polars as pl
 
-from loom.core.logger import get_logger
-from loom.etl.backends.polars._dtype import loom_type_to_polars
+from loom.core.errors import InvalidUse
+from loom.core.log_names import LogField
+from loom.core.observability.span import elapsed_ms
 from loom.etl.declarative.source._from_mongo import FromMongo, SourceRef
 from loom.etl.declarative.source._specs import ExtraFieldsMode, MongoSourceSpec
+from loom.etl.engines.polars._dtype import frame_type_to_polars
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io.sources._mongo_batch import (
     BatchProcessorProtocol,
     MongoBatchProcessor,
@@ -22,7 +26,7 @@ from loom.etl.io.sources._mongo_predicate import predicate_to_mongo
 from loom.etl.io.sources._serialization import _serialization_stats
 from loom.etl.schema._schema import LoomDtype
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 class MongoSourceReader:
@@ -51,7 +55,7 @@ class MongoSourceReader:
         from polars.io.plugins import register_io_source
 
         if self._client is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 "MongoSourceReader: no client configured. "
                 "Pass a pymongo MongoClient and database name at construction time."
             )
@@ -64,6 +68,7 @@ class MongoSourceReader:
         batch_processor: BatchProcessorProtocol = MongoBatchProcessor(
             schema_str_fields=schema_str_fields,
             declared_schema=declared_schema or None,
+            table=spec.collection,
         )
 
         registered_schema = self._prepare_scan(
@@ -103,7 +108,7 @@ class MongoSourceReader:
     def _resolve_declared_schema(self, spec: Any) -> tuple[dict[str, pl.DataType], frozenset[str]]:
         if not spec.schema:
             return {}, frozenset()
-        field_dtypes = {col.name: loom_type_to_polars(col.dtype) for col in spec.schema}
+        field_dtypes = {col.name: frame_type_to_polars(col.dtype) for col in spec.schema}
         str_field_names = frozenset(col.name for col in spec.schema if col.dtype == LoomDtype.UTF8)
         return (field_dtypes, str_field_names)
 
@@ -157,15 +162,15 @@ def _infer_schema_from_first_batch(
     finally:
         cursor.close()
     if not docs:
-        _log.info("mongo schema inferred", collection=collection.name, sampled=0, columns=0)
+        _log.info(
+            EtlEvent.SOURCE_SCHEMA_INFERRED, extra={EtlKey.TABLE: collection.name, EtlKey.ROWS: 0}
+        )
         return {}
     frame = batch_processor.build_frame(docs)
     schema = _normalize_null_dtypes(dict(zip(frame.columns, frame.dtypes, strict=True)))
     _log.info(
-        "mongo schema inferred",
-        collection=collection.name,
-        sampled=len(docs),
-        columns=len(schema),
+        EtlEvent.SOURCE_SCHEMA_INFERRED,
+        extra={EtlKey.TABLE: collection.name, EtlKey.ROWS: len(docs)},
     )
     return schema  # noqa: RET504
 
@@ -184,13 +189,11 @@ def _open_cursor(
     if effective_limit is not None:
         cursor = cursor.limit(effective_limit)
     _log.info(
-        "mongo query",
-        collection=collection.name,
-        database=getattr(collection.database, "name", None),
-        filter=filter_dict,
-        projection=list(projection) if projection else None,
-        batch_size=spec.batch_size,
-        limit=effective_limit,
+        EtlEvent.SOURCE_QUERY_STARTED,
+        extra={
+            EtlKey.TABLE: collection.name,
+            EtlKey.COLUMNS: list(projection) if projection else None,
+        },
     )
     return cursor
 
@@ -207,7 +210,7 @@ def _finalize_batch(
     if declared_schema:
         frame = apply_declared_schema(frame, declared_schema, extra_fields_mode, schema_name)
     else:
-        frame = align_to_schema(frame, registered_schema)
+        frame = align_to_schema(frame, registered_schema, table=schema_name)
     if with_columns:
         present = [c for c in with_columns if c in frame.columns]
         frame = frame.select(present) if present else frame.head(0)
@@ -234,7 +237,7 @@ def _scan(
     batch: list[dict[str, Any]] = []
     batches_yielded = 0
     total_rows = 0
-    started = time.monotonic()
+    started = time.perf_counter()
     serialization_failures_mark = _serialization_stats.failures
     try:
         for doc in cursor:
@@ -260,7 +263,7 @@ def _scan(
                     batches_yielded,
                     rows,
                     total_rows,
-                    time.monotonic() - started,
+                    elapsed_ms(started),
                 )
                 yield frame
                 batch = []
@@ -285,7 +288,7 @@ def _scan(
                 batches_yielded,
                 rows,
                 total_rows,
-                time.monotonic() - started,
+                elapsed_ms(started),
             )
             yield frame
     finally:
@@ -293,35 +296,37 @@ def _scan(
         serialization_failures = _serialization_stats.failures - serialization_failures_mark
         if serialization_failures:
             _log.warning(
-                "mongo read degraded",
-                collection=collection.name,
-                serialization_failures=serialization_failures,
-                last_error=_serialization_stats.last_error,
+                EtlEvent.SOURCE_READ_DEGRADED,
+                extra={
+                    EtlKey.TABLE: collection.name,
+                    EtlKey.SERIALIZATION_FAILURES: serialization_failures,
+                },
             )
         _log.info(
-            "mongo read complete",
-            collection=collection.name,
-            docs=total_rows,
-            batches=batches_yielded,
-            serialization_failures=serialization_failures,
-            duration_s=round(time.monotonic() - started, 3),
+            EtlEvent.SOURCE_READ_COMPLETED,
+            extra={
+                EtlKey.TABLE: collection.name,
+                EtlKey.ROWS: total_rows,
+                EtlKey.BATCHES: batches_yielded,
+                EtlKey.SERIALIZATION_FAILURES: serialization_failures,
+                LogField.DURATION_MS: elapsed_ms(started),
+            },
         )
 
 
 def _log_batch(
-    collection: str, batch_index: int, rows: int, total_rows: int, elapsed_s: float
+    collection: str, batch_index: int, rows: int, total_rows: int, duration_ms: float
 ) -> None:
-    payload = {
-        "collection": collection,
-        "batch": batch_index,
-        "rows": rows,
-        "total_rows": total_rows,
-        "elapsed_s": round(elapsed_s, 3),
+    payload: dict[str, object] = {
+        EtlKey.TABLE: collection,
+        EtlKey.BATCHES: batch_index,
+        EtlKey.ROWS: rows,
+        LogField.DURATION_MS: duration_ms,
     }
     if batch_index == 1:
-        _log.info("mongo first batch", **payload)
+        _log.info(EtlEvent.SOURCE_BATCH_READ, extra=payload)
     else:
-        _log.debug("mongo batch", **payload)
+        _log.debug(EtlEvent.SOURCE_BATCH_READ, extra=payload)
 
 
 __all__ = ["FromMongo", "MongoSourceReader", "MongoSourceSpec", "SourceRef"]

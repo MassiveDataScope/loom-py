@@ -17,23 +17,29 @@ import pathlib
 import secrets
 import tempfile
 import time
+from collections.abc import Callable
 from typing import Any
 
 import jwt as pyjwt
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql.config import SqlEndpointConfig
-from loom.core.sql.service import SqlQueryService
+from loom.core.log_names import LogField
+from loom.core.observability.observability import Observability
+from loom.core.stores.event import StoresKey
+from loom.core.stores.sql.config import SqlEndpointConfig
+from loom.core.stores.sql.service import SqlQueryService
 from loom.rest.auth import (
     AuthenticationMiddleware,
     JwtAuthConfig,
     JwtAuthenticator,
     RequestCredentials,
 )
-from loom.rest.fastapi.sql import bind_sql_endpoints
+from loom.rest.event import RestEvent, RestKey
+from loom.rest.fastapi.sql import mount_sql_endpoints
+from tests.helpers.loggers import CapturedLog
 from tests.unit.core.sql._fakes import (
     FakeSqlExecutor,
     make_connection_config,
@@ -91,7 +97,7 @@ class AcmeFixedIdentityMiddleware:
 def _app(
     executor: FakeSqlExecutor,
     *,
-    runtime: ObservabilityRuntime | None = None,
+    runtime: Observability | None = None,
     **conn_overrides: Any,
 ) -> FastAPI:
     connection = make_connection_config(
@@ -100,12 +106,12 @@ def _app(
     )
     config = make_sql_config(analytics=connection)
     app = FastAPI()
-    bind_sql_endpoints(
+    mount_sql_endpoints(
         app,
         service=SqlQueryService(executors={"analytics": executor}, config=config),
         config=config,
         authenticator=_RoleAuthenticator(),
-        observability_runtime=runtime,
+        observability=runtime,
     )
     return app
 
@@ -114,7 +120,7 @@ def _client(
     executor: FakeSqlExecutor,
     *,
     identity: Identity | None,
-    runtime: ObservabilityRuntime | None = None,
+    runtime: Observability | None = None,
     **conn_overrides: Any,
 ) -> TestClient:
     app = _app(executor, runtime=runtime, **conn_overrides)
@@ -186,7 +192,7 @@ def _single_role_app(executor: FakeSqlExecutor) -> FastAPI:
     )
     config = make_sql_config(analytics=connection)
     app = FastAPI()
-    bind_sql_endpoints(
+    mount_sql_endpoints(
         app,
         service=SqlQueryService(executors={"analytics": executor}, config=config),
         config=config,
@@ -393,22 +399,46 @@ class TestNonJwtMechanismDerivesRoles:
         response = _header_client(executor).post(_SQL_PATH, json=_SELECT_ONE)
         assert (response.status_code, executor.calls) == (401, [])
 
-    def test_span_labels_the_effective_roles_the_subject_and_the_mechanism(
+    def test_span_labels_the_effective_roles_and_the_mechanism_never_the_subject(
         self,
     ) -> None:
-        """Auditability: the span states who ran the query, how, and with which privileges."""
+        """The span states how the query ran and with which privileges, never who ran it."""
         observer = RecordingLifecycleObserver()
         client = _client(
             FakeSqlExecutor(),
             identity=_identity((ROLE_A, ROLE_B), subject="user-42"),
-            runtime=ObservabilityRuntime([observer]),
+            runtime=Observability([observer]),
         )
 
         response = _post(client, roles=[ROLE_B])
 
         assert response.status_code == 200
         meta = observer.events[0].meta
-        assert (meta["roles"], meta["subject"], meta["mechanism"]) == (ROLE_B, "user-42", "test")
+        assert (meta["roles"], meta["mechanism"], "subject" in meta) == (ROLE_B, "test", False)
+
+
+class TestMountNotice:
+    @pytest.mark.parametrize(
+        ("build", "roles_bound"),
+        [(_app, True), (_single_role_app, False)],
+        ids=["roles-bound", "shared-role"],
+    )
+    def test_the_mount_warns_whether_the_caller_roles_bind_the_connection(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        build: Callable[[FakeSqlExecutor], FastAPI],
+        roles_bound: bool,
+    ) -> None:
+        """A shared role serves every caller with the same privileges; the notice says so."""
+        build(FakeSqlExecutor())
+
+        assert CapturedLog(caplog).named(RestEvent.SQL_ENDPOINT_MOUNTED) == [
+            {
+                LogField.HTTP_ROUTE: _SQL_PATH,
+                StoresKey.CONNECTION: "analytics",
+                RestKey.ROLES_BOUND: roles_bound,
+            }
+        ]
 
 
 class TestSingleRoleConnection:
@@ -456,12 +486,12 @@ class TestSingleRoleConnection:
         )
         config = make_sql_config(analytics=connection)
         app = FastAPI()
-        bind_sql_endpoints(
+        mount_sql_endpoints(
             app,
             service=SqlQueryService(executors={"analytics": executor}, config=config),
             config=config,
             authenticator=_RoleAuthenticator(),
-            observability_runtime=ObservabilityRuntime([observer]),
+            observability=Observability([observer]),
         )
         app.add_middleware(AcmeFixedIdentityMiddleware, identity=_identity((ROLE_B,)))
 

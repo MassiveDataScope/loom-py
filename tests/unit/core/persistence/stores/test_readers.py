@@ -8,33 +8,33 @@ import pytest
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.model import BaseModel, ColumnField, Integer
-from loom.core.persistence.stores import (
+from loom.core.stores.catalog import (
     DEFAULT_STORE,
     StoreCatalog,
     StoreKey,
     load_catalog,
 )
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 
 
 class TestRetiredStoreSections:
     def test_the_composition_refuses_a_retired_section_in_memory_too(self) -> None:
-        source = composition_source(
+        project = composition_project(
             ConfigContext.from_dict({"app": {"name": "x"}, "database": {"url": "sqlite://"}})
         )
 
         with pytest.raises(ConfigError, match="stores.default"):
-            source.backend(DEFAULT_STORE, default="none")
+            project.resolve_store_plugin(DEFAULT_STORE, default="none")
 
     def test_each_store_names_the_backend_composed_for_it(self) -> None:
         stores = {"default": {"backend": "none"}, "audit": {"backend": "sqlalchemy"}}
-        source = composition_source(
+        project = composition_project(
             ConfigContext.from_dict({"app": {"name": "x"}, "stores": stores})
         )
 
         keys = (DEFAULT_STORE, StoreKey("audit"))
 
-        backends = [source.backend(key, default="mongo").name for key in keys]
+        backends = [project.resolve_store_plugin(key, default="mongo").name for key in keys]
 
         assert backends == ["none", "sqlalchemy"]
 
@@ -48,7 +48,7 @@ class TestRetiredStoreSections:
             }
         )
 
-        settings = load_catalog(ctx).specs[DEFAULT_STORE].settings()
+        settings = load_catalog(ctx).specs[DEFAULT_STORE].section()
 
         assert settings == {"url": "sqlite:///orders.db"}
 
@@ -70,8 +70,8 @@ class TestClickHouseStoreReaders:
     def test_a_clickhouse_store_is_a_connection_only_kind_of_the_catalog(self) -> None:
         spec = _catalog({"events": _CLICKHOUSE}).specs[StoreKey("events")]
 
-        assert (spec.backend, spec.capabilities.serves_models) == ("clickhouse", False)
-        assert spec.settings() == {"url": "clickhouse://ch:8123/analytics"}
+        assert (spec.backend, spec.capabilities.can_serve_models) == ("clickhouse", False)
+        assert spec.section() == {"url": "clickhouse://ch:8123/analytics"}
 
     def test_an_unknown_kind_names_the_persistence_backends_and_the_connection_only_ones(
         self,
@@ -80,7 +80,7 @@ class TestClickHouseStoreReaders:
             _catalog({"events": {"backend": "kafka"}})
 
         message = str(error.value)
-        assert "Unknown persistence backend 'kafka'. Registered backends:" in message
+        assert "Unknown store plugin 'kafka'. Registered store plugins:" in message
         assert "Connection-only stores: clickhouse." in message
 
     def test_a_model_of_a_named_clickhouse_store_fails_at_composition(self) -> None:
@@ -94,9 +94,9 @@ class TestClickHouseStoreReaders:
             _catalog({"default": _CLICKHOUSE})
 
     def test_a_clickhouse_default_store_is_not_composed_as_a_backend(self) -> None:
-        source = composition_source(
+        project = composition_project(
             ConfigContext.from_dict({"app": {"name": "x"}, "stores": {"default": _CLICKHOUSE}})
         )
 
         with pytest.raises(ConfigError, match=r"stores\.default\.backend is 'clickhouse'"):
-            source.backend(DEFAULT_STORE, default="none")
+            project.resolve_store_plugin(DEFAULT_STORE, default="none")

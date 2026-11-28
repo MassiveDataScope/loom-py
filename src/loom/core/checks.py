@@ -12,15 +12,23 @@ logged. A check returns a :class:`Finding` when the configuration is unsafe,
             return None
         return Finding(message="billing uses the sandbox gateway", hint="set billing.gateway")
 
-A check registers when the module defining it is imported. loom's own checks
-live in packages the entry points import anyway (``loom.core.logger``,
-``loom.core.repository.abc`` and ``loom.rest``); an application lists the
-modules holding its checks under ``checks.modules``, which every run imports
-first, so the same checks run at startup and in ``loom check --deploy``.
+A check registers in a :class:`CheckSet`. Each ``loom.deploy_checks``
+entry point targets a ``CHECKS`` set and is named by the dotted configuration
+path whose settings its checks judge (``"observability.log"``, ``stores``,
+``"stores.settings.cursors"``, ``"app.rest"``); a package that ships checks
+registers there too. A set is imported only when the process uses its path:
+the path is declared in the configuration or the process requires it, and the
+process does not leave it out (:class:`CheckScope`). A third-party module a
+used set needs that is not installed is a :class:`~loom.core.config.errors.ConfigError`,
+never a finding, so it cannot be silenced. An application lists the modules
+holding its own checks under ``checks.modules``; they register in
+:data:`DEPLOY_CHECKS`, which always runs, so the same checks run at startup
+and in ``loom check --deploy``.
 
 The application factories call :func:`enforce_deploy_checks`, which runs the
-checks only in production and staging. ``loom check --deploy`` calls
-:func:`run_deploy_checks`, which runs them whatever the environment, for CI.
+checks only in production and staging. ``loom check --deploy`` runs
+:func:`run_deploy_checks` through ``CheckedProject.load``, which runs them whatever
+the environment, for CI.
 An id listed under ``checks.silenced`` in the configuration does not run, and
 enforcing logs a warning naming every silenced id. This module's logger has
 its own WARNING level, so a quieter parent does not hide these warnings.
@@ -31,7 +39,7 @@ from __future__ import annotations
 import importlib
 import logging
 import re
-from collections.abc import Callable, Collection, Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Final
@@ -39,27 +47,50 @@ from typing import TYPE_CHECKING, Final
 import msgspec
 
 from loom.core.config.errors import ConfigError
+from loom.core.config.keys import FASTAPI_ENTRY, INTERPOLATION, ConfigSection
 from loom.core.environment import ENVIRONMENT_VARIABLE, Environment
+from loom.core.errors import InvalidValue
+from loom.core.log_names import LogEvent, LogField, LogKey, ValueKind
+from loom.core.plugins.entrypoints import MissingDependency, list_entry_points
 
 if TYPE_CHECKING:
+    from importlib.metadata import EntryPoint
+
     from loom.core.config.context import ConfigContext
 
 _logger = logging.getLogger(__name__)
 _logger.setLevel(logging.WARNING)
 
+
+class ChecksEvent(LogEvent):
+    """What the deploy checks log at startup."""
+
+    DEPLOY_SKIPPED = "loom.checks.deploy_skipped"
+    DEPLOY_SILENCED = "loom.checks.deploy_silenced"
+    DEPLOY_WARNED = "loom.checks.deploy_warned"
+
+
+class ChecksKey(LogKey):
+    """The fields of a deploy check record."""
+
+    ID = "loom.checks.id"
+    IDS = "loom.checks.ids", ValueKind.ARRAY
+    MESSAGE = "loom.checks.message"
+
+
 CHECK_ID: Final = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*\.[EW]\d{3}")
 """Shape of a check id: a dotted area, then ``E`` or ``W`` and three digits."""
-
-_INTERPOLATION: Final = "${"
 
 SILENCED_KEY: Final = "checks.silenced"
 """Configuration key listing the check ids accepted on purpose."""
 
+DEPLOY_CHECKS_GROUP: Final = "loom.deploy_checks"
+"""Entry-point group whose entries name a configuration path and target its :class:`CheckSet`."""
+
+_HTTP_SOURCE: Final = "http"
+
 MODULES_KEY: Final = "checks.modules"
 """Configuration key listing the modules that register the application's checks."""
-
-REST_CHECKS: Final = "loom.rest"
-"""Area of loom's REST checks; a process serving no HTTP skips it."""
 
 
 class CheckLevel(StrEnum):
@@ -110,7 +141,96 @@ DeployCheck = Callable[["ConfigContext"], Finding | None]
 """A check: the loaded configuration in, a :class:`Finding` or ``None`` out."""
 
 
-class DeployCheckRegistry:
+class SkipReason(StrEnum):
+    """Why the deploy checks of a configuration path did not run."""
+
+    NOT_DECLARED = "not declared"
+    EXCLUDED = "left out by the process"
+
+
+@dataclass(frozen=True)
+class SkippedCheck:
+    """The checks of a configuration path left out of a run.
+
+    Attributes:
+        path: Configuration path the checks validate.
+        reason: Why they did not run.
+    """
+
+    path: str
+    reason: SkipReason
+
+    def describe(self) -> str:
+        """Return ``<path> (<reason>)``."""
+        return f"{self.path} ({self.reason})"
+
+
+@dataclass(frozen=True)
+class CheckScope:
+    """Which configuration paths a process runs the checks of.
+
+    Attributes:
+        required: Paths the process uses even when the configuration does not
+            declare them: a FastAPI process serves ``app.rest`` with its defaults.
+        excluded: Paths the process never uses: a worker serves no ``app.rest``.
+    """
+
+    required: frozenset[str] = frozenset()
+    excluded: frozenset[str] = frozenset()
+
+    @classmethod
+    def without_rest(cls) -> CheckScope:
+        """Return the scope of a process that serves no HTTP."""
+        return cls(excluded=frozenset({ConfigSection.APP_REST}))
+
+    @classmethod
+    def declared_by(cls, config: ConfigContext, *, excluded: Iterable[str] = ()) -> CheckScope:
+        """Return the scope of the process *config* declares, for ``loom check``.
+
+        The process serves HTTP, so it requires ``app.rest``, when ``app.entry``
+        is ``fastapi`` or a function of ``lambda.functions`` has an ``http``
+        trigger; start-up requires it for the same configurations.
+
+        Args:
+            config: The configuration, read as written.
+            excluded: Paths the caller leaves out.
+        """
+        functions = config.raw(f"{ConfigSection.LAMBDA}.functions", {})
+        declared = functions.values() if isinstance(functions, dict) else ()
+        http_function = any(
+            isinstance(function, dict)
+            and isinstance(function.get("trigger"), dict)
+            and function["trigger"].get("source") == _HTTP_SOURCE
+            for function in declared
+        )
+        serves = config.raw(f"{ConfigSection.APP}.entry") == FASTAPI_ENTRY or http_function
+        return cls(
+            required=frozenset({ConfigSection.APP_REST}) if serves else frozenset(),
+            excluded=frozenset(excluded),
+        )
+
+    def skip_reason(self, path: str, config: ConfigContext) -> SkipReason | None:
+        """Say why the checks of *path* do not run.
+
+        Args:
+            path: Configuration path the checks validate.
+            config: Loaded configuration, read as written.
+
+        Returns:
+            ``None`` when the process uses *path*.
+        """
+        if path in self.excluded:
+            return SkipReason.EXCLUDED
+        if path in self.required or config.raw(path) is not None:
+            return None
+        return SkipReason.NOT_DECLARED
+
+
+UNSCOPED: Final = CheckScope()
+"""The scope of a process that requires and leaves out nothing."""
+
+
+class CheckSet:
     """Deploy checks by id, in registration order."""
 
     def __init__(self) -> None:
@@ -120,11 +240,11 @@ class DeployCheckRegistry:
         """Return a decorator registering a check under *check_id*.
 
         Raises:
-            ValueError: When *check_id* is outside the id scheme or taken.
+            InvalidValue: When *check_id* is outside the id scheme or taken.
         """
         _require_id(check_id)
         if check_id in self._checks:
-            raise ValueError(f"deploy check {check_id!r} is already registered")
+            raise InvalidValue("a deploy check id is already registered")
 
         def _register(check: DeployCheck) -> DeployCheck:
             self._checks[check_id] = check
@@ -136,12 +256,64 @@ class DeployCheckRegistry:
         """Return the registered ids with their checks, in registration order."""
         return tuple(self._checks.items())
 
+    def add_to(self, checks: dict[str, DeployCheck]) -> None:
+        """Merge this set's checks into *checks*.
 
-DEPLOY_CHECKS: Final = DeployCheckRegistry()
-"""Registry loom's checks and the application's register into."""
+        Raises:
+            InvalidValue: When an id is already in *checks*, registered by another set.
+        """
+        for check_id, check in self._checks.items():
+            if check_id in checks:
+                raise InvalidValue("a deploy check id is registered by two check sets")
+            checks[check_id] = check
+
+
+DEPLOY_CHECKS: Final = CheckSet()
+"""The application's checks, fed by ``checks.modules``; always run."""
 
 deploy_check: Final = DEPLOY_CHECKS.register
 """Decorator registering a check in :data:`DEPLOY_CHECKS` under an id."""
+
+
+@dataclass(frozen=True)
+class InstalledChecks:
+    """The :class:`CheckSet` one ``loom.deploy_checks`` entry point targets.
+
+    Args:
+        entry: The entry point; its name is the configuration path it validates.
+    """
+
+    entry: EntryPoint
+
+    @property
+    def path(self) -> str:
+        """Configuration path the checks validate."""
+        return self.entry.name
+
+    def load(self) -> CheckSet:
+        """Import the set the entry point targets.
+
+        Returns:
+            The set.
+
+        Raises:
+            ModuleNotFoundError: When the missing module belongs to loom.
+            ConfigError: When a third-party module the set needs is not
+                installed, naming the path, the module and the extras.
+        """
+        try:
+            loaded: CheckSet = self.entry.load()
+        except ModuleNotFoundError as exc:
+            missing = MissingDependency.from_import_error(exc, self.entry)
+            if missing is None:
+                raise
+            dist = self.entry.dist
+            owner = self.entry.module if dist is None else f"{self.entry.module}, {dist.name}"
+            raise ConfigError(
+                f"{self.path} is used but its deploy checks ({owner}) {missing.describe()}, "
+                f"or pass --skip {self.path} for a process that does not use it"
+            ) from exc
+        return loaded
 
 
 @dataclass(frozen=True)
@@ -151,10 +323,14 @@ class DeployReport:
     Attributes:
         results: Every finding, in registration order of its check.
         silenced: Ids listed under ``checks.silenced``, in configuration order.
+        checked: Configuration paths whose installed checks ran.
+        skipped: Configuration paths whose installed checks did not run.
     """
 
     results: tuple[CheckResult, ...]
     silenced: tuple[str, ...]
+    checked: tuple[str, ...] = ()
+    skipped: tuple[SkippedCheck, ...] = ()
 
     @property
     def errors(self) -> tuple[CheckResult, ...]:
@@ -165,6 +341,38 @@ class DeployReport:
     def warnings(self) -> tuple[CheckResult, ...]:
         """The findings that are logged."""
         return tuple(r for r in self.results if r.level is CheckLevel.WARNING)
+
+
+@dataclass(frozen=True)
+class _Selection:
+    """The checks a run executes, and the installed paths it ran or left out."""
+
+    checks: dict[str, DeployCheck]
+    checked: tuple[str, ...]
+    skipped: tuple[SkippedCheck, ...]
+
+    @classmethod
+    def choose(cls, config: ConfigContext, scope: CheckScope, application: CheckSet) -> _Selection:
+        """Load the installed sets *scope* uses, then add *application*.
+
+        Raises:
+            ModuleNotFoundError: When a used set misses a module of loom.
+            ConfigError: When a used set misses a third-party module.
+            InvalidValue: When two sets register one check id.
+        """
+        checks: dict[str, DeployCheck] = {}
+        checked: list[str] = []
+        skipped: list[SkippedCheck] = []
+        installed = (InstalledChecks(e) for e in list_entry_points(DEPLOY_CHECKS_GROUP))
+        for entry in sorted(installed, key=lambda e: e.path):
+            reason = scope.skip_reason(entry.path, config)
+            if reason is not None:
+                skipped.append(SkippedCheck(entry.path, reason))
+                continue
+            checked.append(entry.path)
+            entry.load().add_to(checks)
+        application.add_to(checks)
+        return cls(checks=checks, checked=tuple(checked), skipped=tuple(skipped))
 
 
 class DeployCheckError(ConfigError):
@@ -196,36 +404,45 @@ class _ChecksConfig(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fi
 def run_deploy_checks(
     config: ConfigContext,
     *,
-    skip: Collection[str] = (),
-    registry: DeployCheckRegistry = DEPLOY_CHECKS,
+    scope: CheckScope = UNSCOPED,
+    application: CheckSet = DEPLOY_CHECKS,
 ) -> DeployReport:
-    """Import ``checks.modules``, then run every check not silenced nor skipped.
+    """Import ``checks.modules``, then run the checks of every path *scope* uses.
 
     Args:
         config: Loaded configuration the checks read.
-        skip: Ids, or dotted areas such as ``"loom.rest"``, the caller knows
-            not to apply: a process serving no HTTP skips the REST checks.
-        registry: Registry to run; loom's by default.
+        scope: The paths the process requires or leaves out; a path neither
+            required nor excluded is used when the configuration declares it.
+        application: The application's own set, which always runs; loom's by default.
 
     Returns:
-        The findings and the silenced ids.
+        The findings, the silenced ids, and the paths checked and skipped.
 
     Raises:
         ConfigError: When the ``checks`` section holds a placeholder, an
             unknown key or a value of the wrong type; when ``checks.silenced``
-            holds an entry outside the id scheme; or when a module of
-            ``checks.modules`` fails at import.
+            holds an entry outside the id scheme; when a module of
+            ``checks.modules`` fails at import; or when a used set needs a
+            third-party module that is not installed.
+        ModuleNotFoundError: When a used set misses a module of loom itself.
+        InvalidValue: When two sets register one check id.
     """
     section = _checks_section(config)
     _import_modules(section.modules)
     silenced = _silenced(section.silenced)
+    selection = _Selection.choose(config, scope, application)
     results = tuple(
         CheckResult(id=check_id, message=finding.message, hint=finding.hint)
-        for check_id, check in registry.items()
-        if check_id not in silenced and not _skipped(check_id, skip)
+        for check_id, check in selection.checks.items()
+        if check_id not in silenced
         if (finding := check(config)) is not None
     )
-    return DeployReport(results=results, silenced=silenced)
+    return DeployReport(
+        results=results,
+        silenced=silenced,
+        checked=selection.checked,
+        skipped=selection.skipped,
+    )
 
 
 def silenced_checks(config: ConfigContext) -> tuple[str, ...]:
@@ -241,8 +458,8 @@ def enforce_deploy_checks(
     config: ConfigContext,
     environment: Environment,
     *,
-    skip: Collection[str] = (),
-    registry: DeployCheckRegistry = DEPLOY_CHECKS,
+    scope: CheckScope = UNSCOPED,
+    application: CheckSet = DEPLOY_CHECKS,
 ) -> DeployReport | None:
     """Run the deploy checks at startup when *environment* is deployed.
 
@@ -251,8 +468,8 @@ def enforce_deploy_checks(
     Args:
         config: Loaded configuration the checks read.
         environment: Resolved environment; only production and staging run checks.
-        skip: See :func:`run_deploy_checks`.
-        registry: Registry to run; loom's by default.
+        scope: See :func:`run_deploy_checks`.
+        application: See :func:`run_deploy_checks`.
 
     Returns:
         The report, or ``None`` when the environment runs no check.
@@ -262,25 +479,23 @@ def enforce_deploy_checks(
         ConfigError: When the ``checks`` section holds a placeholder, an
             unknown key or a value of the wrong type; when ``checks.silenced``
             holds an entry outside the id scheme; or when a module of
-            ``checks.modules`` fails at import.
+            ``checks.modules`` fails at import; or when a used set needs a
+            third-party module that is not installed.
     """
     if not environment.is_deployed:
-        _logger.warning(
-            "deploy checks skipped: the environment is %r (%s); they run in production and staging",
-            str(environment),
-            ENVIRONMENT_VARIABLE,
-        )
+        _logger.warning(ChecksEvent.DEPLOY_SKIPPED, extra={LogField.ENVIRONMENT: str(environment)})
         return None
-    report = run_deploy_checks(config, skip=skip, registry=registry)
+    report = run_deploy_checks(config, scope=scope, application=application)
     if report.silenced:
         _logger.warning(
-            "deploy checks silenced by %s in the %r environment: %s",
-            SILENCED_KEY,
-            str(environment),
-            ", ".join(report.silenced),
+            ChecksEvent.DEPLOY_SILENCED,
+            extra={LogField.ENVIRONMENT: str(environment), ChecksKey.IDS: list(report.silenced)},
         )
     for result in report.warnings:
-        _logger.warning("deploy check %s", result.describe())
+        _logger.warning(
+            ChecksEvent.DEPLOY_WARNED,
+            extra={ChecksKey.ID: result.id, ChecksKey.MESSAGE: result.message},
+        )
     if report.errors:
         raise DeployCheckError(environment, report.errors)
     return report
@@ -288,15 +503,13 @@ def enforce_deploy_checks(
 
 def _require_id(check_id: str) -> None:
     if CHECK_ID.fullmatch(check_id) is None:
-        raise ValueError(
-            f"check id {check_id!r} must look like '<area>.<E|W><nnn>', e.g. 'loom.rest.E001'"
-        )
+        raise InvalidValue("a check id must look like '<area>.<E|W><nnn>', e.g. 'loom.rest.E001'")
 
 
 def _checks_section(config: ConfigContext) -> _ChecksConfig:
     """Decode ``checks`` as written: silences and modules are literals, never placeholders."""
     raw = config.raw("checks", {})
-    if _INTERPOLATION in repr(raw):
+    if INTERPOLATION in repr(raw):
         raise ConfigError(
             "the checks section holds a placeholder; silenced ids and check modules "
             "are written literally, where they are reviewed"
@@ -324,10 +537,6 @@ def _silenced(silenced: tuple[str, ...]) -> tuple[str, ...]:
     return silenced
 
 
-def _skipped(check_id: str, skip: Collection[str]) -> bool:
-    return any(check_id == entry or check_id.startswith(f"{entry}.") for entry in skip)
-
-
 import loom.core.config.checks as _config_checks  # noqa: E402
 
 _ = _config_checks
@@ -337,16 +546,20 @@ __all__ = [
     "CHECK_ID",
     "DEPLOY_CHECKS",
     "MODULES_KEY",
-    "REST_CHECKS",
     "SILENCED_KEY",
     "silenced_checks",
     "CheckLevel",
     "CheckResult",
+    "CheckScope",
+    "CheckSet",
+    "UNSCOPED",
     "DeployCheck",
     "DeployCheckError",
-    "DeployCheckRegistry",
     "DeployReport",
     "Finding",
+    "InstalledChecks",
+    "SkipReason",
+    "SkippedCheck",
     "deploy_check",
     "enforce_deploy_checks",
     "run_deploy_checks",

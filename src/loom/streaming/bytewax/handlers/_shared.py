@@ -17,11 +17,12 @@ from typing import (
 )
 
 from loom.core.async_bridge import AsyncBridge
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.logger import log_context
 from loom.core.model import LoomFrozenStruct, LoomStruct
 from loom.core.observability.event import Scope, TerminalReason
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence.database import DatabaseConfig
+from loom.core.observability.observability import Observability
+from loom.core.stores.database import DatabaseConfig
 from loom.streaming.bytewax._commit_tracker import CommitCompletionPort
 from loom.streaming.bytewax._operators import ResourceLifecycle
 from loom.streaming.compiler._plan import CompiledPlan
@@ -29,9 +30,10 @@ from loom.streaming.core._errors import ErrorEnvelope, ErrorKind
 from loom.streaming.core._message import Message
 from loom.streaming.core._tracing import open_terminal_span
 from loom.streaming.core._typing import StreamPayload
+from loom.streaming.event import StreamingKey
 
 if TYPE_CHECKING:
-    from loom.core.repository.sqlalchemy.session_manager import SessionManager
+    from loom.stores.sqlalchemy.session_manager import SessionManager
 
 Stream: TypeAlias = Any
 AwaitT = TypeVar("AwaitT")
@@ -108,7 +110,7 @@ class _BuildContextProtocol(Protocol):
     plan: CompiledPlan
     bridge: AsyncBridge | None
     commit_tracker: CommitCompletionPort | None
-    flow_runtime: ObservabilityRuntime
+    flow_runtime: Observability
     flow_run_id: str
 
     def wire_branch(
@@ -186,17 +188,23 @@ def _node_span_name(flow_name: str, idx: int) -> str:
 
 def _node_meta(flow_name: str, idx: int, node_type: str) -> dict[str, object]:
     """Return the fields every node span of one position carries."""
-    return {"flow": flow_name, "node_idx": idx, "node_type": node_type}
+    return {"flow": flow_name, "node_index": idx, "node_type": node_type}
 
 
 def _node_log_context(flow_name: str, idx: int, node_type: str) -> AbstractContextManager[None]:
     """Bind the node's identity onto the log context for the duration of its execution."""
-    return log_context(flow_name=flow_name, node_idx=idx, node_type=node_type, method="execute")
+    return log_context(
+        {
+            StreamingKey.FLOW: flow_name,
+            StreamingKey.NODE_INDEX: idx,
+            StreamingKey.NODE_TYPE: node_type,
+        }
+    )
 
 
 @contextmanager
 def _observe_node(
-    observer: ObservabilityRuntime,
+    observer: Observability,
     flow_name: str,
     idx: int,
     node_type: str,
@@ -230,7 +238,7 @@ def _resolve_record_result(
 ) -> StreamPayload | Message[StreamPayload]:
     """Resolve a synchronous record-shaped result and reject awaitables."""
     if isinstance(result, Awaitable):
-        raise TypeError(f"{node_type} returned an awaitable outside WithAsync.")
+        raise InvalidType(f"{node_type} returned an awaitable outside WithAsync.")
     return result
 
 
@@ -241,7 +249,7 @@ def _resolve_batch_result(
 ) -> list[StreamPayload | Message[StreamPayload]]:
     """Resolve a synchronous batch-shaped result and reject awaitables."""
     if isinstance(result, Awaitable):
-        raise TypeError(f"{node_type} returned an awaitable outside WithAsync.")
+        raise InvalidType(f"{node_type} returned an awaitable outside WithAsync.")
     return result
 
 
@@ -251,7 +259,7 @@ def _resolve_expand_result(
 ) -> ExpandT:
     """Resolve a synchronous expanding result and reject awaitables."""
     if isinstance(result, Awaitable):
-        raise TypeError(f"{node_type} returned an awaitable outside WithAsync.")
+        raise InvalidType(f"{node_type} returned an awaitable outside WithAsync.")
     return result
 
 
@@ -273,7 +281,7 @@ def _messages_from_batch(batch: list[Any]) -> list[Message[StreamPayload]]:
 def _require_message(value: Any) -> Message[StreamPayload]:
     """Validate that the runtime stream carries Loom messages."""
     if not _is_message(value):
-        raise TypeError(f"Expected Message, got {type(value).__name__}.")
+        raise InvalidType(f"Expected Message, got {type(value).__name__}.")
     return value
 
 
@@ -287,7 +295,7 @@ def _replace_payload(message: Message[StreamPayload], payload: Any) -> Message[S
     if isinstance(payload, Message):
         return cast(Message[StreamPayload], payload)
     if not isinstance(payload, (LoomStruct, LoomFrozenStruct)):
-        raise TypeError(f"Expected StreamPayload, got {type(payload).__name__}.")
+        raise InvalidType(f"Expected StreamPayload, got {type(payload).__name__}.")
     return Message(payload=payload, meta=message.meta)
 
 
@@ -297,7 +305,7 @@ def _replace_payloads(
 ) -> list[Message[StreamPayload]]:
     """Preserve per-record metadata for batch task outputs."""
     if len(messages) != len(payloads):
-        raise RuntimeError("Batch task output length must match input length.")
+        raise InvalidValue("Batch task output length must match input length.")
     return [
         _replace_payload(message, payload)
         for message, payload in zip(messages, payloads, strict=True)
@@ -396,7 +404,7 @@ def _register_row_fanout(
     tracker: CommitCompletionPort | None,
     declared_types: frozenset[type],
     has_default: bool,
-    observer: ObservabilityRuntime,
+    observer: Observability,
     flow_name: str,
 ) -> Any:
     """Account for the rows an ``ExpandRoutes`` node actually produced.
@@ -430,7 +438,7 @@ def _register_row_fanout(
 
 
 def _record_dropped_no_route(
-    observer: ObservabilityRuntime,
+    observer: Observability,
     message: Any,
     declared_types: frozenset[type],
     has_default: bool,

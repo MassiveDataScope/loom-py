@@ -1,35 +1,48 @@
 """The inline job service, an inline dispatch and the job runner build inside the execution.
 
 The job runner is the transport-neutral body the Celery worker and the Lambda
-``jobs`` handler share (``loom.core.job.run.run_job``).
+``jobs`` handler share (``loom.core.job.run.EnvelopeInvocation``).
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Iterator
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
-from loom.celery.service import CeleryJobService
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.errors import DelegationExpired, PostCommitError, Unauthenticated
+from loom.core.engine.compiler import UseCaseCompiler
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
+from loom.core.errors import DelegationExpired, Unauthenticated
 from loom.core.execution import ExecutionScope
-from loom.core.identity import ANONYMOUS, Delegation, IdentityFixed, captured_delegation
+from loom.core.identity import ANONYMOUS, Delegation, Identity, captured_delegation
 from loom.core.identity.wire import encode_identity
-from loom.core.job import service
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.envelope import JobEnvelope, job_context
+from loom.core.job.event import JobEvent
 from loom.core.job.handle import JobHandle
-from loom.core.job.run import run_job
-from loom.core.job.service import InlineJobService
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.job.run import EnvelopeInvocation
+from loom.core.job.timer import JobTimer
+from loom.core.log_names import LogField
+from loom.core.logger import log_context
+from loom.core.observability.observability import Observability
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.tracing import active_trace_id
 from loom.core.use_case.factory import UseCaseFactory
+from loom.jobs.inline import AsyncioJobTimer
+from loom.jobs.inline import timer as inline_timer
+from loom.testing import JobTestData, ManualTimer, make
+from tests.helpers.celery import CeleryBroker
 from tests.helpers.delegation import acting_as, assert_new_delegation
+from tests.helpers.jobs import CeleryServiceFixture, InlineServiceFixture
+from tests.helpers.loggers import CapturingHandler
+from tests.unit.core.engine._lifecycle_doubles import Log, StubUnitOfWorkFactory
 
 from .doubles import (
     ALICE,
@@ -43,58 +56,97 @@ from .doubles import (
 )
 
 
+@pytest.fixture
+def channel() -> Iterator[PostCommitChannel]:
+    """The post-commit channel an execution would bind, drained by the test where it chooses."""
+    channel = PostCommitChannel()
+    token = bind_channel(channel)
+    try:
+        yield channel
+    finally:
+        reset_channel(token)
+
+
 async def run_envelope(
-    envelope: JobEnvelope, factory: UseCaseFactory, executor: RuntimeExecutor
+    envelope: JobEnvelope, factory: UseCaseFactory, executor: UseCaseExecutor
 ) -> Any:
-    return await run_job(
-        envelope,
-        AcmeProbeJob,
-        factory=factory,
-        executor=executor,
-        observability=ObservabilityRuntime.noop(),
-        message_id=None,
-    )
+    delivery = JobTestData().with_job_type(AcmeProbeJob).delivery(envelope=envelope)
+    return await EnvelopeInvocation(factory, executor, Observability.noop())(delivery)
 
 
-class TestInlineJobService:
+class TestInlineJobTransport:
     async def test_run_builds_inside_an_execution_as_the_caller_acting(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor
+        self, factory: UseCaseFactory, executor: UseCaseExecutor
     ) -> None:
         with acting_as(ALICE):
-            job = await InlineJobService(factory, executor).run(AcmeProbeJob)
+            job = await InlineServiceFixture(factory, executor).run(AcmeProbeJob)
 
         assert job.session.caller is ALICE
         assert job.session.execution is job.ran_in
 
     async def test_run_with_nothing_acting_has_no_caller(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor
+        self, factory: UseCaseFactory, executor: UseCaseExecutor
     ) -> None:
-        jobs = InlineJobService(factory, executor)
+        jobs = InlineServiceFixture(factory, executor)
 
         with pytest.raises(Unauthenticated):
             await jobs.run(AcmeProbeJob)
 
     async def test_a_dispatch_runs_as_its_dispatcher_in_an_execution_of_its_own(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor
+        self, factory: UseCaseFactory, executor: UseCaseExecutor
     ) -> None:
-        jobs = InlineJobService(factory, executor)
+        jobs = InlineServiceFixture(factory, executor)
         handles: list[JobHandle[AcmeProbeJob]] = []
 
         async def dispatch() -> None:
-            handles.append(jobs.dispatch(AcmeProbeJob))
+            handles.append(jobs.dispatch_after_commit(AcmeProbeJob))
 
         await executor.execute(AcmeRun(dispatch), identity=ALICE)
+        await jobs.wait_until_idle()
 
         job = handles[0].wait()
         assert job.session.caller is ALICE
         assert job.session.execution is job.ran_in
 
+    async def test_a_dispatch_sent_now_runs_outside_the_scope_its_writer_still_holds(
+        self, factory: UseCaseFactory, compiler: UseCaseCompiler
+    ) -> None:
+        commits = OrderedCommits({DEFAULT_STORE: StubUnitOfWorkFactory(Log())})
+        executor = UseCaseExecutor(compiler, coordinator=commits)
+        jobs = InlineServiceFixture(factory, executor)
+        handles: list[JobHandle[AcmeProbeJob]] = []
+
+        async def dispatch_then_yield() -> None:
+            handles.append(await jobs.dispatch_now(AcmeProbeJob))
+            await asyncio.sleep(0)
+
+        await executor.execute(AcmeRun(dispatch_then_yield), identity=ALICE)
+        await jobs.wait_until_idle()
+
+        assert handles[0].wait().session.caller is ALICE
+
+    async def test_a_dispatch_carries_no_log_field_of_its_sender(
+        self, factory: UseCaseFactory, executor: UseCaseExecutor, rendering: CapturingHandler
+    ) -> None:
+        logging.getLogger().setLevel(logging.DEBUG)
+        jobs = InlineServiceFixture(factory, executor)
+
+        async def dispatch_for_an_order() -> None:
+            with log_context(order_id="o-1"):
+                await jobs.dispatch_now(AcmeProbeJob)
+
+        await executor.execute(AcmeRun(dispatch_for_an_order), identity=ALICE)
+        await jobs.wait_until_idle()
+
+        job_records = [entry for _, entry in rendering.rendered if LogField.JOB in entry]
+        assert {entry.get("order_id") for entry in job_records} == {None}
+
 
 class TestJobRunner:
     async def test_builds_inside_an_execution_as_the_envelope_caller(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor
+        self, factory: UseCaseFactory, executor: UseCaseExecutor
     ) -> None:
-        envelope = JobEnvelope(job="AcmeProbeJob", identity=encode_identity(ALICE))
+        envelope = make(JobEnvelope, job="AcmeProbeJob", identity=encode_identity(ALICE))
 
         job = await run_envelope(envelope, factory, executor)
 
@@ -102,10 +154,10 @@ class TestJobRunner:
         assert job.session.execution is job.ran_in
 
     async def test_acts_as_the_envelope_caller_within_its_delegation(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor
+        self, factory: UseCaseFactory, executor: UseCaseExecutor
     ) -> None:
-        envelope = JobEnvelope(
-            job="AcmeProbeJob", identity=Delegation(ALICE, time.time() + 60).encoded()
+        envelope = make(
+            JobEnvelope, job="AcmeProbeJob", identity=Delegation(ALICE, time.time() + 60).encoded()
         )
 
         job = await run_envelope(envelope, factory, executor)
@@ -118,10 +170,10 @@ class TestJobRunner:
         ids=["passed", "infinite", "nan", "not-a-number"],
     )
     async def test_refuses_an_envelope_whose_deadline_is_passed_or_unreadable(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor, deadline: Any
+        self, factory: UseCaseFactory, executor: UseCaseExecutor, deadline: Any
     ) -> None:
         identity = {**(encode_identity(ALICE) or {}), "until": deadline}
-        envelope = JobEnvelope(job="AcmeProbeJob", identity=identity)
+        envelope = make(JobEnvelope, job="AcmeProbeJob", identity=identity)
 
         with pytest.raises(Unauthenticated, match="system identity"):
             await run_envelope(envelope, factory, executor)
@@ -144,82 +196,110 @@ class TestJobContext:
             assert captured_delegation() == Delegation(ALICE, later)
 
 
+def _refusals(caplog: pytest.LogCaptureFixture) -> list[BaseException]:
+    """The error of each inline job step the timer abandoned because it raised."""
+    return [
+        record.exc_info[1]
+        for record in caplog.records
+        if record.getMessage() == JobEvent.DELIVERY_ABANDONED
+        and record.name == inline_timer.__name__
+        and record.exc_info
+        and record.exc_info[1]
+    ]
+
+
 class TestAQueuedDispatch:
     """Dispatched outside any work, it runs under the delegation captured at dispatch."""
 
     @pytest.fixture
-    def queued(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor, window: float
-    ) -> JobHandle[Any]:
+    def jobs(self, factory: UseCaseFactory, executor: UseCaseExecutor) -> InlineServiceFixture:
+        return InlineServiceFixture(factory, executor)
+
+    @pytest.fixture
+    def queued(self, jobs: InlineServiceFixture, window: float) -> JobHandle[Any]:
         """Alice's dispatch, with a callback for each outcome, queued until a flush."""
         with acting_as(ALICE):
-            return InlineJobService(factory, executor).dispatch(
+            return jobs.dispatch_after_commit(
                 AcmeProbeJob, on_success=AcmeCallback, on_failure=AcmeCallback
             )
 
     @pytest.fixture
-    def pending(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor, monkeypatch: pytest.MonkeyPatch
-    ) -> list[Callable[[], Awaitable[None]]]:
-        """Alice's dispatch, kept here instead of queued: the test drains it where it chooses."""
-        kept: list[Callable[[], Awaitable[None]]] = []
-        monkeypatch.setattr(service, "add_pending_dispatch", kept.append)
+    def pending(self, jobs: InlineServiceFixture, channel: PostCommitChannel) -> PostCommitChannel:
+        """Alice's dispatch, kept on a channel the test drains where it chooses."""
         with acting_as(ALICE):
-            InlineJobService(factory, executor).dispatch(AcmeProbeJob, on_success=AcmeCallback)
-        return kept
+            jobs.dispatch_after_commit(AcmeProbeJob, on_success=AcmeCallback)
+        return channel
+
+    @pytest.mark.parametrize("timer", [AsyncioJobTimer, ManualTimer], ids=["asyncio", "manual"])
+    async def test_runs_in_the_trace_of_its_dispatch_not_of_its_flush(
+        self, factory: UseCaseFactory, executor: UseCaseExecutor, timer: Callable[[], JobTimer]
+    ) -> None:
+        jobs = InlineServiceFixture(factory, executor, timer=timer())
+        with acting_as(ALICE), active_trace_id("trace-dispatched"):
+            queued = jobs.dispatch_after_commit(AcmeProbeJob)
+
+        with active_trace_id("trace-flushed"):
+            await flush_pending_dispatches()
+            await jobs.wait_until_idle()
+
+        assert queued.wait().session.trace_id == "trace-dispatched"
 
     async def test_runs_as_its_dispatcher_within_the_deadline(
-        self, queued: JobHandle[Any], callback_log: CallbackLog
+        self, jobs: InlineServiceFixture, queued: JobHandle[Any], callback_log: CallbackLog
     ) -> None:
         await flush_pending_dispatches()
+        await jobs.wait_until_idle()
 
         assert queued.wait().session.caller is ALICE
         assert callback_log == [("built", AS_ALICE), ("on_success", AS_ALICE)]
 
     async def test_is_refused_past_the_deadline_not_given_a_fresh_window(
         self,
+        jobs: InlineServiceFixture,
         queued: JobHandle[Any],
         callback_log: CallbackLog,
         past_the_window: Callable[[], None],
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """The job's execution is refused, and so is its failure callback: nothing runs."""
         past_the_window()
+        await flush_pending_dispatches()
 
-        with pytest.raises(PostCommitError) as refused:
-            await flush_pending_dispatches()
+        await jobs.wait_until_idle()
 
-        [failure] = refused.value.failures
-        assert isinstance(failure, Unauthenticated)
+        [refusal] = _refusals(caplog)
+        assert isinstance(refusal, Unauthenticated)
         assert callback_log == []
 
     async def test_flushed_under_a_later_delegation_of_its_dispatcher_keeps_the_captured_deadline(
         self,
-        factory: UseCaseFactory,
-        executor: RuntimeExecutor,
+        jobs: InlineServiceFixture,
         callback_log: CallbackLog,
-        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Alice acting again with a fresh window does not extend the dispatch's delegation."""
-        soon = time.time() + 5
-        with acting_as(ALICE, until=soon):
-            InlineJobService(factory, executor).dispatch(
+        with acting_as(ALICE, until=time.time() - 1):
+            jobs.dispatch_after_commit(
                 AcmeProbeJob, on_success=AcmeCallback, on_failure=AcmeCallback
             )
-        monkeypatch.setattr(time, "time", lambda: soon + 1)
-
-        with acting_as(ALICE), pytest.raises(PostCommitError) as refused:
+        with acting_as(ALICE):
             await flush_pending_dispatches()
 
-        [failure] = refused.value.failures
-        assert isinstance(failure, Unauthenticated)
+        await jobs.wait_until_idle()
+
+        [refusal] = _refusals(caplog)
+        assert isinstance(refusal, Unauthenticated)
         assert callback_log == []
 
     async def test_flushed_by_a_task_outliving_work_switched_back_to_its_dispatcher_is_refused(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor, callback_log: CallbackLog
+        self,
+        jobs: InlineServiceFixture,
+        callback_log: CallbackLog,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Alice's expired dispatch stays expired inside work that started her afresh."""
         with acting_as(ALICE, until=time.time() - 1):
-            InlineJobService(factory, executor).dispatch(AcmeProbeJob, on_failure=AcmeCallback)
+            jobs.dispatch_after_commit(AcmeProbeJob, on_failure=AcmeCallback)
         released = asyncio.Event()
 
         async def flush_later() -> None:
@@ -229,29 +309,28 @@ class TestAQueuedDispatch:
         with ExecutionScope(BOB), ExecutionScope(ALICE):
             outlived = asyncio.create_task(flush_later())
         released.set()
+        await outlived
 
-        with pytest.raises(PostCommitError) as refused:
-            await outlived
+        await jobs.wait_until_idle()
 
-        [failure] = refused.value.failures
-        assert isinstance(failure, DelegationExpired)
+        [refusal] = _refusals(caplog)
+        assert isinstance(refusal, DelegationExpired)
         assert callback_log == []
 
-    async def test_drained_inside_work_acting_as_its_dispatcher_runs(
-        self, pending: list[Callable[[], Awaitable[None]]], callback_log: CallbackLog
+    @pytest.mark.parametrize("worker", [ALICE, BOB], ids=["dispatcher", "another"])
+    async def test_drained_inside_work_runs_as_its_dispatcher_whoever_the_work_acts_as(
+        self,
+        jobs: InlineServiceFixture,
+        pending: PostCommitChannel,
+        callback_log: CallbackLog,
+        worker: Identity,
     ) -> None:
-        with ExecutionScope(ALICE):
-            await pending[0]()
+        with ExecutionScope(worker):
+            await pending.drain(committed=True)
+
+        await jobs.wait_until_idle()
 
         assert callback_log == [("built", AS_ALICE), ("on_success", AS_ALICE)]
-
-    async def test_drained_inside_work_acting_as_another_is_refused(
-        self, pending: list[Callable[[], Awaitable[None]]], callback_log: CallbackLog
-    ) -> None:
-        with ExecutionScope(BOB), pytest.raises(IdentityFixed):
-            await pending[0]()
-
-        assert callback_log == []
 
 
 class TestADispatchWithNoCaller:
@@ -260,66 +339,71 @@ class TestADispatchWithNoCaller:
     async def test_an_anonymous_dispatcher_is_captured_as_no_caller(
         self,
         factory: UseCaseFactory,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
         callback_log: CallbackLog,
-        monkeypatch: pytest.MonkeyPatch,
+        channel: PostCommitChannel,
     ) -> None:
         """As the Celery and SQS wire carry it: its job and callbacks have none."""
-        kept: list[Callable[[], Awaitable[None]]] = []
-        monkeypatch.setattr(service, "add_pending_dispatch", kept.append)
+        jobs = InlineServiceFixture(factory, executor)
         with acting_as(ANONYMOUS):
-            InlineJobService(factory, executor).dispatch(AcmeProbeJob, on_failure=AcmeCallback)
+            jobs.dispatch_after_commit(AcmeProbeJob, on_failure=AcmeCallback)
+        await channel.drain(committed=True)
 
-        await kept[0]()
+        await jobs.wait_until_idle()
 
         assert callback_log == [("built", NO_CALLER), ("on_failure", NO_CALLER)]
 
     async def test_drained_inside_work_acting_as_someone_never_runs_as_them(
         self,
         factory: UseCaseFactory,
-        executor: RuntimeExecutor,
+        executor: UseCaseExecutor,
         callback_log: CallbackLog,
-        monkeypatch: pytest.MonkeyPatch,
+        channel: PostCommitChannel,
     ) -> None:
         """As on Celery, a dispatch with no caller never borrows the caller of the work draining."""
-        kept: list[Callable[[], Awaitable[None]]] = []
-        monkeypatch.setattr(service, "add_pending_dispatch", kept.append)
-        InlineJobService(factory, executor).dispatch(AcmeProbeJob, on_success=AcmeCallback)
+        jobs = InlineServiceFixture(factory, executor)
+        jobs.dispatch_after_commit(AcmeProbeJob, on_failure=AcmeCallback)
+        with ExecutionScope(ALICE):
+            await channel.drain(committed=True)
 
-        with ExecutionScope(ALICE), pytest.raises(IdentityFixed):
-            await kept[0]()
+        await jobs.wait_until_idle()
 
-        assert callback_log == []
+        assert callback_log == [("built", NO_CALLER), ("on_failure", NO_CALLER)]
 
     async def test_inline_runs_the_job_with_no_caller(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor, callback_log: CallbackLog
+        self, factory: UseCaseFactory, executor: UseCaseExecutor, callback_log: CallbackLog
     ) -> None:
-        jobs = InlineJobService(factory, executor)
+        jobs = InlineServiceFixture(factory, executor)
         failures: list[str] = []
 
         class AcmeFailureNoted(AcmeCallback):
-            def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
+            def on_failure(
+                self, job_id: str, exc_type: str, exc_code: str | None, **context: Any
+            ) -> None:
                 failures.append(exc_type)
 
         async def dispatch() -> None:
-            jobs.dispatch(AcmeProbeJob, on_failure=AcmeFailureNoted)
+            jobs.dispatch_after_commit(AcmeProbeJob, on_failure=AcmeFailureNoted)
 
         await executor.execute(AcmeRun(dispatch))
+        await jobs.wait_until_idle()
 
-        assert failures == ["Unauthenticated"]
+        assert failures == ["loom.core.errors.auth.Unauthenticated"]
 
     async def test_celery_runs_the_job_with_no_caller(
-        self, factory: UseCaseFactory, executor: RuntimeExecutor
+        self, factory: UseCaseFactory, executor: UseCaseExecutor
     ) -> None:
-        app = MagicMock()
-        jobs = CeleryJobService(app, factory=factory, executor=executor)
+        broker = CeleryBroker([AcmeProbeJob.__queue__])
+        jobs = CeleryServiceFixture(broker.app, factory=factory, executor=executor)
 
         async def dispatch() -> None:
-            jobs.dispatch(AcmeProbeJob)
+            jobs.dispatch_after_commit(AcmeProbeJob)
 
         await executor.execute(AcmeRun(dispatch))
-        sent = app.send_task.call_args.kwargs["kwargs"]
-        envelope = JobEnvelope(job="AcmeProbeJob", **sent)
+        (message,) = broker.sent()
+        sent = {**message.kwargs}
+        del sent["failure_callback"]
+        envelope = make(JobEnvelope, job="AcmeProbeJob", **sent)
 
         with pytest.raises(Unauthenticated):
             await run_envelope(envelope, factory, executor)

@@ -13,9 +13,9 @@ from omegaconf import DictConfig, OmegaConf
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import Environment
-from loom.core.persistence.database import DatabaseConfig
-from loom.core.persistence.stores import load_catalog
-from loom.streaming import Backend, FromTopic, IntoTable, Process, Router, StreamFlow, msg
+from loom.core.stores.catalog import load_catalog
+from loom.core.stores.database import DatabaseConfig
+from loom.streaming import FromTopic, IntoTable, Process, Router, StreamFlow, TableEngine, msg
 from loom.streaming.compiler import CompilationError, StreamingErrorCode, compile_flow
 from loom.streaming.nodes._table import ClickHouseSinkConfig
 from loom.streaming.nodes._table.config import (
@@ -34,8 +34,8 @@ def _context(stores: dict[str, Any], sink: dict[str, Any]) -> ConfigContext:
     return ConfigContext.from_dict({"stores": stores, "streaming": {"sinks": {"s": sink}}})
 
 
-def _node(backend: Backend) -> IntoTable[Order]:
-    return IntoTable(payload=Order, table="orders", backend=backend, name="s")
+def _node(backend: TableEngine) -> IntoTable[Order]:
+    return IntoTable(payload=Order, table="orders", engine=backend, name="s")
 
 
 class TestStoreSinkCompilation:
@@ -43,7 +43,7 @@ class TestStoreSinkCompilation:
         ctx = _context({"events": _CLICKHOUSE_STORE}, {"store": "events", "insert_timeout": 3})
 
         sink = resolve_clickhouse_table_config(
-            _node(Backend.CLICKHOUSE), ctx, load_catalog(ctx)
+            _node(TableEngine.CLICKHOUSE), ctx, load_catalog(ctx)
         ).sink
 
         assert isinstance(sink, ClickHouseSinkConfig)
@@ -53,7 +53,7 @@ class TestStoreSinkCompilation:
     def test_a_clickhouse_sink_refuses_a_sqlalchemy_store(self) -> None:
         ctx = _context({"warehouse": _SQLITE_STORE}, {"store": "warehouse"})
 
-        node = _node(Backend.CLICKHOUSE)
+        node = _node(TableEngine.CLICKHOUSE)
         catalog = load_catalog(ctx)
         with pytest.raises(ConfigError, match=r"stores\.warehouse\.backend is 'sqlalchemy'"):
             resolve_clickhouse_table_config(node, ctx, catalog)
@@ -61,7 +61,7 @@ class TestStoreSinkCompilation:
     def test_a_sqlalchemy_sink_refuses_a_clickhouse_store(self) -> None:
         ctx = _context({"events": _CLICKHOUSE_STORE}, {"store": "events"})
 
-        node = _node(Backend.SQLALCHEMY)
+        node = _node(TableEngine.SQLALCHEMY)
         catalog = load_catalog(ctx)
         with pytest.raises(ConfigError, match=r"stores\.events\.backend is 'clickhouse'"):
             resolve_sqlalchemy_table_config(node, ctx, catalog)
@@ -69,9 +69,9 @@ class TestStoreSinkCompilation:
     def test_a_clickhouse_sink_names_the_renamed_database_key(self) -> None:
         ctx = _context({"events": _CLICKHOUSE_STORE}, {"database": "events"})
 
-        node = _node(Backend.CLICKHOUSE)
+        node = _node(TableEngine.CLICKHOUSE)
         catalog = load_catalog(ctx)
-        with pytest.raises(ValueError, match="'database' was renamed to 'store'"):
+        with pytest.raises(ConfigError, match="'database' was renamed to 'store'"):
             resolve_clickhouse_table_config(node, ctx, catalog)
 
     def test_a_flow_with_a_clickhouse_and_a_sqlalchemy_sink_compiles_from_a_file(
@@ -101,13 +101,16 @@ class TestStoreSinkCompilation:
                         "a": Process(
                             cast(
                                 Any,
-                                IntoTable(payload=Order, backend=Backend.CLICKHOUSE, name="clicks"),
+                                IntoTable(
+                                    payload=Order, engine=TableEngine.CLICKHOUSE, name="clicks"
+                                ),
                             )
                         )
                     },
                     default=Process(
                         cast(
-                            Any, IntoTable(payload=Order, backend=Backend.SQLALCHEMY, name="orders")
+                            Any,
+                            IntoTable(payload=Order, engine=TableEngine.SQLALCHEMY, name="orders"),
                         )
                     ),
                 )
@@ -141,8 +144,8 @@ class TestStoreSinkCompilation:
             },
         }
 
-        def sink(backend: Backend, name: str) -> Process[Order, Any]:
-            return Process(cast(Any, IntoTable(payload=Order, backend=backend, name=name)))
+        def sink(backend: TableEngine, name: str) -> Process[Order, Any]:
+            return Process(cast(Any, IntoTable(payload=Order, engine=backend, name=name)))
 
         flow = StreamFlow(
             name="three_sinks",
@@ -151,10 +154,10 @@ class TestStoreSinkCompilation:
                 Router.by(
                     msg.payload.order_id,
                     routes={
-                        "a": sink(Backend.CLICKHOUSE, "clicks"),
-                        "b": sink(Backend.SQLALCHEMY, "refunds"),
+                        "a": sink(TableEngine.CLICKHOUSE, "clicks"),
+                        "b": sink(TableEngine.SQLALCHEMY, "refunds"),
                     },
-                    default=sink(Backend.SQLALCHEMY, "orders"),
+                    default=sink(TableEngine.SQLALCHEMY, "orders"),
                 )
             ),
         )
@@ -185,7 +188,7 @@ class TestStoreSinkCompilation:
         flow = StreamFlow(
             name="one_sink",
             source=FromTopic("in", payload=Order),
-            process=Process(cast(Any, _node(Backend.CLICKHOUSE))),
+            process=Process(cast(Any, _node(TableEngine.CLICKHOUSE))),
         )
 
         config = ConfigContext.from_dict(document)

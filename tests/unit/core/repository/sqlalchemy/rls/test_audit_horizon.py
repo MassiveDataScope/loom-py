@@ -6,8 +6,11 @@ import logging
 
 import pytest
 
-from loom.core.repository.sqlalchemy.backend import _warn_audit_horizon
-from loom.core.repository.sqlalchemy.rls.audit_verify import AuditState, audit_findings
+from loom.core.stores.catalog import StoreKey
+from loom.core.stores.event import StoresKey
+from loom.stores.sqlalchemy.event import SqlalchemyEvent
+from loom.stores.sqlalchemy.plugin import _warn_audit_horizon
+from loom.stores.sqlalchemy.rls.audit_verify import AuditState, audit_findings
 
 
 class TestAuditHorizon:
@@ -34,23 +37,30 @@ class TestAuditHorizon:
         assert audit_findings(state, {}) == []
 
     @pytest.mark.parametrize(
-        ("covered", "level"),
-        [(0, logging.ERROR), (2, logging.WARNING)],
+        ("covered", "level", "event"),
+        [
+            (0, logging.ERROR, SqlalchemyEvent.AUDIT_PARTITION_MISSING),
+            (2, logging.WARNING, SqlalchemyEvent.AUDIT_PARTITIONS_NEARLY_EXHAUSTED),
+        ],
     )
     def test_startup_logs_a_short_horizon(
-        self, caplog: pytest.LogCaptureFixture, covered: int, level: int
+        self,
+        caplog: pytest.LogCaptureFixture,
+        covered: int,
+        level: int,
+        event: SqlalchemyEvent,
     ) -> None:
         with caplog.at_level(logging.WARNING):
-            _warn_audit_horizon("stores.default", covered)
+            _warn_audit_horizon(StoreKey("default"), covered)
 
-        assert [record.levelno for record in caplog.records] == [level]
-        assert "ensure-partitions" in caplog.records[0].getMessage()
+        assert [(record.levelno, record.msg) for record in caplog.records] == [(level, event)]
+        assert caplog.records[0].__dict__[StoresKey.STORE] == "default"
 
     @pytest.mark.parametrize("covered", [None, 3, 13])
     def test_startup_is_silent_without_a_log_or_with_margin(
         self, caplog: pytest.LogCaptureFixture, covered: int | None
     ) -> None:
         with caplog.at_level(logging.WARNING):
-            _warn_audit_horizon("stores.default", covered)
+            _warn_audit_horizon(StoreKey("default"), covered)
 
         assert caplog.records == []

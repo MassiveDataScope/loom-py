@@ -7,10 +7,10 @@ from sqlalchemy import CheckConstraint, Index, MetaData, UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import AddConstraint, CreateIndex
 
-from loom.core.backend.sqlalchemy import compile_all, configured_naming_convention
 from loom.core.config import ConfigError
 from loom.core.model import BaseModel, ColumnField, OnDelete, RowScoped, ScopedField
 from loom.core.model.types import Boolean, Integer, String, Text
+from loom.stores.sqlalchemy.schema import compile_all, configured_naming_convention
 
 CONVENTION = {
     "pk": "pk_%(table_name)s",
@@ -131,7 +131,7 @@ class TestDeclaredConstraints:
     def test_a_configured_naming_convention_with_an_unknown_kind_names_the_setting(self) -> None:
         with pytest.raises(
             ConfigError,
-            match=r"^stores\.default\.schema\.naming_convention: unknown kind 'primary'",
+            match=r"^stores\.default\.schema\.naming_convention: unknown kind;",
         ):
             configured_naming_convention({"primary": "pk_%(table_name)s"}, path="stores.default")
 

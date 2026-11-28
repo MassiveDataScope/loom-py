@@ -1,0 +1,1014 @@
+# Stores and their backends
+
+Each store is declared under `stores.<name>`: its `backend` names a plugin,
+and the rest of the section is the connection that backend reads. loom
+resolves the backend from the `loom.stores.plugins` entry point group
+at bootstrap, asks it once for everything the host needs, and never imports a
+backend it was not asked for. Four ship with loom — `sqlalchemy`, `dynamodb`,
+`mongo` and `none` — and a package of your own registers a fifth the same way.
+
+```yaml
+stores:
+  default:
+    backend: ledger
+    url: https://ledger.internal
+```
+
+`backend` is resolved by name; an unknown name is a startup error listing the registered ones.
+
+An application composes `stores.default` and every store that holds a model.
+A model belongs to `default` unless it declares `__store__`; a model of a
+store the configuration does not declare fails at startup. A use case or job
+without a main model writes to the store its own `__store__` names, else to
+`default`. How use cases write
+to several stores is in ADR 0008
+(`docs/architecture/adr/0008-stores-and-units-of-work.md`). Migrations cover
+`default` only and log `StoresNotLoaded` naming the stores they leave out; the
+row-level-security schema tooling takes the store to work on
+(`load_store_schema(path, store="audit")`, then `create_schema` and `verify`).
+A streaming sink
+names any store with `store: <name>`. A `clickhouse` store is
+connection-only: it is no store backend, serves no model, never joins a
+unit of work, and only hands its connection to the sinks that name it (a
+model whose `__store__` points at it fails at startup). Without a
+`stores.default` section the API fails at startup, as it did without `database`, and the Celery worker runs
+without persistence (`none`).
+
+## Shared settings
+
+`stores.settings` is no store: it holds the settings every store shares, and a
+store cannot take that name. It has two keys, each global:
+
+```yaml
+stores:
+  settings:
+    rollback_timeout: 5
+    cursors: {current_key_id: "2026-10", keys: {"2026-10": {env: CURSOR_KEY_2026_10}}}
+  default:
+    backend: sqlalchemy
+    url: ${oc.env:DATABASE_URL}
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `rollback_timeout` | `30` | Seconds the rollbacks of one invocation may take together, across every store it enlisted. A finite number above zero. |
+| `cursors` | absent | Turns cursor paging on and sets its signing; see [Cursor tokens](#cursor-tokens). |
+
+A store takes no `settings` of its own: a `stores.<name>.settings` key fails
+startup with a `ConfigError` pointing to `stores.settings`. `LOOM__STORES__SETTINGS__*`
+variables are refused in production and staging unless a `config.overridable`
+entry spells `stores.settings` out; a `stores.*` entry never opens it.
+
+## Migrating from `database` and `persistence`
+
+The old keys stop startup with a `ConfigError` naming their replacement;
+nothing reads them any more. The whole `persistence` section is gone.
+
+| Old key | New key |
+|---|---|
+| `persistence.backend: <name>` | `stores.default.backend: <name>` |
+| `database: {url, pool, schema, ...}` | `stores.default: {backend: sqlalchemy, url, pool, schema, ...}` |
+| `database.<name>` named by a SQLAlchemy sink | `stores.<name>: {backend: sqlalchemy, ...}` |
+| `database.<name>` named by a ClickHouse sink | `stores.<name>: {backend: clickhouse, url, username, password, ...}` (connection-only store) |
+| `streaming.sinks.<sink>.database: <name>` (SQLAlchemy or ClickHouse) | `streaming.sinks.<sink>.store: <name>` |
+| `persistence.mongo: {...}` | `stores.default: {backend: mongo, ...}` |
+| `persistence.dynamodb: {...}` | `stores.default: {backend: dynamodb, ...}` |
+| `LOOM__DATABASE__POOL__SIZE` (and the other `database.*` overrides) | `LOOM__STORES__DEFAULT__POOL__SIZE` (`stores.*.pool.size`, ...) |
+| `LOOM__PERSISTENCE__DYNAMODB__READ_TIMEOUT` (and the other `persistence.dynamodb.*` overrides) | `LOOM__STORES__DEFAULT__READ_TIMEOUT` (`stores.*.read_timeout`, ...) |
+| model `__database__ = "<name>"` | model `__store__ = "<name>"` |
+| `persistence.cursors` | `stores.settings.cursors` |
+| `persistence.rollback_timeout` | `stores.settings.rollback_timeout` |
+| `LOOM__PERSISTENCE__CURSORS__*` | refused: `stores.settings.cursors` cannot be set from a variable in production or staging |
+
+## Writing a backend
+
+A backend is a class with a no-argument constructor, a `name`, a
+`repository_type` and a `build` method:
+`build(ctx, models, context) -> StoreWiring`. `repository_type` is the
+repository class the auto-CRUD gate inspects, and it is known before `build`.
+`None` means the backend serves no repositories. `context` is a
+`StorePluginContext`: the `RuntimeProfile` of the entry point building it
+(`server`, `worker`, ...), whose defaults size any connection pool the backend
+opens, an optional pool-metrics sink, `connection_only`, and `catalog`, the
+`StoreCatalog` the composition loaded once, `store`, the key of the store it
+serves, and `cursor_codec`, the application's one cursor codec. The
+composition builds one backend per store: the default one, and each other
+store a model belongs to. The class takes its store from that catalog
+(`context.catalog.served_by(self.name, context.store)`) and decodes its
+section; the host knows nothing about the keys of that section. It reads any
+other section from `ctx`. A backend with no pool ignores the profile.
+`connection_only` is set by an entry point with no model (a worker running
+raw-SQL jobs): a backend that honours it serves its connection and unit of
+work only, no repository and no cursor codec, and its startup checks only
+probe the connection. `sqlalchemy` honours it (see
+[Workers without models](../getting-started/composition.md#workers-without-models));
+a backend that ignores it builds as usual.
+
+### Store capabilities
+
+Every backend must declare `capabilities(self, spec: StoreSpec) -> StoreCapabilities`,
+returning `can_serve_models` and `is_transactional` (its unit of work can roll
+back), both keyword-only. The catalog asks it the first
+time something reads `spec.capabilities`, once per store, so loading the
+catalog resolves no secret. When a capability depends on a setting, read only
+that key, as `mongo` does with `transactions`; decoding the whole section
+would resolve the connection too. A backend without the method fails the
+first read of `spec.capabilities` with a `ConfigError` naming the backend and
+the missing method. The connection-only `clickhouse` kind supports none of
+the three.
+
+```python
+# billing_ledger/backend.py
+from __future__ import annotations
+
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
+from typing import Any, ClassVar
+
+import msgspec
+
+from loom.core.config import ConfigContext
+from loom.core.model import BaseModel
+from loom.core.model.introspection import get_id_attribute
+from loom.core.stores import StorePluginContext, StoreWiring
+from loom.core.stores.repository import RepositoryBuildContext, build_repository_registration_module
+
+from billing_ledger.client import LedgerClient
+from billing_ledger.repository import RepositoryLedger
+
+
+class _LedgerConfig(msgspec.Struct, kw_only=True):
+    url: str
+    namespace: str = "orders"
+
+
+class LedgerBackend:
+    name: ClassVar[str] = "ledger"
+    repository_type: ClassVar[type[Any] | None] = RepositoryLedger
+
+    def build(
+        self, ctx: ConfigContext, models: Sequence[type[BaseModel]], context: StorePluginContext
+    ) -> StoreWiring:
+        # ConfigError when the store is missing, names another backend or is invalid.
+        store = context.catalog.served_by(self.name, context.store)
+        cfg = store.decode(_LedgerConfig)
+        client = LedgerClient(cfg.url, cfg.namespace)
+        return StoreWiring(
+            uow_factory=None,
+            repo_registration_module=build_repository_registration_module(
+                models=models,
+                build_registered_repository=lambda context, registration: _build(client, context),
+                default_repository_type=RepositoryLedger,
+                default_builder=lambda context: _build(client, context),
+                store=context.store,
+            ),
+            lifespan_init=lambda: _lifespan(client),
+            prepare_models=_validate_identifiers,
+            readiness=client.ping,
+        )
+
+
+def _build(client: LedgerClient, context: RepositoryBuildContext) -> Any:
+    return RepositoryLedger(client, context.model)
+
+
+def _validate_identifiers(models: Sequence[type[BaseModel]]) -> None:
+    for model in models:
+        get_id_attribute(model)  # a model without a primary key fails here, at startup
+
+
+@asynccontextmanager
+async def _lifespan(client: LedgerClient) -> AsyncIterator[None]:
+    await client.connect()
+    try:
+        yield
+    finally:
+        await client.close()
+```
+
+```toml
+# pyproject.toml of the billing_ledger package
+[project.entry-points."loom.stores.plugins"]
+ledger = "billing_ledger.backend:LedgerBackend"
+```
+
+Two packages registering the same name is a `DuplicateEntryPointError` at
+startup: the host fails closed instead of picking one.
+
+### The wiring
+
+`StoreWiring` is a frozen dataclass. The host uses each field once:
+
+| Field | What the host does with it |
+|---|---|
+| `uow_factory` | Bound to the kernel executor. `None` means "no unit of work": use cases run without one, and deferred job dispatch never fires. |
+| `prepare_models` | Called right after `build` with the discovered models — the slot where SQLAlchemy compiles its tables, binds in-memory row-level settings and where a document store validates identifiers. Raise `ConfigError` for a model the backend cannot serve. Defaults to `no_model_preparation`. |
+| `repo_registration_module` | A DI module run against the container; registers one repository per model. |
+| `startup_checks` | Run by `Application.check()`, and by `Application.running()` right before `lifespan_init` unless it is entered with `check=False`. Schema and role checks. When they finish, a queued pool holds no connection; an in-memory pool is the database and stays open. A prefork worker runs them once, in the parent. Defaults to `no_startup_checks`. |
+| `lifespan_init` | An async context manager entered when `Application.running()` opens and exited when it closes, last to open and first to close, after the cache gateways, the SQL registry and the AI runtime. It does not check the schema and it does not reset the compiled registry, so a closed application reopens. Defaults to `no_lifespan`. |
+| `readiness` | Optional `async () -> bool`. Aggregated by `GET /health`; absent, the route reports no backends. |
+
+A readiness probe never raises: log the failure and answer `False`, so the
+route answers `503 degraded` instead of `500`.
+
+See [Execution lifecycle](use-case-dsl.md#execution-lifecycle) for how the
+executor drives the unit of work `uow_factory` produces — commit, rollback,
+and the post-commit actions that run once it has closed.
+
+## Capabilities and the gate
+
+Repositories declare what they can do by inheriting capability protocols:
+`Readable` (by primary key), `FieldReadable` (by any field), `Creatable`,
+`BulkCreatable`, `Updatable`, `Deletable`, `Listable` and `Countable`
+(`loom.core.stores.repository`). `capabilities_of(repository_type)`
+is the single detector — the registration module binds a DI key per declared
+protocol, and the auto-CRUD gate mounts one operation per protocol:
+
+| Auto-CRUD operation | Requires |
+|---|---|
+| `create` | `Creatable` |
+| `get` | `Readable` |
+| `list` | `Listable` |
+| `update` | `Updatable` |
+| `delete` | `Deletable` |
+
+The gate looks at the class that will serve the model — the explicit
+`repository_for` registration when there is one, else the backend's
+`repository_type` — and:
+
+- narrows an interface with an empty `include` to the supported operations
+  (an `OrderInterface` over `dynamodb` mounts get, create, update and delete);
+- refuses, at startup, an explicit `include` naming an operation the class
+  lacks, naming model and backend;
+- refuses an interface whose backend supports none of the five.
+
+```python
+from loom.core.stores.repository.registration import capabilities_of
+
+capabilities_of(LedgerRepository)  # (Readable, Creatable, BulkCreatable)
+```
+
+Swapping the `DefaultRepositoryBuilder` does not move the gate: it keeps
+reading the backend's `repository_type`, so a custom builder must declare the
+same capabilities or register its repositories explicitly. The registration
+helper still takes `default_repository_type`: that argument only chooses which
+repository the DI module builds, and it is the same class.
+
+### `BulkCreatable`
+
+`create_many(data, *, on_conflict=OnConflict.ERROR) -> tuple[Model, ...]`
+persists a sequence and returns the entities in input order. With
+`OnConflict.ERROR` a primary key that already exists raises `Conflict`; with
+`OnConflict.IGNORE` the rows whose primary key exists are skipped and only the
+inserted rows come back, so the length of the result is the number inserted.
+Any other constraint violation still raises `Conflict`.
+
+- SQLAlchemy writes multi-row `INSERT ... RETURNING` statements, as many rows
+  per statement as the dialect's `insertmanyvalues_max_parameters` allows, all
+  in one transaction. `IGNORE` adds `ON CONFLICT (<primary key>) DO NOTHING`
+  and is refused with `UnsupportedQuery` on a dialect other than
+  PostgreSQL and SQLite, or when the batch must be inserted row by row (no
+  `RETURNING`, or an omitted column with only a server default).
+- Mongo writes one `insert_many`: ordered with a compensating delete for
+  `ERROR` (see below), unordered for `IGNORE`, which skips only duplicate-key
+  errors (code 11000) on `_id`; a duplicate in another unique index raises
+  `Conflict` and any other write error leaves the other documents written.
+  Inside a transaction `IGNORE` reads the stored keys first and inserts only
+  the missing documents, because a duplicate key would abort the transaction.
+- DynamoDB writes `ERROR` batches with `TransactWriteItems` in chunks of 100,
+  each conditioned on the key not existing: every chunk is atomic, the batch
+  is not, so a conflict leaves earlier chunks written. A key repeated in the
+  input raises before anything is written. `IGNORE` writes one conditional
+  `PutItem` per item.
+
+A backend whose store has no multi-row write declares the protocol only if it
+can honour the order and document its atomicity.
+
+### `UnsupportedQuery`
+
+A capability the class does not declare is absent from DI and from the
+generated routes: DynamoDB reaches an item only through its key, so it declares
+`Readable` and not `FieldReadable`, `Listable` or `Countable`. What the
+protocol cannot express — a cursor from another backend, a filter operator the
+backend lacks — is refused at run time with `UnsupportedQuery(backend, model,
+reason)`, mapped by the REST layer to `400` with code `unsupported_query`:
+
+```python
+from loom.core.errors import UnsupportedQuery
+
+raise UnsupportedQuery("mongo", "orders.Order", "LIKE on 'customer' needs a regex")
+```
+
+## Dependency verification at boot
+
+Once every service is registered — persistence, job service, SQL, observability,
+AI — the composition calls `UseCaseFactory.verify()`, for the API and the
+worker alike. Every registered use case's constructor is checked against the
+container, and a missing binding raises `ResolutionError` naming the use case,
+the parameter and the key. A backend that registers `Readable[Order]` but not
+`Listable[Order]` therefore fails the bootstrap of a use case injecting
+`Listable[Order]`, not its first request. Use cases of routes the gate pruned
+are dropped before that check.
+
+The models a use case or job reads are checked too: its main repository, and
+every model its plan loads through `LoadById`, `Load` or `Exists`. A model no
+repository serves — left out of `app.packages` — raises
+`UnservedModelError` (`loom.core.use_case.errors`), a `ResolutionError`
+carrying the typed issue (`UNSERVED_MODEL`, the component, the parameter) and
+the model.
+
+## Looking a repository up at run time
+
+`RepositoryCatalog` gives a component the repository bound for any served
+model, resolved when it runs: `catalog[AcmeOrder]` by model, or
+`catalog.for_table("acme_orders")` by `__tablename__`. A table name served by
+one store resolves on its own; one served by two stores raises `ValueError`
+naming both, and `store=` picks the store. An unknown table, or a model no
+store serves, raises `KeyError`. `for_table` sees only models a store serves. The catalog returns the repository the
+container serves, so a test override is what comes back, and the index of
+table names is built once at composition.
+
+```python
+from loom.core.command import Command
+from loom.core.job.job import Job
+from loom.core.stores.repository import OnConflict, RepositoryCatalog
+from loom.core.use_case import Input
+
+
+class AcmeNewRow(Command, frozen=True):
+    id: int
+
+
+class AcmeRows(Command, frozen=True):
+    table: str
+    items: tuple[AcmeNewRow, ...]
+
+
+class AcmeWriteRows(Job[int]):
+    __store__ = "ledger"
+
+    def __init__(self, catalog: RepositoryCatalog) -> None:
+        self.catalog = catalog
+
+    async def execute(self, rows: AcmeRows = Input()) -> int:
+        repository = self.catalog.for_table(rows.table)
+        inserted = await repository.create_many(rows.items, on_conflict=OnConflict.IGNORE)
+        return len(inserted)
+```
+
+Use the catalog only when the model is chosen at run time, as `rows.table`
+is here. When the model is known where the component is written, inject the
+repository (`RepoFor[AcmeOrder]`): the catalog hides which repositories a
+component needs, and an injected one is checked at start-up.
+
+## Cursor tokens
+
+Keyset pagination has one token contract for every backend
+(`loom.core.stores.repository.cursor`, decided in ADR 0004,
+`docs/architecture/adr/0004-signed-cursors.md`). A token carries the
+issuing backend's name, the sort key values of the last row on the page and the
+primary key as tie-breaker, and it is signed with HMAC-SHA256:
+
+```text
+base64url(payload) "." base64url(version || len(key_id) || key_id || mac)
+```
+
+The signature also covers what the token is bound to, which never travels in
+it: the model, the normalised filters (datetimes compared as UTC instants, the
+order of the conditions ignored), the sort and the caller's scope. A token
+replayed with other filters, another sort, for another model or in another
+tenant does not verify. The SQLAlchemy repositories bind the scope to the
+row-level-security scope values of the caller (see
+[Postgres row-level security](postgres-rls.md)); without them, and on Mongo,
+the scope is `""`, which binds the token to no tenant on purpose.
+
+Configuring `stores.settings.cursors` turns cursor paging on; there is no
+other flag. Every backend then issues and verifies tokens through one
+`CursorCodec`, built at startup from that section and registered in DI. Without
+the section no codec is built and no key is required. A cursor page then
+fails clearly:
+
+- a route that declares `pagination: cursor` (on the route, the interface or
+  `RestApiDefaults`) fails at startup, naming the route and the missing section;
+- a request for cursor mode (`?pagination=cursor` or a `cursor` parameter) on a
+  route that allows the override answers `400 unsupported_query`;
+- a repository call with `PaginationMode.CURSOR` raises `UnsupportedQuery`.
+
+Offset paging is unaffected. Once the section is configured, its mode is
+`signed` unless an environment says otherwise; each opt-out is written in the
+file of the environment that needs it:
+
+In `production.yaml`:
+
+```yaml
+stores:
+  settings:
+    cursors:
+      current_key_id: "2026-10"
+      keys:
+        "2026-10": {env: CURSOR_KEY_2026_10}
+        "2026-07": {env: CURSOR_KEY_2026_07}
+```
+
+| Key | Meaning |
+|---|---|
+| `current_key_id` | Signs new tokens. |
+| `keys` | Every key that still verifies. |
+
+In `development.yaml`:
+
+```yaml
+stores:
+  settings:
+    cursors:
+      signing: ephemeral
+```
+
+In `test.yaml`:
+
+```yaml
+stores:
+  settings:
+    cursors:
+      signing: unsigned
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `signing` | `signed` | `signed`, `ephemeral` or `unsigned` |
+| `current_key_id` | — | Key id that signs new tokens; must be one of `keys` |
+| `keys` | `{}` | Key id → exactly one source, `path` (a file, such as a mounted secret) or `env` (an environment variable). The source holds the key in standard padded base64, surrounding whitespace ignored, decoding to at least 32 random bytes; `openssl rand -base64 32` produces one. A passphrase or any other text is refused. Key ids match `[A-Za-z0-9._-]{1,64}` |
+
+Key material never appears in the configuration, so a dump of it cannot leak
+a key, and a configuration error names the key id, never the key or its path.
+To rotate, add the new key, make it `current_key_id`, and drop the old id once
+the tokens it signed no longer matter: tokens are short-lived page pointers,
+so one deployment cycle is usually enough.
+
+A section without a key fails startup in every environment with a `ConfigError`
+naming the `development.yaml` opt-out. The two opt-outs log a WARNING at startup:
+
+- `signing: ephemeral` signs with a random key generated per process. Tokens
+  do not survive a restart and another instance refuses them. For
+  `development.yaml`.
+- `signing: unsigned` signs nothing, so a token can be read and written by
+  hand. For `test.yaml` and debugging only.
+
+Production uses `signed`. In production and staging the deploy check
+`loom.cursors.E001` fails startup, and `loom check --deploy` fails, when
+`stores.settings.cursors` is configured and `signing` is anything but
+`signed` or `current_key_id` names no entry of `keys`; it checks nothing
+when the section is absent (see
+[Environments](../getting-started/environments.md#deploy-checks)).
+`stores.settings.cursors` cannot be set from a `LOOM__*` variable in those
+environments: it is not on the override allowlist, and no `config.overridable`
+entry may open a key under it. A key's `env` source names
+the variable holding the key, which must not start with `LOOM_`; on ECS it is
+a `secrets` entry of the task definition.
+
+Decoding is strict in every mode: a token that is not
+unpadded base64url, a payload that is not the token record, a datetime key
+without a time zone, a key of an unknown type, a token of another backend, or
+one whose key count differs from the sort or the primary key, or whose value
+has another type than its column, is refused: a string is not an integer and
+is never parsed into a datetime, date, time, UUID or decimal. Every
+refusal is `UnsupportedQuery` — `400 unsupported_query` on the wire — and its
+message never echoes the token. An empty token is refused too, on every
+backend. A cursor page orders only by non-null columns of a type a token
+carries (`bool`, `int`, `float`, `str`, `datetime`, `date`, `time`, `UUID`,
+`Decimal`, an enum or a `Literal`): a dotted path, a JSON or `bytes` column or
+an optional column answers `400 unsupported_query` before the query runs. A
+page whose last row holds a non-finite number answers the same 400 when its
+next token is issued, after the query has run. A naive datetime key, such as a
+`DateTime(tz=False)` column, is issued as UTC with an explicit offset and
+compared as naive UTC again against that column.
+
+A service paginating by hand resolves the same codec and binds its own scope:
+
+```python
+from loom.core.model.introspection import scalar_column_annotations
+from loom.core.stores.repository import Cursor, CursorCodec, PaginationMode, QuerySpec, SortSpec
+
+codec = container.resolve(CursorCodec)
+query = QuerySpec(sort=(SortSpec("updated_at", "DESC"),), pagination=PaginationMode.CURSOR)
+token = codec.encode(
+    Cursor(backend="grants", keys=(updated_at,), tie_breaker=grant_id),
+    model="access.Grant",
+    query=query,
+    scope=tenant_id,
+)
+position = codec.decode(
+    token,
+    backend="grants",
+    model="access.Grant",
+    query=query,
+    scope=tenant_id,
+    columns=scalar_column_annotations(Grant),  # or {"updated_at": datetime, "id": UUID}
+    primary_key=("id",),
+)
+position.keys, position.tie_breaker  # (updated_at, grant_id); datetimes always aware
+```
+
+A composite primary key is carried whole: the tie-breaker is the tuple of its
+values in key order, and `decode(..., primary_key=("tenant", "id"))` refuses a
+token carrying another number of key values. Tokens issued before signed cursors share the
+fate of any invalid token: clients must treat tokens as opaque and restart from
+the first page.
+
+## `sqlalchemy` connection pool
+
+The API, the Celery worker and the streaming SQLAlchemy sinks read the same
+section — `stores.<name>` with `backend: sqlalchemy`, or inline in a sink
+with `url` — and build their engine through one constructor. Pool keys live
+under `stores.<name>.pool`:
+
+```yaml
+stores:
+  default:
+    backend: sqlalchemy
+    url: postgresql+asyncpg://app@db/app
+    hide_parameters: true
+    connect_args:
+      timeout: 5
+      command_timeout: 10
+    pool:
+      size: 5
+      max_overflow: 5
+      timeout: 10
+      recycle: 1800
+      pre_ping: true
+```
+
+| Key | Meaning |
+|---|---|
+| `hide_parameters` | Passed to SQLAlchemy's engine: bound parameters are left out of its error messages and logs. Default `false`. The driver's own text, such as a Postgres `DETAIL:` line, is not affected. |
+| `connect_args` | Passed to the driver's `connect()` as written. |
+| `connect_args.timeout` | asyncpg: seconds to establish a connection. |
+| `connect_args.command_timeout` | asyncpg: seconds per statement. |
+| `size` | Connections kept open, > 0. |
+| `max_overflow` | Extra connections under load, >= 0. |
+| `timeout` | Seconds a caller waits for a free connection, > 0. |
+| `recycle` | Seconds before a connection is replaced, > 0. |
+| `pre_ping` | Check a connection before handing it out. |
+
+Each key left out takes the default of the entry point, sized for how many
+operations one of its processes runs at once:
+
+| Entry point | `size` | `max_overflow` | `timeout` | `recycle` | `pre_ping` |
+|---|---|---|---|---|---|
+| API (`create_app`) | 5 | 5 | 10 s | 1800 s | on |
+| Celery worker | 2 | 0 | 30 s | 1800 s | on |
+| Streaming sink | 2 | 0 | 30 s | 1800 s | on |
+
+- One process opens at most `size + max_overflow` connections; the instances
+  times that bound must fit the database's `max_connections`. A caller that
+  finds the pool exhausted waits `timeout` seconds, then fails with a
+  checkout timeout rather than hanging.
+- A Celery worker running `worker_pool: threads` or `gevent` with a
+  concurrency above one per process needs `stores.default.pool.size` at least that
+  concurrency.
+- Keep `recycle` below the idle timeout of the server or of any proxy in
+  front of it, so a connection the other side dropped is never reused.
+- In-memory SQLite (`sqlite+aiosqlite:///`) holds a single shared connection:
+  `size`, `max_overflow` and `timeout` do not apply to it and are left out.
+- Unknown keys under `stores.<name>.pool` stop startup naming the key. The flat
+  keys this section once took (`pool_size`, `max_overflow`, `pool_timeout`,
+  `pool_recycle`, `pool_pre_ping`) stop startup naming their `pool.`
+  replacement. A key outside the section's contract stops startup naming it:
+  a store section holds one database.
+- The size, overflow, timeout and recycle keys can be overridden per deploy
+  (`LOOM__STORES__DEFAULT__POOL__SIZE=1`); see [Environments](../getting-started/environments.md).
+
+### Pool metrics
+
+With `observability.prometheus.enabled`, the API publishes, with
+labels `application`, `entrypoint` and `database`:
+
+| Metric | Type | What |
+|---|---|---|
+| `loom_db_pool_size` | gauge | Connections the pool keeps open. |
+| `loom_db_pool_checked_out` | gauge | Connections in use. |
+| `loom_db_pool_overflow` | gauge | Overflow connections in use beyond the size. |
+| `loom_db_pool_checkout_seconds` | histogram | Checkout duration, pre-ping included. |
+| `loom_db_pool_checkout_timeouts_total` | counter | Checkouts that ran out of time. |
+
+Gauges are read when the registry is scraped; the timing exists only when
+metrics are enabled, so a disabled exporter costs nothing per checkout. The
+API publishes on its metrics registry. The Celery worker does not publish pool
+metrics yet: a prefork worker records them in each child process, which needs
+Prometheus multiprocess mode to be scraped.
+
+## `dynamodb` client
+
+Every bound of the boto3 client is finite by default; botocore's own read
+timeout (60 s) is longer than a typical serverless invocation.
+
+```yaml
+stores:
+  default:
+    backend: dynamodb
+    region: eu-west-1
+    table: app
+    pool:
+      size: 32
+    connect_timeout: 2
+    read_timeout: 5
+    max_attempts: 3
+    retry_mode: standard
+```
+
+| Key | Meaning |
+|---|---|
+| `size` | HTTP connections and worker threads. |
+| `connect_timeout` | Seconds. |
+| `read_timeout` | Seconds. |
+| `max_attempts` | Total, the first attempt included. |
+| `retry_mode` | `standard` or `adaptive`. |
+
+Repository calls run on a thread pool as wide as `pool.size`, so
+that many calls proceed in parallel in one process; the trace id and other
+context variables stay visible inside the threads.
+
+The section, `backend` aside, is `AwsClientConfig` plus `table`: the same keys and defaults
+apply wherever loom calls AWS (the ETL's `storage.dynamodb`, the `secrets`
+and `ssm` resolvers, the SNS notifier), and `profile` and `url` (an
+endpoint override; absent, the AWS regional endpoint) are accepted too. Credentials never come from configuration; boto3's default
+chain applies. See ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`).
+
+### Shared `aws:` section
+
+A top-level `aws:` section holds the client defaults every AWS product of loom
+inherits: a `dynamodb` store, the ETL's `storage.dynamodb`, the `secrets` and
+`ssm` resolvers, the SNS notifier and the `sqs` job transport. A product's own keys override it key by
+key.
+
+```yaml
+aws:
+  region: eu-west-1
+  url: http://localhost:4566
+
+stores:
+  default:
+    backend: dynamodb
+    table: app
+    read_timeout: 3
+```
+
+- `aws:` takes the keys of `AwsClientConfig`; a credential key is refused.
+- The resolvers read `aws:` as written, since they resolve the placeholders, so
+  they refuse a `${...}` in it; boto3 reads `AWS_REGION` and
+  `AWS_ENDPOINT_URL` itself. A resolver built with a region keeps it.
+- `aws:` alone enables no `storage.dynamodb` source.
+- A `ConfiguredInstaller`'s settings inherit it too: a field typed `AwsClientConfig`
+  (or a subclass), at any depth, takes the keys it does not set from `aws:`,
+  at start-up and in `loom check`. Write the field (`dynamodb: {}` suffices) to
+  inherit; an absent optional field stays absent.
+- The SNS notifier reads `aws:` from the flow's YAML; the topic's region wins.
+
+loom's own integration tests run these products (the `sqs` job transport and the
+Lambda SQS runtime, the `secrets` and `ssm` resolvers, a `dynamodb` store, the
+SNS notifier) against LocalStack, configured only through `aws:`. Without
+`LOOM_AWS_IT_URL` they skip:
+
+```bash
+docker compose -f docker-compose.local.yaml up -d localstack
+LOOM_AWS_IT_URL=http://localhost:4566 uv run pytest tests/integration/aws -m integration
+```
+
+## Health
+
+`GET /health` aggregates the readiness of the configured backend; its shape, the
+default authentication exclusion and the reserved-path rule are described in
+[Bootstrap with YAML](../getting-started/rest.md#get-health). The route caches
+the probe result for a short TTL and shares one in-flight probe between
+concurrent requests, so a burst of anonymous calls costs the backend at most
+one probe per TTL; a probe that exceeds its timeout reports the backend as not
+ready. Keep `/health` off the public ingress: it is anonymous by design and
+meant for the orchestrator.
+
+### `dynamodb` permissions
+
+The `dynamodb` readiness probe calls `DescribeTable`, so the application's
+role needs `dynamodb:DescribeTable` on the table ARN in addition to the item
+permissions (`GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`) the
+repositories use. Without it the probe logs the refusal and `/health` answers
+`503 degraded` while the repositories keep working.
+
+## `mongo`
+
+`stores.default.backend: mongo` binds every discovered model to a collection of
+one database through pymongo's async client. Needs the `mongo` extra
+(`loom-kernel[mongo]`, pymongo ≥ 4.9 for the async API); selecting the
+backend without it fails at startup naming the extra.
+
+```yaml
+stores:
+  default:
+    backend: mongo
+    url: mongodb://localhost:27017/?replicaSet=rs0
+    database: shop
+    transactions: false
+    id: uuid4
+    collections:
+      Order: orders_v2
+    pool:
+      size: 8
+      max_overflow: 0
+      timeout: 2
+      recycle: 300
+    server_selection_timeout: 5
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `url` | required | Connection string handed to `AsyncMongoClient`. |
+| `database` | required | Database every collection is taken from. |
+| `transactions` | `false` | `true` runs each unit of work as one client session and transaction; `false` is a no-op unit of work, every write autocommits. |
+| `id` | `uuid4` | How keys are minted when the input carries none (see below). |
+| `collections` | `{}` | Collection name per model **class name**; absent models use `__tablename__`. |
+| `username`, `password` | unset | Credentials; win over those of the `url`. |
+| `connect_timeout`, `read_timeout`, `server_selection_timeout` | unset | Seconds; forwarded to the driver only when set. |
+| `pool.size`, `pool.max_overflow`, `pool.timeout`, `pool.recycle` | entry-point profile | Each declared key overrides the profile. PyMongo receives `maxPoolSize = size + max_overflow`, `waitQueueTimeoutMS = timeout × 1000`, and `maxIdleTimeMS = recycle × 1000`; `minPoolSize` is always 0. `pool.pre_ping` has no pymongo equivalent and is ignored. |
+
+`maxIdleTimeMS` limits idle time, not total connection lifetime.
+
+The section rejects unknown keys, so a misspelt option is a `ConfigError`
+at startup rather than a silently ignored setting, and startup logs
+`mongo unit of work: transactions=<bool>` once.
+
+The connection keys (`url`, `database`, `username`, `password`,
+`connect_timeout`, `read_timeout`, `server_selection_timeout`, `pool`,
+`server_api_version`) are `MongoConnection`'s,
+the same in the ETL's `storage.mongo` and in a change-stream source
+(`mongo.source`); `transactions`, `id` and `collections` belong to the
+repository alone.
+
+**`_id` mapping.** The model's primary key, whatever its name, is stored as
+`_id` and mapped back on read: a model keyed by `slug` never sees `_id`, and
+the output struct carries `slug`. A client-supplied key always wins; the id
+policy is consulted only when the input carries none (field unset or `None`).
+
+**Id policies.** `uuid4` (default) mints a UUID v4 and stores it as a string;
+the model declares its key as `str` or `UUID`, and the output annotation
+restores the type. `objectid` is an opt-in for collections already keyed by
+BSON `ObjectId`: the model declares `str`, the store holds `ObjectId`, and a
+lookup with a string that is not a valid `ObjectId` matches nothing. A model
+declaring `autoincrement=True` is refused at startup naming the model:
+MongoDB has no sequences.
+
+**Values.** The client is built `tz_aware`, and datetimes are stored as
+BSON keeps them: UTC at millisecond precision (a naive value is taken as
+UTC). A `DateTime(tz=False)` column reads back naive UTC; the default
+`DateTime(tz=True)` reads back aware UTC. `date`, `time`, `Decimal` and
+non-key `UUID` values are stored as strings and restored by the model's
+annotation on read, and filter values receive the same conversion, so the
+output of `create` equals a later read and a filter compares against what
+the document holds. Two limits follow from string storage: range operators
+(`GT`, `GTE`, `LT`, `LTE`) and sorts on a `Decimal` column are
+`UnsupportedQuery` (string order is not numeric order), while `date`
+ranges compare ISO strings, which order correctly. `LIKE` / `ILIKE`
+patterns collapse runs of `%` and accept at most eight wildcards; a longer
+pattern is `UnsupportedQuery`.
+
+**Duplicates.** A duplicate key on `create` or `create_many` is `Conflict`
+(`409`). `create_many` is one ordered `insert_many`; on a duplicate the
+documents written before it are deleted again so nothing persists, unless a
+transaction is active, in which case its abort discards them. If that
+compensating delete fails, the driver error surfaces instead of `Conflict`
+(carrying a note that names it) and the store may hold the partial batch.
+
+**Transactions.** `transactions: true` requires a replica set (a single-node
+one is enough; `docker-compose.local.yaml` ships one as `mongo`). Every
+repository call inside a use case then runs in the session of the enclosing
+unit of work, and a failing second write leaves nothing behind. With
+`transactions: false` the unit of work is a no-op like `dynamodb`'s.
+
+**Readiness.** `GET /health` runs `admin.command("ping")`; any failure is
+logged and reported as not ready.
+
+**Indexes.** Keyset pagination sorts by the requested fields and appends
+`_id` ascending as the tie-breaker, so a list sorted by `created_at` walks a
+compound index `(created_at, _id)`; without one MongoDB sorts in memory and
+refuses once the sort exceeds its memory limit. Create the index yourself: loom
+does not manage collection indexes. A sort that already names the primary key
+gets no tie-breaker: it is walked in the requested direction (`id DESC` stays
+descending).
+
+## Portable models
+
+The same `ColumnField` model serves `sqlalchemy`, `mongo` and `dynamodb`
+today, and the ClickHouse backend that arrives with the next backends of this
+feature, when its key is minted by loom and its timestamps by the backend:
+
+```python
+from datetime import datetime
+
+from loom.core.model import BaseModel, ColumnField, ServerDefault
+
+
+class Order(BaseModel):
+    __tablename__ = "orders"
+
+    id: str = ColumnField(primary_key=True, server_default=ServerDefault.UUID4)
+    customer: str = ColumnField(length=64)
+    amount: int = ColumnField()
+    created_at: datetime = ColumnField(server_default=ServerDefault.NOW)
+```
+
+Switching the store is the backend name plus its section; the model, the use
+cases and the routes do not change:
+
+```yaml
+stores:
+  default:
+    backend: mongo
+    url: mongodb://localhost:27017/?replicaSet=rs0
+    database: shop
+```
+
+Change `backend: sqlalchemy` to `backend: mongo`.
+
+Four limits decide what does not travel:
+
+- **Autoincrement is SQL-only.** `autoincrement=True` is refused at startup
+  on `mongo` (and on the ClickHouse backend when it arrives); `dynamodb`
+  still accepts it today, with a deprecation planned. Use
+  `ServerDefault.UUID4`.
+- **Relations are SQL-only.** `Relation` / `Projection` fields and the
+  `EXISTS` / `NOT_EXISTS` filter operators compile on `sqlalchemy` only;
+  elsewhere they are `UnsupportedQuery`. A dotted filter path
+  (`category.name`) is `UnsupportedQuery` outside `sqlalchemy`, and on
+  `sqlalchemy` it compiles without a join, so each root row comes back once
+  per matching related row, related to it or not (pinned by
+  `test_a_filter_on_a_related_column_selects_each_matching_row_once` until
+  relation filtering lands). REST routes cannot declare one.
+- **Not every backend has every capability.** `dynamodb` today mounts no
+  `list` / `count` (listing by a declared index arrives with the next
+  backends of this feature); the ClickHouse backend, when it arrives, offers
+  no `update` / `delete`. Routes for a capability the backend lacks are not
+  mounted, and an interface whose `include` names one explicitly fails at
+  boot naming model, operation and backend.
+- **A `time` with a UTC offset does not reach a SQL `Time` column.** On
+  `sqlalchemy` a `date` field is inferred as a `Date` column and a `time`
+  field as a `Time` column without time zone, which holds no offset; the
+  repository refuses a `time` with an offset written to it
+  (`boundary_validation`, REST `422`) or compared with it
+  (`query_validation`, REST `400`). `mongo` stores `time` as ISO 8601 text
+  and keeps the offset. Only two SQLAlchemy columns keep the written offset:
+  - a `Time` column with time zone,
+    `ColumnField(ColumnType("Time", kwargs={"timezone": True}))`, on Postgres
+    only (`timetz`): on any other dialect startup refuses the column with a
+    `ConfigError` naming `table.column`. It takes only a `time` with an
+    offset; a naive one is refused like an aware one for a plain `Time`
+    column;
+  - a JSON column, `ColumnField(JSON)`, which stores the ISO text.
+
+  On Postgres (`timestamptz`) and `mongo`, a `datetime` field
+  (`DateTime(tz=True)`) keeps the instant, read back in UTC, not the written
+  offset.
+- **A `UUID` field is a UUID column on `sqlalchemy`.** A `uuid.UUID` field
+  without a declared type is inferred as a `Uuid` column: `uuid` on
+  Postgres, `CHAR(32)` holding the hex form on a dialect without a native
+  UUID type, such as SQLite. `Postgres.UUID` stays the Postgres-only choice.
+  `mongo` stores a UUID as its text form. On every backend the field is a
+  scalar column, so REST `filterable`, `sortable` and `ALL` take it.
+
+A `Decimal` column declares its column type. `sqlalchemy` refuses a model
+with an undeclared one when it compiles it, naming the field: Postgres rounds
+a value to a `NUMERIC` column's scale and refuses one past its precision, so
+loom does not guess them. Declare the precision and scale, or `Numeric()` for
+an unbounded `NUMERIC`:
+
+```python
+from decimal import Decimal
+from typing import Annotated
+
+from loom.core.model import BaseModel, ColumnField, Numeric
+
+
+class Measurement(BaseModel):
+    __tablename__ = "measurements"
+
+    value: Annotated[Decimal, Numeric(precision=12, scale=2)]
+    exact: Annotated[Decimal, Numeric()]
+    id: int = ColumnField(primary_key=True)
+```
+
+## Upgrade notes
+
+- Persistence is declared under `stores.<name>` (ADR 0008): `database`,
+  `database.<name>`, `persistence` and a model's `__database__` stop startup
+  naming their replacement; see
+  [Migrating from `database` and `persistence`](#migrating-from-database-and-persistence).
+  The worker's backend is `stores.default.backend`, or `none` without a
+  `stores.default` section. A SQLAlchemy or ClickHouse sink names its store
+  with `store:`; a ClickHouse sink's connection is a connection-only
+  `backend: clickhouse` store. A store section refuses a key outside its
+  contract, `sqlalchemy` included.
+  Error messages name `stores.default.schema.*` where they named
+  `database.schema.*`.
+- The application is composed once, transport-neutrally, by
+  `loom.composition` ([Composition and lifecycle](../getting-started/composition.md)),
+  and the API and the worker are adapters over it:
+  - `StoreWiring.default_repository_type` is gone: a backend declares
+    `repository_type` as a class variable.
+  - `lifespan_init` only opens and releases; the schema and role checks moved
+    to `startup_checks`. Closing a SQLAlchemy backend no longer resets the
+    compiled registry: `prepare_models` resets it before compiling.
+  - The deploy checks run after discovery, and still before any resource is
+    built.
+  - The worker selects its backend like the API (`persistence.backend`, else
+    `sqlalchemy` when `database` holds a key of its own contract, such as
+    `url`, else `none`) and applies row-level security. A worker that serves
+    models now runs the startup checks too: without `schema.mode: external`,
+    it runs `create_all`. A missing backend extra is a `ConfigError`, not an
+    `ImportError`. Its cache gateways are closed.
+  - A `LoadById`, `Load` or `Exists` over a model no repository serves fails
+    at startup with `UnservedModelError`, in the API as well as the worker.
+  - A `JobService` your `modules` register is kept instead of being replaced;
+    the framework-owned keys (`SessionManager`, `SqlQueryService`,
+    `CallerBoundSql`, `Observability`, `ElevationSink`,
+    `UseCaseExecutor`, `UseCaseRegistry`, `ApplicationInvoker`) are reserved
+    and a module that binds one fails startup; see
+    [Caller bindings and framework defaults](../getting-started/composition.md#caller-bindings-and-framework-defaults).
+- Every engine's connection follows one standard
+  (ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`)):
+  `url`, `username`/`password`, `connect_timeout` and `read_timeout` in
+  seconds, `max_attempts`, and the pool under `pool` (`pool.size`,
+  `pool.timeout`). The old keys stop startup naming the new one:
+
+  | Section | Old key | New key |
+  |---|---|---|
+  | `persistence.dynamodb`, `storage.dynamodb` | `endpoint_url` | `url` |
+  | `persistence.dynamodb`, `storage.dynamodb` | `max_pool_connections` | `pool.size` |
+  | `persistence.mongo`, `storage.mongo`, `mongo.source(s)` | `uri` | `url` |
+  | `persistence.mongo`, `storage.mongo`, `mongo.source(s)` | `max_pool_size` | `pool.size` (above zero; the old `0` for "no limit" is gone) |
+  | `persistence.mongo`, `storage.mongo`, `mongo.source(s)` | `server_selection_timeout_ms` | `server_selection_timeout`, in seconds |
+  | `sql.connections.<name>`, `storage.clickhouse`, `database.<name>` of a sink | `send_receive_timeout` | `read_timeout` |
+  | `sql.connections.<name>`, `storage.clickhouse`, `database.<name>` of a sink | `pool_size` | `pool.size` |
+
+  The `LOOM__` overrides follow: `LOOM__PERSISTENCE__DYNAMODB__POOL__SIZE`,
+  `LOOM__STORAGE__DYNAMODB__POOL__SIZE`, `LOOM__SQL__CONNECTIONS__<NAME>__POOL__SIZE`
+  and `LOOM__SQL__CONNECTIONS__<NAME>__READ_TIMEOUT`. The Mongo connection also
+  takes `username`, `password`, `connect_timeout`, `read_timeout` and
+  `pool.timeout`.
+- `database` takes `connect_timeout` and `read_timeout` (seconds) for a
+  `postgresql+asyncpg` URL, passed to asyncpg as `timeout` and
+  `command_timeout`. With another driver, set the driver's own option in
+  `connect_args`; setting a timeout in both places stops startup. The
+  `DatabaseConfig` repr now hides the credentials of `url`.
+- The client islands moved: `loom.core.connections.clients.<engine>` is now
+  `loom.core.connections.<engine>.client`, and the loaders `aws_island`,
+  `mongo_island` and `clickhouse_island` are imported from
+  `loom.core.connections.<engine>`. A missing extra now raises loom's
+  `MissingExtraError` (an `ImportError`) naming the extra, from the ETL
+  sources and from the Mongo change-stream source alike.
+- Each engine's connection has one type, shared by every context
+  (ADR 0006 (`docs/architecture/adr/0006-hexagonal-layers.md`)):
+  `AwsClientConfig`, `MongoConnection`, `ClickHouseConnection` and
+  `DatabaseConfig`, in `loom.core.connections`. `loom.etl.storage.ClickHouseConfig`
+  and `MongoConfig` and the ETL's `DynamoDbConfig` are gone; so are
+  `loom.core.stores.database.DatabaseConfig` and `SchemaConfig`.
+- `storage.dynamodb.enabled` is removed: declaring `storage.dynamodb` enables
+  DynamoDB sources. `storage.mongo` and `storage.clickhouse` are disabled by
+  omitting them; an empty `uri`/`url` fails. The ETL DynamoDB client now fails
+  within 2 s to connect, 5 s to read and three attempts, as the repository's
+  does (`storage.dynamodb.read_timeout` and the other bounds are overridable
+  per environment).
+- A ClickHouse sink's `database.<name>` is a ClickHouse connection:
+  `http_url` is now `url`, and `username`, `password` and timeouts are
+  accepted. The ETL ClickHouse sources, targets and client steps accept
+  `connection=ClickHouseConnection(...)`; `url=` stays as a shortcut.
+- `database.schema` refuses an unknown key.
+- The `secrets`/`ssm` resolvers and the SNS notifier build their boto3
+  client with the same bounds (2 s connect, 5 s read, three attempts).
+- A `sql.connections.<name>.url` whose query sets an option the SQL service
+  decides (`autogenerate_session_id`, `session_id`, `query_retries`, `role`,
+  `readonly`, `username`, `user`, `password`) fails at startup: the driver
+  would let it replace the service's choice.
+- `database` pool keys moved under `database.pool` (`pool_size` →
+  `pool.size`, `pool_pre_ping` → `pool.pre_ping`, ...), the same in the API,
+  the worker and streaming sinks; the old keys stop startup naming the new
+  one. `SessionManager.from_config` and `loom.streaming.SqlAlchemyDatabaseConfig`
+  are replaced by `build_session_manager(DatabaseConfig, profile)` and
+  `loom.core.stores.DatabaseConfig`.
+- Pool defaults now come from the entry point. The worker opens at most two
+  connections per process (it allowed thirty); the API keeps five plus five
+  and recycles connections every 1800 s. Declare `database.pool` to keep
+  other values.
+- `StorePlugin.build` takes a third argument, the `StorePluginContext`.
+- A worker with a malformed `database` section now fails at startup instead
+  of running without its database.
+
+- Repository outputs are now built through `to_struct`. A struct value held
+  in a loosely annotated field (`Any`, `list[dict[str, Any]]`) arrives as a
+  dict with encoded (camelCase) keys; a related value is re-typed to the
+  annotated struct.
+- `UseCaseFactory` no longer injects constructor parameters that carry a
+  default value, nor plain generic containers (`tuple[str, ...]`,
+  `dict[str, Any]`); the default applies. Capability keys (`Listable[M]`)
+  and Protocol-typed parameters are still injected and verified at boot.
+- Cursor tokens issued before this version are rejected with
+  `400 unsupported_query`: clients restart from the first page.
+- An explicit `exclude_paths` list must include `/health`, or the probe
+  answers `401`.

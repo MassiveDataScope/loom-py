@@ -8,9 +8,11 @@ import uuid
 from contextvars import Token
 from typing import Any
 
+from loom.core.log_names import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 from loom.prefect._async import run_sync
-from loom.prefect.observer._logging_bridge import _current_task_run_id
+from loom.prefect.event import PrefectEvent
+from loom.prefect.observer._logging_bridge import active_task_run_id
 
 _log = logging.getLogger(__name__)
 
@@ -46,10 +48,8 @@ class PrefectTaskRunObserver:
         if event.scope is not Scope.STEP:
             return
         _log.debug(
-            "PrefectTaskRunObserver event step=%s kind=%s step_run_id=%s",
-            event.name,
-            event.kind,
-            event.id,
+            PrefectEvent.STEP_EVENT_RECEIVED,
+            extra={LogField.NAME: event.name, LogField.EVENT_KIND: event.kind},
         )
         try:
             match event.kind:
@@ -61,9 +61,8 @@ class PrefectTaskRunObserver:
                     self._on_error(event)
         except Exception:  # noqa: BLE001
             _log.warning(
-                "PrefectTaskRunObserver swallowed exception (step=%s, kind=%s)",
-                event.name,
-                event.kind,
+                PrefectEvent.STEP_EVENT_FAILED,
+                extra={LogField.NAME: event.name, LogField.EVENT_KIND: event.kind},
                 exc_info=True,
             )
 
@@ -74,7 +73,7 @@ class PrefectTaskRunObserver:
         task_run_id = self._create_task_run(event)
         if task_run_id is not None:
             self._task_runs[step_run_id] = task_run_id
-            self._tokens[step_run_id] = _current_task_run_id.set(task_run_id)
+            self._tokens[step_run_id] = active_task_run_id.set(task_run_id)
 
     def _on_end(self, event: LifecycleEvent) -> None:
         self._reset_log_binding(event.id)
@@ -88,7 +87,8 @@ class PrefectTaskRunObserver:
         task_run_id = self._task_runs.pop(event.id, None) if event.id else None
         if task_run_id is None:
             return
-        self._set_state(task_run_id, completed=False, message=event.error)
+        message = event.failure.describe() if event.failure else None
+        self._set_state(task_run_id, completed=False, message=message)
 
     def _reset_log_binding(self, step_run_id: str | None) -> None:
         if step_run_id is None:
@@ -97,7 +97,7 @@ class PrefectTaskRunObserver:
         if token is None:
             return
         with contextlib.suppress(ValueError):
-            _current_task_run_id.reset(token)
+            active_task_run_id.reset(token)
 
     def _create_task_run(self, event: LifecycleEvent) -> uuid.UUID | None:
         from prefect.client.orchestration import get_client  # noqa: PLC0415

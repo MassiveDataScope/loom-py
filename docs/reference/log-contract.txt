@@ -1,0 +1,394 @@
+event loom.ai.a2a_agent_not_compiled
+event loom.ai.a2a_agent_published
+event loom.ai.cancelled_call_drained
+event loom.ai.endpoint_agent_not_compiled
+event loom.ai.endpoint_failed
+event loom.ai.endpoint_mounted
+event loom.ai.engine_native_support_missing
+event loom.ai.health_probe_failed
+event loom.ai.history_invalid
+event loom.ai.history_too_large
+event loom.ai.mcp_pool_close_failed
+event loom.ai.mcp_session_close_failed
+event loom.ai.mcp_session_renewed
+event loom.ai.model_unpriceable
+event loom.ai.price_model_unused
+event loom.ai.remote_client_skipped
+event loom.ai.remote_plaintext_accepted
+event loom.ai.row_failed
+event loom.ai.run_failed
+event loom.ai.run_failed_from_cause
+event loom.ai.step_cancelled_at_bound
+event loom.ai.step_completed_after_consumer_left
+event loom.ai.step_failed
+event loom.ai.step_failed_after_consumer_left
+event loom.ai.stream_failed
+event loom.ai.tool_failed
+event loom.ai.tool_remote_agent_unreachable
+event loom.bootstrap.container_build_started
+event loom.bootstrap.container_validated
+event loom.bootstrap.kernel_completed
+event loom.bootstrap.module_registered
+event loom.bootstrap.use_cases_compiled
+event loom.bridge.shutdown_timed_out
+event loom.cache.binding_kept
+event loom.cache.call_key_unrenderable
+event loom.cache.call_not_cacheable
+event loom.cache.call_not_configured
+event loom.cache.call_overridden_by_sync
+event loom.cache.call_read_failed
+event loom.cache.call_write_failed
+event loom.cache.entry_hit
+event loom.cache.entry_missed
+event loom.cache.index_id_type_mismatched
+event loom.cache.load_abandoned
+event loom.cache.payload_mismatched
+event loom.cache.post_commit_bump_failed
+event loom.cache.repository_not_configured
+event loom.cache.scope_changed_write_skipped
+event loom.celery.failure_callback_not_sent
+event loom.celery.worker_close_failed
+event loom.celery.worker_graph_initialized
+event loom.celery.worker_process_open_failed
+event loom.celery.worker_start_failed
+event loom.checks.deploy_silenced
+event loom.checks.deploy_skipped
+event loom.checks.deploy_warned
+event loom.clickhouse.client_close_failed
+event loom.compiler.use_case_compiled
+event loom.composition.application_close_failed
+event loom.composition.application_composed
+event loom.composition.inline_jobs_held_in_memory
+event loom.config.keys_overridden
+event loom.config.resolver_default_skipped
+event loom.config.resolver_fetched
+event loom.discovery.no_jobs_discovered
+event loom.dynamodb.readiness_probe_failed
+event loom.elevation.flags_clear_failed
+event loom.elevation.invalidation_failed
+event loom.engine.execution_observer_failed
+event loom.engine.post_commit_action_failed
+event loom.engine.post_commit_drain_failed_during_teardown
+event loom.engine.post_commit_plain_actions_dropped
+event loom.engine.post_commit_shielded_action_never_ran
+event loom.engine.use_case_done
+event loom.engine.use_case_failed
+event loom.engine.use_case_signalled
+event loom.etl.append_target_compiled
+event loom.etl.bson_mapping_failed
+event loom.etl.bson_mapping_unknown
+event loom.etl.bson_type_unknown
+event loom.etl.checkpoint_cleaned
+event loom.etl.checkpoint_cleanup_skipped
+event loom.etl.checkpoint_correlation_cleanup_failed
+event loom.etl.checkpoint_encryption_ignored
+event loom.etl.checkpoint_hit
+event loom.etl.checkpoint_missed
+event loom.etl.checkpoint_options_ignored
+event loom.etl.checkpoint_run_cleanup_failed
+event loom.etl.checkpoint_written
+event loom.etl.clickhouse_insert_started
+event loom.etl.clickhouse_table_truncated
+event loom.etl.compile_cache_hit
+event loom.etl.correlation_not_cleaned
+event loom.etl.create_skipped_empty
+event loom.etl.delta_write_committed
+event loom.etl.delta_write_started
+event loom.etl.dynamodb_segment_failed
+event loom.etl.file_stream_write_started
+event loom.etl.historify_rerun_required
+event loom.etl.historify_rerun_unscoped
+event loom.etl.historify_scope_missing
+event loom.etl.historify_track_inferred
+event loom.etl.maintenance_failed
+event loom.etl.maintenance_not_configured
+event loom.etl.maintenance_table_skipped
+event loom.etl.merge_partitions_found
+event loom.etl.merge_partitions_undeclared
+event loom.etl.pinned_rows_release_failed
+event loom.etl.pipeline_compiled
+event loom.etl.pipeline_started
+event loom.etl.plan_filtered
+event loom.etl.process_started
+event loom.etl.replace_partitions_empty
+event loom.etl.source_batch_read
+event loom.etl.source_cast_skipped
+event loom.etl.source_conflict_deferred
+event loom.etl.source_frame_build_fell_back
+event loom.etl.source_query_started
+event loom.etl.source_read_completed
+event loom.etl.source_read_degraded
+event loom.etl.source_read_started
+event loom.etl.source_row_flagged
+event loom.etl.source_schema_drifted
+event loom.etl.source_schema_inferred
+event loom.etl.source_string_fields_serialised
+event loom.etl.source_subfields_dropped
+event loom.etl.source_type_stringified
+event loom.etl.source_undeclared_fields_serialised
+event loom.etl.source_value_unserialisable
+event loom.etl.step_compiled
+event loom.etl.step_started
+event loom.etl.table_compacted
+event loom.etl.table_vacuumed
+event loom.etl.table_z_ordered
+event loom.etl.target_write_started
+event loom.etl.temp_source_read_started
+event loom.etl.temp_target_write_started
+event loom.etl.unity_catalog_create_unregistered
+event loom.etl.write_produced_no_rows
+event loom.etl.yaml_loaded
+event loom.execution.context_closed
+event loom.identity.caller_switched
+event loom.identity.delegation_expired
+event loom.job.delivery_abandoned
+event loom.job.retry_policies_described
+event loom.jobs.send_failed
+event loom.jobs.settlement_call_raised
+event loom.jobs.settlement_entries_failed
+event loom.jobs.settlement_message_discarded
+event loom.jobs.settlement_queue_unreachable
+event loom.logging.subject_hash_disabled
+event loom.mongo.bulk_undo_failed
+event loom.mongo.readiness_probe_failed
+event loom.mongo.unit_of_work_chosen
+event loom.observability.host_id_generator_kept
+event loom.observability.host_id_generator_unavailable
+event loom.observability.lifecycle_ended
+event loom.observability.lifecycle_failed
+event loom.observability.lifecycle_started
+event loom.observability.observer_failed
+event loom.plugins.entry_point_duplicated
+event loom.prefect.backfill_chunk_started
+event loom.prefect.backfill_finalize_started
+event loom.prefect.manifest_delete_failed
+event loom.prefect.manifest_load_failed
+event loom.prefect.manifest_save_failed
+event loom.prefect.notification_failed
+event loom.prefect.parameters_record_failed
+event loom.prefect.schedules_pause_failed
+event loom.prefect.schedules_paused
+event loom.prefect.step_event_failed
+event loom.prefect.step_event_received
+event loom.rest.authentication_refused
+event loom.rest.authentication_unavailable
+event loom.rest.authorization_denied
+event loom.rest.columns_all_exposed
+event loom.rest.http_error_misdeclared
+event loom.rest.http_error_served
+event loom.rest.request_unhandled
+event loom.rest.sql_endpoint_failed
+event loom.rest.sql_endpoint_mounted
+event loom.rest.sql_endpoint_unhandled
+event loom.rest.token_invalid
+event loom.rest.token_issued
+event loom.rest.token_key_unknown
+event loom.rest.token_roles_claim_missing
+event loom.rest.token_signing_failed
+event loom.rest.token_type_refused
+event loom.runner.flush_failed
+event loom.runner.shutdown_failed
+event loom.serverless.agent_endpoint_ignored
+event loom.serverless.autocrud_ignored
+event loom.serverless.event_job_failed
+event loom.serverless.job_transport_selected
+event loom.serverless.s3_test_event_acknowledged
+event loom.serverless.sqs_job_failed
+event loom.serverless.sqs_job_postponed
+event loom.sqlalchemy.audit_partition_missing
+event loom.sqlalchemy.audit_partitions_nearly_exhausted
+event loom.sqlalchemy.no_models_discovered
+event loom.sqlalchemy.operation_session_rolled_back
+event loom.sqlalchemy.pool_sizing_omitted
+event loom.sqlalchemy.readiness_probe_failed
+event loom.sqlalchemy.repository_transaction_committed
+event loom.sqlalchemy.scoped_tables_unprotected
+event loom.sqlalchemy.session_closed
+event loom.sqlalchemy.session_manager_closed
+event loom.sqlalchemy.session_manager_initialized
+event loom.sqlalchemy.session_opened
+event loom.sqlalchemy.stores_not_loaded
+event loom.sqlalchemy.transaction_committed
+event loom.sqlalchemy.transaction_rolled_back
+event loom.sqlalchemy.transaction_session_reused
+event loom.stores.cursor_signing_weakened
+event loom.stores.role_authorization_denied
+event loom.stores.uow_close_failed
+event loom.stores.uow_invalidate_failed
+event loom.stores.uow_invocation_settled
+event loom.stores.uow_rollback_failed
+event loom.stores.uow_transaction_began
+event loom.stores.uow_transaction_committed
+event loom.stores.uow_transaction_rolled_back
+event loom.streaming.boundary_error_managed
+event loom.streaming.boundary_error_unhandled
+event loom.streaming.delta_staged_records_discarded
+event loom.streaming.delta_staging_limit_reached
+event loom.streaming.mongo_cdc_event_skipped
+event loom.streaming.mongo_cdc_message_skipped
+event loom.streaming.mongo_cdc_oplog_expired
+event loom.streaming.offset_commit_failed
+event loom.streaming.record_probed
+event loom.streaming.record_type_unknown
+event loom.streaming.record_undecodable
+event loom.streaming.resume_state_behind
+event loom.streaming.runner_shut_down
+event loom.streaming.sink_flush_failed
+event loom.streaming.sink_flushed
+event loom.streaming.storage_sink_closed_pending
+event loom.streaming.storage_sink_count_invalid
+event loom.streaming.topic_not_visible
+event loom.streaming.unrouted_errors_dropped
+key code.file.path string
+key code.function.name string
+key code.line.number number
+key deployment.environment.name string
+key error.type string
+key exception.stacktrace string
+key exception.type string
+key http.request.method string
+key http.response.status_code number
+key http.route string
+key loom.ai.agent string
+key loom.ai.anonymous boolean
+key loom.ai.config_path string
+key loom.ai.conversational boolean
+key loom.ai.engine string
+key loom.ai.interaction string
+key loom.ai.model string
+key loom.ai.plaintext_host string
+key loom.ai.step string
+key loom.ai.tool string
+key loom.attempt number
+key loom.bootstrap.module string
+key loom.bridge.timeout_ms number
+key loom.cache.entity string
+key loom.cache.function string
+key loom.cache.kept_binding string
+key loom.cache.key string
+key loom.cache.repository string
+key loom.cache.result_type string
+key loom.cache.slot string
+key loom.checks.id string
+key loom.checks.ids array
+key loom.checks.message string
+key loom.compiler.computes number
+key loom.compiler.detected array
+key loom.compiler.rules number
+key loom.compiler.steps number
+key loom.composition.phase_ms object
+key loom.config.key string
+key loom.config.keys array
+key loom.config.resolver string
+key loom.correlation_id string
+key loom.duration_ms number
+key loom.dynamodb.table string
+key loom.elevation.scopes array
+key loom.error.code string
+key loom.etl.batches number
+key loom.etl.checkpoint string
+key loom.etl.columns array
+key loom.etl.drift string
+key loom.etl.files number
+key loom.etl.issues array
+key loom.etl.kind string
+key loom.etl.mode string
+key loom.etl.option_keys array
+key loom.etl.partitions number
+key loom.etl.pipeline string
+key loom.etl.predicates number
+key loom.etl.process string
+key loom.etl.rerun_dates array
+key loom.etl.rows number
+key loom.etl.run_id string
+key loom.etl.scope string
+key loom.etl.segment number
+key loom.etl.serialization_failures number
+key loom.etl.shape array
+key loom.etl.step string
+key loom.etl.table string
+key loom.etl.uri string
+key loom.etl.value_type string
+key loom.etl.version number
+key loom.event_kind string
+key loom.execution.read string
+key loom.identity.attributes_changed boolean
+key loom.identity.previous_user.hash string
+key loom.identity.roles_from array
+key loom.identity.roles_to array
+key loom.job.committed boolean
+key loom.job.failures number
+key loom.job.name string
+key loom.job.postponements number
+key loom.job.queue string
+key loom.job.retry_policies array
+key loom.jobs.action string
+key loom.jobs.failed_entries array
+key loom.jobs.queue_arn string
+key loom.lifecycle.event_id string
+key loom.lifecycle.meta object
+key loom.mongo.document_count number
+key loom.mongo.transactions boolean
+key loom.name string
+key loom.observability.provider string
+key loom.observer string
+key loom.plugins.distributions array
+key loom.plugins.entry_point string
+key loom.plugins.group string
+key loom.post_commit.dropped_actions number
+key loom.post_commit.interrupted boolean
+key loom.post_commit.sent_job string
+key loom.post_commit.sent_task_id string
+key loom.prefect.deployment string
+key loom.prefect.flow string
+key loom.prefect.run string
+key loom.prefect.window string
+key loom.reason string
+key loom.rest.error_class string
+key loom.rest.roles_bound boolean
+key loom.runner.type string
+key loom.runtime string
+key loom.scope string
+key loom.serverless.config_key string
+key loom.serverless.message_id string
+key loom.serverless.transport string
+key loom.sqlalchemy.backend string
+key loom.sqlalchemy.driver string
+key loom.sqlalchemy.has_session_settings boolean
+key loom.sqlalchemy.inject_trace_id boolean
+key loom.sqlalchemy.method string
+key loom.sqlalchemy.months_covered number
+key loom.sqlalchemy.mutation_count number
+key loom.sqlalchemy.owner string
+key loom.sqlalchemy.skipped_stores array
+key loom.sqlalchemy.tables array
+key loom.status string
+key loom.stores.connection string
+key loom.stores.cursor_signing string
+key loom.stores.mechanism string
+key loom.stores.outcomes array
+key loom.stores.store string
+key loom.streaming.flow string
+key loom.streaming.kind string
+key loom.streaming.message_type string
+key loom.streaming.node_index number
+key loom.streaming.node_type string
+key loom.streaming.offset number
+key loom.streaming.partition number
+key loom.streaming.partitions array
+key loom.streaming.records number
+key loom.streaming.replayed_offsets number
+key loom.streaming.step string
+key loom.streaming.target string
+key loom.streaming.topic string
+key loom.task_id string
+key loom.use_case.broken_rules array
+key loom.use_case.name string
+key loom.use_case.phase string
+key loom.use_case.steps array
+key loom.use_case_count number
+key service.name string
+key service.version string
+key span_id string
+key trace_id string
+key user.hash string

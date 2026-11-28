@@ -174,7 +174,7 @@ class TestFlowTriggerSettings:
     def test_an_inherited_parameter_must_be_a_field(self, tmp_path: Path) -> None:
         yaml = _trigger_yaml("updated_at_from, run_date")
 
-        with pytest.raises(ValueError, match="'run_date', not a field of AcmeTriggerParams"):
+        with pytest.raises(KeyError, match="'run_date', not a field of AcmeTriggerParams"):
             _flow(tmp_path, yaml)
 
     @pytest.mark.parametrize("field", ["batch", "until"])
@@ -282,18 +282,20 @@ class TestCheckInheritedParams:
         check_inherited_params(None, AcmeTriggerParams, name="downstream")
 
     @pytest.mark.parametrize(
-        ("param", "match"),
+        ("param", "match", "error"),
         [
-            ("run_date", "'run_date', not a field of AcmeTriggerParams"),
-            ("batch", "'batch'.*only str, date and datetime"),
-            ("until", "'until'.*only str, date and datetime"),
+            ("run_date", "'run_date', not a field of AcmeTriggerParams", KeyError),
+            ("batch", "'batch'.*only str, date and datetime", ValueError),
+            ("until", "'until'.*only str, date and datetime", ValueError),
         ],
     )
-    def test_refuses_what_the_trigger_cannot_carry(self, param: str, match: str) -> None:
+    def test_refuses_what_the_trigger_cannot_carry(
+        self, param: str, match: str, error: type[Exception]
+    ) -> None:
         from loom.prefect.flow import check_inherited_params
 
         trigger = FlowTrigger(after="upstream", inherit_params=(param,))
         with pytest.raises(
-            ValueError, match=rf"flow 'downstream': trigger.inherit_params names {match}"
+            error, match=rf"flow 'downstream': trigger.inherit_params names {match}"
         ):
             check_inherited_params(trigger, AcmeTriggerParams, name="downstream")

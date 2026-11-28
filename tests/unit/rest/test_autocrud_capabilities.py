@@ -16,19 +16,19 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import loom.core.repository as repository_package
+import loom.core.stores.repository as repository_package
 from loom.composition import AppConfig
 from loom.core.bootstrap import BootstrapError
 from loom.core.di.container import LoomContainer, ResolutionError
 from loom.core.discovery.base import DiscoveryResult
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.abc import BulkCreatable, Creatable, Listable, Readable
-from loom.core.repository.registration import classify_key
-from loom.core.repository.registry import repository_for
+from loom.core.observability.observability import Observability
+from loom.core.stores.repository import BulkCreatable, Creatable, Listable, OnConflict, Readable
+from loom.core.stores.repository.registration import classify_key
+from loom.core.stores.repository.registry import repository_for
 from loom.core.use_case.constants import KEY_SEPARATOR, CrudOp
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.registry import model_entity_key
@@ -37,7 +37,7 @@ from loom.rest.autocrud import build_auto_routes, crud_op_of
 from loom.rest.compiler import RestInterfaceCompiler
 from loom.rest.fastapi._errors import register_error_handlers
 from loom.rest.fastapi.auto import create_app
-from loom.rest.fastapi.router_runtime import bind_interfaces
+from loom.rest.fastapi.router import mount_interfaces
 from loom.rest.model import RestApiDefaults, RestInterface, RestRoute
 from tests.unit.rest._composition import SQLITE_STORE, dynamodb_store
 from tests.unit.rest._composition import build_bootstrap as _build_bootstrap
@@ -72,7 +72,7 @@ class BulkOnlyRecord(BaseModel):
 @repository_for(BulkOnlyRecord)
 class _BulkOnlyRepository(BulkCreatable[BulkOnlyRecord]):
     async def create_many(
-        self, data: Sequence[msgspec.Struct]
+        self, data: Sequence[msgspec.Struct], *, on_conflict: OnConflict = OnConflict.ERROR
     ) -> tuple[BulkOnlyRecord, ...]:  # pragma: no cover - never invoked
         raise AssertionError("not exercised")
 
@@ -110,12 +110,8 @@ class TestSupportedOpsFollowTheRegisteredRepository:
 
 
 def _discovery(*interfaces: type, models: tuple[type[BaseModel], ...] = ()) -> DiscoveryResult:
-    """Mirror discovery: the use cases are those the interface routes reference."""
-    typed = tuple(cast(type[RestInterface[Any]], klass) for klass in interfaces)
-    use_cases = tuple(dict.fromkeys(route.use_case for iface in typed for route in iface.routes))
-    return DiscoveryResult(
-        models=models or (CapabilityRecord,), use_cases=use_cases, interfaces=typed
-    )
+    """A scan that found *interfaces* among its classes."""
+    return DiscoveryResult(models=models or (CapabilityRecord,), use_cases=(), classes=interfaces)
 
 
 def _ops(interface: type[RestInterface[Any]]) -> set[CrudOp]:
@@ -126,15 +122,15 @@ def _ops(interface: type[RestInterface[Any]]) -> set[CrudOp]:
 def discover(monkeypatch: pytest.MonkeyPatch) -> Any:
     def _install(*interfaces: type, models: tuple[type[BaseModel], ...] = ()) -> None:
         result = _discovery(*interfaces, models=models)
-        monkeypatch.setattr("loom.composition.source.discover", lambda _cfg: result)
+        monkeypatch.setattr(
+            "loom.composition.project.PackageScanner.discover", lambda self, agents=None: result
+        )
 
     return _install
 
 
 class TestDefaultInclude:
-    def test_dynamodb_mounts_only_the_key_operations(
-        self, discover: Any, aws_test_credentials: None
-    ) -> None:
+    def test_dynamodb_mounts_only_the_key_operations(self, discover: Any) -> None:
         class RecordsOnDynamo(RestInterface[CapabilityRecord]):
             prefix = "/records"
             auto = True
@@ -145,9 +141,7 @@ class TestDefaultInclude:
 
         assert _ops(RecordsOnDynamo) == _KEY_OPS
 
-    def test_booting_again_on_sqlalchemy_restores_the_list_route(
-        self, discover: Any, aws_test_credentials: None
-    ) -> None:
+    def test_booting_again_on_sqlalchemy_restores_the_list_route(self, discover: Any) -> None:
         class RecordsOnBoth(RestInterface[CapabilityRecord]):
             prefix = "/records"
             auto = True
@@ -160,9 +154,7 @@ class TestDefaultInclude:
         _build_bootstrap(AppConfig(name="demo"), _ctx(store=SQLITE_STORE))
         assert _ops(RecordsOnBoth) == _KEY_OPS | {CrudOp.LIST}
 
-    def test_a_pruned_use_case_mounted_elsewhere_survives(
-        self, discover: Any, aws_test_credentials: None
-    ) -> None:
+    def test_a_pruned_use_case_mounted_elsewhere_survives(self, discover: Any) -> None:
         """Only a use case no interface mounts any more leaves the discovery result."""
         shared_list = next(
             r.use_case
@@ -239,9 +231,7 @@ class TestDefaultInclude:
 
 
 class TestExplicitInclude:
-    def test_absent_operation_names_model_op_and_backend(
-        self, discover: Any, aws_test_credentials: None
-    ) -> None:
+    def test_absent_operation_names_model_op_and_backend(self, discover: Any) -> None:
         class RecordListing(RestInterface[CapabilityRecord]):
             prefix = "/records"
             auto = True
@@ -259,9 +249,7 @@ class TestExplicitInclude:
         assert "'list'" in message
         assert "'dynamodb'" in message
 
-    def test_supported_operations_are_kept_as_declared(
-        self, discover: Any, aws_test_credentials: None
-    ) -> None:
+    def test_supported_operations_are_kept_as_declared(self, discover: Any) -> None:
         class RecordReads(RestInterface[CapabilityRecord]):
             prefix = "/records"
             auto = True
@@ -306,7 +294,7 @@ class _CountInterface(RestInterface[int]):
 
 class TestHandWrittenCapabilityDependency:
     def test_fails_at_create_app_on_a_backend_without_it(
-        self, tmp_path: Path, discover: Any, aws_test_credentials: None
+        self, tmp_path: Path, discover: Any
     ) -> None:
         discover(_CountInterface)
         config_path = write_project(tmp_path, store=_DYNAMODB_STORE)
@@ -357,12 +345,12 @@ def _lookup_client() -> TestClient:
     factory.register(_LookupByName)
     app = FastAPI()
     register_error_handlers(app)
-    bind_interfaces(
+    mount_interfaces(
         app,
         RestInterfaceCompiler(compiler, defaults=RestApiDefaults()).compile(_LookupInterface),
         factory,
-        RuntimeExecutor(compiler),
-        observability_runtime=ObservabilityRuntime.noop(),
+        UseCaseExecutor(compiler),
+        observability=Observability.noop(),
     )
     return TestClient(app, raise_server_exceptions=False)
 

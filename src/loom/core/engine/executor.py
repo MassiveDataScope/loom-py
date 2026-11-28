@@ -8,10 +8,11 @@ from loom.core.engine.boundaries import Boundaries, outside_departed_execution
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.compiler import UseCaseCompiler
 from loom.core.engine.events import Phase
-from loom.core.engine.metrics import MetricsAdapter
+from loom.core.engine.execution_observer import ExecutionObserver
 from loom.core.engine.observation import ExecutionReporter
-from loom.core.engine.plan import ExecutionPlan
-from loom.core.engine.preparation import ArgumentBinder, ExecutionInputs, ParameterBindingError
+from loom.core.engine.plan import ExecutionPlan, ParameterBindingError
+from loom.core.engine.preparation import ArgumentBinder, ExecutionInputs
+from loom.core.errors import InvalidUse
 from loom.core.execution import (
     ExecutionContext,
     ExecutionKinds,
@@ -19,23 +20,25 @@ from loom.core.execution import (
     Kind,
 )
 from loom.core.identity import Identity, current_caller
-from loom.core.logger import LoggerPort, get_logger
-from loom.core.uow.coordinator import Coordinator
-from loom.core.uow.scope import current_scope, refuse_write_under_read_only
+from loom.core.log_names import LogField
+from loom.core.logger import log_context
+from loom.core.stores.uow.coordinator import Coordinator
+from loom.core.stores.uow.scope import current_scope, refuse_write_under_read_only
 from loom.core.use_case.kinds import AGENT, MCP
 
 if TYPE_CHECKING:
+    from loom.core.job.delivery import JobDelivery
     from loom.core.job.job import Job
     from loom.core.use_case.factory import UseCaseFactory
     from loom.core.use_case.use_case import UseCase
 
-__all__ = ["ParameterBindingError", "RuntimeExecutor"]
+__all__ = ["ParameterBindingError", "UseCaseExecutor"]
 
 ResultT = TypeVar("ResultT")
 _TargetT = TypeVar("_TargetT")
 
 
-class RuntimeExecutor:
+class UseCaseExecutor:
     """Executes UseCases from their compiled ExecutionPlan without reflection.
 
     The public facade of one execution: it computes who the execution acts
@@ -60,7 +63,7 @@ class RuntimeExecutor:
     and the tasks it starts, even those that outlive it, all act as the
     identity ``Caller()`` receives. Only an explicit switch changes it: given
     an identity other than the one acting, an execution logs
-    ``identity_switched`` and acts as the given one, and so does everything
+    ``loom.identity.caller_switched`` and acts as the given one, and so does everything
     it causes. A caller acts within its delegation
     (``identity.max_delegation_seconds`` from the request's start): past it,
     a task that outlived the request can no longer act as that caller.
@@ -74,7 +77,7 @@ class RuntimeExecutor:
         debug_execution: When ``True``, each execution's terminal log lists
             the steps it ran under ``steps``. Defaults to ``False``.
         logger: Optional logger. Defaults to the framework logger.
-        metrics: Optional metrics adapter. When provided, receives
+        execution_observer: Optional execution observer. When provided, receives
             ``EXEC_START``, ``EXEC_DONE``, and ``EXEC_ERROR`` events.
         repo_resolver: Optional callable that resolves a repository instance
             from an entity model type. Used by ``Load``/``Exists`` when
@@ -90,10 +93,10 @@ class RuntimeExecutor:
 
     Example::
 
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             compiler,
             coordinator=OrderedCommits({DEFAULT_STORE: uow_factory}),
-            metrics=prometheus_adapter,
+            execution_observer=prometheus_adapter,
         )
         result = await executor.execute(
             use_case,
@@ -108,8 +111,7 @@ class RuntimeExecutor:
         *,
         coordinator: Coordinator | None = None,
         debug_execution: bool = False,
-        logger: LoggerPort | None = None,
-        metrics: MetricsAdapter | None = None,
+        execution_observer: ExecutionObserver | None = None,
         repo_resolver: Callable[[type[Any]], Any] | None = None,
         resolvers: ExecutionKinds | None = None,
         builder: Callable[[type[Any]], Any] | None = None,
@@ -120,7 +122,7 @@ class RuntimeExecutor:
         self._compiler = compiler
         self._builder = builder
         self._kinds = ExecutionKinds() if resolvers is None else resolvers
-        self._reporter = ExecutionReporter(logger or get_logger(__name__), metrics, debug_execution)
+        self._reporter = ExecutionReporter(execution_observer, debug_execution)
         self._boundaries = Boundaries(coordinator, elevation_sink)
         self._binder = ArgumentBinder(self._kinds, repo_resolver)
         if agent_resolver is not None:
@@ -140,7 +142,7 @@ class RuntimeExecutor:
                 ``Agent()`` declarations.
 
         Raises:
-            RuntimeError: If a resolver is already bound.
+            InvalidUse: If a resolver is already bound.
         """
         self._bind(AGENT, resolver)
 
@@ -155,7 +157,7 @@ class RuntimeExecutor:
                 ``Mcp()`` declarations.
 
         Raises:
-            RuntimeError: If a resolver is already bound.
+            InvalidUse: If a resolver is already bound.
         """
         self._bind(MCP, resolver)
 
@@ -163,12 +165,12 @@ class RuntimeExecutor:
         """Bind *resolver* to *kind*.
 
         Raises:
-            TypeError: If *resolver* does not implement ``resolve(declaration, annotation)``.
-            RuntimeError: If *kind* already has a resolver.
+            InvalidType: If *resolver* does not implement ``resolve(declaration, annotation)``.
+            InvalidUse: If *kind* already has a resolver.
         """
         if self._kinds.is_bound(kind):
-            raise RuntimeError(f"RuntimeExecutor.bind_{kind.name}_resolver() called more than once")
-        self._kinds.bind(kind, resolver)
+            raise InvalidUse(f"UseCaseExecutor.bind_{kind.name}_resolver() called more than once")
+        self._kinds.register(kind, resolver)
 
     async def run(
         self,
@@ -181,6 +183,7 @@ class RuntimeExecutor:
         load_overrides: dict[type[Any], Any] | None = None,
         read_only: bool = False,
         identity: Identity | None = None,
+        delivery: JobDelivery | None = None,
     ) -> Any:
         """Build ``use_case_type`` inside a new execution and execute it there.
 
@@ -204,25 +207,27 @@ class RuntimeExecutor:
             load_overrides: Pre-loaded entities by type, bypassing repo calls.
             read_only: When ``True``, no unit of work is opened.
             identity: Verified caller for this execution, as for :meth:`execute`.
+            delivery: The job delivery a ``Delivery()`` parameter receives; none
+                binds ``None``.
 
         Returns:
             The result produced by ``execute()``.
 
         Raises:
-            TypeError: When neither ``factory`` nor the executor's ``builder``
+            InvalidUse: When neither ``factory`` nor the executor's ``builder``
                 is given.
         """
         build = self._builder if factory is None else factory.build
         if build is None:
-            raise TypeError(
-                "RuntimeExecutor.run() needs factory=... or an executor constructed "
+            raise InvalidUse(
+                "UseCaseExecutor.run() needs factory=... or an executor constructed "
                 "with builder=..."
             )
         return await self._execute(
             use_case_type,
             build,
             use_case_type,
-            ExecutionInputs(params, payload, dependencies, load_overrides),
+            ExecutionInputs(params, payload, dependencies, load_overrides, delivery),
             identity,
             read_only,
         )
@@ -316,7 +321,7 @@ class RuntimeExecutor:
                 execution's, the transport's, or the one a task inherited),
                 else with no caller (``current_identity()`` then reads
                 ``ANONYMOUS``).  Another identity than the one acting is an
-                explicit switch: logged as ``identity_switched``.
+                explicit switch: logged as ``loom.identity.caller_switched``.
                 Required, given or acting, when the plan declares a
                 ``Caller()``, ``Agent()`` or ``Mcp()`` parameter; pass
                 :data:`~loom.core.identity.identity.ANONYMOUS` explicitly to
@@ -326,7 +331,7 @@ class RuntimeExecutor:
             The result produced by ``execute()``.
 
         Raises:
-            loom.core.errors.RuleViolations: If one or more rule steps fail.
+            loom.core.errors.RuleViolationsError: If one or more rule steps fail.
             NotFound: If a Load step finds no entity in the repository.
             Unauthenticated: If the plan declares ``Caller()`` and no identity
                 was supplied.
@@ -335,7 +340,7 @@ class RuntimeExecutor:
             loom.core.errors.ScopeOwnershipError: If a scope is published
                 in this context but this task does not own it, or it is
                 already closed.
-            loom.core.errors.StoresNotCommitted: If two or more stores
+            loom.core.errors.StoresNotCommittedError: If two or more stores
                 of the invocation did not end the same way.
             loom.core.errors.NestedIdentityMismatch: If this execution
                 joins the invocation scope of this task as an identity other
@@ -374,7 +379,7 @@ class RuntimeExecutor:
         delegation, so the arguments, the acting identity and everything the
         execution causes see the same value. A run failing before it starts
         (its plan, its identity, the read-only check, its constructor) logs
-        its one ``[FAIL]`` line and raises.
+        its one ``loom.engine.use_case_failed`` record and raises.
 
         An execution that ended is no execution: a task that outlived it,
         seen here by its closed invocation scope, runs as at top level, out
@@ -389,34 +394,35 @@ class RuntimeExecutor:
                     use_case_type, build, target, inputs, identity, read_only
                 )
         use_case = use_case_type.__qualname__
-        phase = Phase.BEGIN
-        execution = None
-        try:
-            plan = self._plan_for(use_case_type)
-            read_only = read_only or plan.read_only
-            if identity is None:
-                identity = current_caller()
-            execution = ExecutionContext.entered(identity, use_case)
-            if not read_only:
-                refuse_write_under_read_only(f"{use_case}, which writes,")
-            phase = Phase.BUILD
-            compilable = build(target)
-        except Exception as exc:
-            self._reporter.not_started(use_case, exc, phase)
-            if execution is not None:
+        with log_context({LogField.USE_CASE: use_case}):
+            phase = Phase.BEGIN
+            execution = None
+            try:
+                plan = self._plan_for(use_case_type)
+                read_only = read_only or plan.read_only
+                if identity is None:
+                    identity = current_caller()
+                execution = ExecutionContext.entered(identity, use_case)
+                if not read_only:
+                    refuse_write_under_read_only(f"{use_case}, which writes,")
+                phase = Phase.BUILD
+                compilable = build(target)
+            except Exception as exc:
+                self._reporter.not_started(use_case, exc, phase)
+                if execution is not None:
+                    execution.close()
+                raise
+            try:
+                started = self._reporter.start(use_case)
+                call = self._binder.call
+                return await self._boundaries.run(
+                    self._boundaries.boundary_for(scope, plan, read_only),
+                    plan,
+                    started,
+                    lambda: started.business(call(plan, compilable, inputs, identity, started)),
+                )
+            finally:
                 execution.close()
-            raise
-        try:
-            started = self._reporter.start(use_case)
-            call = self._binder.call
-            return await self._boundaries.run(
-                self._boundaries.of(scope, plan, read_only),
-                plan,
-                started,
-                lambda: started.business(call(plan, compilable, inputs, identity, started)),
-            )
-        finally:
-            execution.close()
 
     def _plan_for(self, uc_type: type[Compilable]) -> ExecutionPlan:
         """Return the plan compiled for exactly ``uc_type``, compiling on demand.
@@ -431,5 +437,5 @@ class RuntimeExecutor:
 
 
 def _handed_instance(compilable: Compilable) -> Compilable:
-    """What :meth:`RuntimeExecutor.execute` builds: the instance it was handed."""
+    """What :meth:`UseCaseExecutor.execute` builds: the instance it was handed."""
     return compilable

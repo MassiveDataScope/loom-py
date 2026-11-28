@@ -23,6 +23,7 @@ from loom.core.environment import (
     resolve_environment,
     scoped_loom_variable,
 )
+from loom.core.errors import InvalidType, InvalidValue
 from loom.prefect._meta import LOOM_ETL_META_ATTR, ETLFlowMeta, FlowTrigger
 from loom.prefect.deploy import entrypoint
 from loom.prefect.deploy._schedule import build_cron_schedule
@@ -76,7 +77,7 @@ def discover_and_deploy_etls(
             any deployment is registered.
     """
     if (flows_package is None) == (config is None):
-        raise ValueError("pass exactly one of flows_package= or config=")
+        raise InvalidValue("pass exactly one of flows_package= or config=")
     environment = resolve_environment(env)
     if flows_package is not None:
         return _deploy_package(flows_package, work_pool, environment)
@@ -122,8 +123,8 @@ def deploy_flow(
         The deployment id.
 
     Raises:
-        TypeError: When ``flow`` was not built by a loom flow factory, or was
-            built from a YAML declaration, which
+        TypeError: When ``flow`` was not built by a loom flow factory.
+        ValueError: When ``flow`` was built from a YAML declaration, which
             ``discover_and_deploy_etls(config=...)`` deploys.
         ConfigError: When ``env`` names no environment.
         ValueError: When neither ``work_pool`` nor the YAML names a work pool
@@ -139,12 +140,12 @@ def deploy_flow(
     """
     meta = getattr(flow, LOOM_ETL_META_ATTR, None)
     if not isinstance(meta, ETLFlowMeta):
-        raise TypeError(
-            f"deploy_flow() takes a flow built by etl_flow, backfill_flow or "
-            f"maintenance_flow; {flow!r} carries no loom ETL metadata."
+        raise InvalidType(
+            "deploy_flow() takes a flow built by etl_flow, backfill_flow or "
+            "maintenance_flow; the flow passed carries no loom ETL metadata."
         )
     if _is_declared_in_yaml(meta):
-        raise TypeError(
+        raise InvalidValue(
             f"deploy_flow() cannot deploy {meta.name!r}: it was built from a YAML "
             f"declaration; deploy it with discover_and_deploy_etls(config=...)."
         )
@@ -163,16 +164,16 @@ def _check_exposed(meta: ETLFlowMeta) -> None:
     attribute = flow_attribute_name(meta.name)
     module = _source_module(meta.source_file)
     message = (
-        f"{meta.source_file} does not expose the flow {meta.name!r} as attribute "
+        f"the flow source file does not expose the flow {meta.name!r} as attribute "
         f"{attribute!r}; the worker imports the flow from that attribute."
     )
     try:
         exposed = getattr(module, attribute, None)
     except Exception as exc:
-        raise ValueError(message) from exc
+        raise InvalidValue(message) from exc
     exposed_meta = getattr(exposed, LOOM_ETL_META_ATTR, None)
     if not isinstance(exposed_meta, ETLFlowMeta) or exposed_meta.name != meta.name:
-        raise ValueError(message)
+        raise InvalidValue(message)
 
 
 def _source_module(source_file: str) -> ModuleType:
@@ -186,7 +187,7 @@ def _source_module(source_file: str) -> ModuleType:
         failed = _loaded_module_name(source_file)
         if failed is not None:
             del sys.modules[failed]
-        raise ValueError(f"{source_file} is not an importable Python file: {exc}") from exc
+        raise InvalidValue("the flow source file is not an importable Python file") from exc
 
 
 def _loaded_module_name(source_file: str) -> str | None:
@@ -207,7 +208,7 @@ def _deploy_package(flows_package: str, work_pool: str, env: Environment) -> lis
     pkg = importlib.import_module(flows_package)
     pkg_path = getattr(pkg, "__path__", None)
     if pkg_path is None:
-        raise ValueError(f"{flows_package!r} is not a package")
+        raise InvalidValue("flows_package must name a package")
 
     flows = list(_package_flows(flows_package, pkg_path))
     plans = [_plan(meta, work_pool, env) for _, meta in flows]
@@ -280,7 +281,7 @@ def _plan(meta: ETLFlowMeta, work_pool: str | None, env: Environment) -> _Deploy
     pool_env_config = meta.pool_config.get(env, {})
     resolved_pool = pool_env_config.get("work_pool") or work_pool
     if not resolved_pool:
-        raise ValueError(
+        raise InvalidValue(
             f"no work pool for flow {meta.name!r} in env {str(env)!r}: pass work_pool= "
             f"or set environments.{env}.work_pool in its YAML."
         )

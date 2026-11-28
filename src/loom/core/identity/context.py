@@ -27,14 +27,14 @@ Rules:
     - Every explicit switch (``executor.run(..., identity=X)``,
       ``invoker.for_identity(X)``, ``ExecutionScope(X)``, a transport
       replacing the caller) and every refusal past a deadline is reported
-      here: an ``identity_switched`` or ``delegation_expired`` warning, and
-      span attributes for a switch.
+      here: an ``loom.identity.caller_switched`` or ``loom.identity.delegation_expired`` warning.
     - This module imports nothing from the execution, the engine, the
       container or the use cases.
 """
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 from contextvars import ContextVar, Token
@@ -44,12 +44,28 @@ import msgspec
 from loom.core.config.errors import ConfigError
 from loom.core.errors import DelegationExpired, IdentityFixed
 from loom.core.identity.identity import ANONYMOUS, Identity
-from loom.core.identity.wire import NO_DELEGATION, Delegation
-from loom.core.logger import get_logger
+from loom.core.identity.wire import Delegation
+from loom.core.log_names import LogEvent, LogField, LogKey, ValueKind
+from loom.core.logger.subject import SubjectHasher
 from loom.core.model.types import PositiveSeconds
-from loom.core.tracing import get_trace_id
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
+
+
+class IdentityEvent(LogEvent):
+    """What the acting identity logs."""
+
+    DELEGATION_EXPIRED = "loom.identity.delegation_expired"
+    CALLER_SWITCHED = "loom.identity.caller_switched"
+
+
+class IdentityKey(LogKey):
+    """The fields of an identity record."""
+
+    PREVIOUS_USER_HASH = "loom.identity.previous_user.hash"
+    ROLES_FROM = "loom.identity.roles_from", ValueKind.ARRAY
+    ROLES_TO = "loom.identity.roles_to", ValueKind.ARRAY
+    ATTRIBUTES_CHANGED = "loom.identity.attributes_changed", ValueKind.BOOLEAN
 
 
 class Acting(msgspec.Struct, frozen=True, gc=False):
@@ -129,38 +145,8 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
             self.report_switch(identity, what)
         return pinned
 
-    def resumed(self, delegation: Delegation) -> Delegation | None:
-        """Return what queued work installs here to resume *delegation*, or ``None`` for nothing.
-
-        - No caller: none installed, or no caller over an authenticated one.
-        - Another caller than this one: *delegation* as is.
-        - This caller, inside work: nothing, the work's delegation governing.
-        - This caller, outside work: *delegation* ending at this caller's
-          deadline when that comes first.
-
-        Args:
-            delegation: The dispatcher's caller and deadline.
-
-        Returns:
-            The delegation to install, or ``None``.
-
-        Raises:
-            DelegationExpired: Inside work acting as the dispatcher, past the
-                captured deadline.
-        """
-        caller, until = delegation
-        if caller is None:
-            return NO_DELEGATION if self.effective.is_authenticated else None
-        if caller != self.caller:
-            return delegation
-        if self.work is not None:
-            if until is not None and until < self.deadline:
-                Acting(caller, caller, until, self.work).refuse_expired()
-            return None
-        return Delegation.of(caller, self.deadline if until is None else min(until, self.deadline))
-
     def refuse_expired(self) -> None:
-        """Refuse acting as this caller past its deadline, logging ``delegation_expired``.
+        """Refuse acting as this caller past its deadline, logging the expiry.
 
         Raises:
             DelegationExpired: When a caller acts past its deadline.
@@ -168,15 +154,16 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
         in_time = time.time() <= self.deadline
         if not in_time:
             error = DelegationExpired()
-            _log.warning("delegation_expired", guidance=str(error))
+            _log.warning(IdentityEvent.DELEGATION_EXPIRED)
             raise error
 
     def report_switch(self, identity: Identity | None, what: str) -> None:
-        """Log that *what* acts as *identity* instead of this caller, and record it on the span.
+        """Log that *what* acts as *identity* instead of this caller.
 
-        Nothing is reported when *identity* equals this caller. Subjects and
-        roles only, never an identity's attributes or credentials:
-        ``attributes_changed`` flags two callers whose attributes differ.
+        Nothing is reported when *identity* equals this caller. The record names
+        both callers by their ``user.hash`` and their roles, never by subject,
+        attributes or credentials: ``attributes_changed`` flags two callers whose
+        attributes differ. The span is not annotated: spans never carry who acts.
 
         Args:
             identity: The identity acting from it on; ``None`` for no caller.
@@ -186,29 +173,21 @@ class Acting(msgspec.Struct, frozen=True, gc=False):
         previous = self.caller
         if identity == previous:
             return
-        from loom.core.observability.span import annotate_current_span
-
         from_subject = getattr(previous, "subject", None)
         to_subject = getattr(identity, "subject", None)
+        hasher = SubjectHasher.installed()
         _log.warning(
-            "identity_switched",
-            from_subject=from_subject,
-            to_subject=to_subject,
-            from_roles=getattr(previous, "roles", None),
-            to_roles=getattr(identity, "roles", None),
-            attributes_changed=(
-                previous is not None
+            IdentityEvent.CALLER_SWITCHED,
+            extra={
+                **hasher.fields(from_subject, IdentityKey.PREVIOUS_USER_HASH),
+                **hasher.fields(to_subject),
+                IdentityKey.ROLES_FROM: getattr(previous, "roles", None),
+                IdentityKey.ROLES_TO: getattr(identity, "roles", None),
+                IdentityKey.ATTRIBUTES_CHANGED: previous is not None
                 and identity is not None
-                and previous.attributes != identity.attributes
-            ),
-            use_case=what,
-            trace_id=get_trace_id(),
-        )
-        annotate_current_span(
-            {
-                "loom.identity.switched_from": from_subject or "",
-                "loom.identity.switched_to": to_subject or "",
-            }
+                and previous.attributes != identity.attributes,
+                LogField.USE_CASE: what,
+            },
         )
 
 
@@ -267,7 +246,7 @@ def set_identity(identity: Identity | None, *, until: float | None = None) -> To
     """Install the caller a transport verified, for the current context.
 
     Replacing a different caller is a switch, logged
-    (``identity_switched``).
+    (``loom.identity.caller_switched``).
 
     Args:
         identity: Verified identity produced by an authentication mechanism;
@@ -328,4 +307,4 @@ def captured_delegation() -> Delegation:
         deadline.
     """
     acting = _acting.get()
-    return Delegation.of(acting.caller, acting.deadline)
+    return Delegation.from_caller(acting.caller, acting.deadline)

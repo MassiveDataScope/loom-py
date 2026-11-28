@@ -18,20 +18,20 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
-from loom.core.bootstrap.bootstrap import bootstrap_app
+from loom.core.bootstrap import create_kernel
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.model import BaseModel, ColumnField
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.sqlalchemy import build_sqlalchemy_repository_registration_module
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import CursorCodec
 from loom.rest.autocrud import build_auto_routes
 from loom.rest.compiler import RouteSources
 from loom.rest.fastapi.app import create_fastapi_app
 from loom.rest.model import RestInterface, RestRoute
+from loom.stores.sqlalchemy import build_sqlalchemy_repository_registration_module
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.integration.support.logical_repo_fixtures import (
     GetTaskViewUseCase,
     TaskView,
@@ -79,15 +79,15 @@ class TaskViewInterface(RestInterface[TaskView]):
 
 
 def _make_register_repos(
-    session_manager: SessionManager,
+    session_manager: SessionManager, codec: CursorCodec
 ) -> Callable[[LoomContainer], None]:
-    repo: RepositorySQLAlchemy[Any, int] = RepositorySQLAlchemy(
+    repo: SQLAlchemyRepository[Any, int] = SQLAlchemyRepository(
         session_manager=session_manager,
         model=AutoProduct,
-        cursor_codec=CursorCodec(signing="ephemeral"),
+        cursor_codec=codec,
     )
 
-    def _provider() -> RepositorySQLAlchemy[Any, int]:
+    def _provider() -> SQLAlchemyRepository[Any, int]:
         return repo
 
     token = ("repo", AutoProduct)
@@ -99,7 +99,7 @@ def _make_register_repos(
     return register
 
 
-def _build_app(db_path: Path) -> FastAPI:
+def _build_app(db_path: Path, codec: CursorCodec | None = None) -> FastAPI:
     database_url = f"sqlite+aiosqlite:///{db_path}"
     session_manager = SessionManager(
         database_url,
@@ -118,10 +118,10 @@ def _build_app(db_path: Path) -> FastAPI:
     reset_registry()
     compile_all(AutoProduct)
 
-    result = bootstrap_app(
+    result = create_kernel(
         config={"name": "test"},
         use_cases=use_cases,
-        modules=[_make_register_repos(session_manager)],
+        modules=[_make_register_repos(session_manager, codec or CursorCodec(signing="ephemeral"))],
     )
 
     @asynccontextmanager
@@ -131,7 +131,7 @@ def _build_app(db_path: Path) -> FastAPI:
         try:
             yield
         finally:
-            await session_manager.dispose()
+            await session_manager.close()
             reset_registry()
 
     return create_fastapi_app(
@@ -155,7 +155,7 @@ def _build_logical_app(db_path: Path) -> FastAPI:
         store=DEFAULT_STORE,
     )
 
-    result = bootstrap_app(
+    result = create_kernel(
         config={"name": "logical-test"},
         use_cases=(GetTaskViewUseCase,),
         modules=[
@@ -173,7 +173,7 @@ def _build_logical_app(db_path: Path) -> FastAPI:
         try:
             yield
         finally:
-            await session_manager.dispose()
+            await session_manager.close()
 
     return create_fastapi_app(
         result,
@@ -190,6 +190,13 @@ def _build_logical_app(db_path: Path) -> FastAPI:
 @pytest.fixture
 def client(tmp_path: Path) -> Generator[TestClient, None, None]:
     app = _build_app(tmp_path / "auto_test.sqlite")
+    with TestClient(app) as c:
+        yield c
+
+
+@pytest.fixture
+def keyless_client(tmp_path: Path) -> Generator[TestClient, None, None]:
+    app = _build_app(tmp_path / "keyless_test.sqlite", CursorCodec.disabled())
     with TestClient(app) as c:
         yield c
 
@@ -338,3 +345,23 @@ class TestAwareTimeRefusal:
         assert resp.status_code == 422
         assert resp.json()["detail"]["code"] == "boundary_validation"
         assert "08:30" not in resp.text
+
+
+class TestAutoInterfaceWithoutCursorKeys:
+    def test_a_cursor_request_answers_400_unsupported_query(
+        self, keyless_client: TestClient
+    ) -> None:
+        keyless_client.post("/auto-products/", json={"name": "A"})
+
+        response = keyless_client.get("/auto-products/?pagination=cursor")
+
+        assert response.status_code == 400
+        assert response.json()["detail"]["code"] == "unsupported_query"
+
+    def test_an_offset_request_still_answers_the_page(self, keyless_client: TestClient) -> None:
+        keyless_client.post("/auto-products/", json={"name": "A"})
+
+        response = keyless_client.get("/auto-products/")
+
+        assert response.status_code == 200
+        assert response.json()["totalCount"] == 1

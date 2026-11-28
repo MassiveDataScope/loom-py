@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import json as _json
+import logging
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from typing import Any
 
-from loom.core.logger import get_logger
+from loom.core.errors import InvalidUse
 from loom.core.model.redaction import Dsn
+from loom.prefect.event import PrefectEvent
 from loom.prefect.notify._event import NotifyEvent
 from loom.prefect.notify._format import FAILURE_STATES, run_details, should_notify
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 HttpPost = Callable[..., Any]
@@ -61,10 +63,8 @@ class SlackNotifier:
             self._http_post(webhook, json=payload, timeout=5.0)
         except (urllib.error.URLError, TimeoutError, RuntimeError):
             _log.warning(
-                "Slack post failed",
-                flow=event.flow_name,
-                run=event.flow_run_name,
-                state=event.state,
+                PrefectEvent.NOTIFICATION_FAILED,
+                extra=event.log_fields(),
                 exc_info=True,
             )
 
@@ -100,7 +100,7 @@ def _default_http_post(url: str, *, json: dict[str, Any], timeout: float) -> Non
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             resp.read()
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"Slack webhook POST failed: {exc}") from exc
+        raise InvalidUse("Slack webhook POST failed") from exc
 
 
 __all__ = ["SlackNotifier"]

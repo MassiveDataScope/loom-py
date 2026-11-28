@@ -7,9 +7,10 @@ from types import MappingProxyType
 from typing import Any, Literal, get_args, get_origin
 
 from loom.core.config import ConfigContext
-from loom.core.config.keys import ConfigKey
+from loom.core.config.keys import ConfigSection
+from loom.core.errors import InternalError
 from loom.core.model.redaction import RedactedMap
-from loom.core.persistence.stores import StoreCatalog
+from loom.core.stores.catalog import StoreCatalog
 from loom.streaming.compiler._errors import StreamingErrorCode
 from loom.streaming.compiler._plan import (
     CompilationError,
@@ -26,17 +27,18 @@ from loom.streaming.compiler.phases.validate import (
     node_output_shape,
     walk_process_nodes,
 )
+from loom.streaming.core import DispatchTable
 from loom.streaming.core._errors import ErrorEnvelope
 from loom.streaming.graph._flow import StreamFlow
 from loom.streaming.kafka._config import KafkaSettings
-from loom.streaming.kafka._wire import DecodeError, DispatchTable
+from loom.streaming.kafka._wire import DecodeError
 from loom.streaming.mongo._config import load_mongo_config
 from loom.streaming.nodes._boundary import FromMultiTypeTopic, FromTopic, IntoTopic
 from loom.streaming.nodes._branches import is_branching_node, iter_branches
 from loom.streaming.nodes._mongo import FromMongoCDC
 from loom.streaming.nodes._shape import CollectBatch, StreamShape
 from loom.streaming.nodes._sink import IntoSink
-from loom.streaming.nodes._table import Backend, IntoTable
+from loom.streaming.nodes._table import IntoTable, TableEngine
 from loom.streaming.nodes._table.config import (
     resolve_clickhouse_table_config,
     resolve_delta_table_config,
@@ -80,14 +82,14 @@ def build_plan(
 
 def _node_needs_async_bridge(node: object) -> bool:
     return isinstance(node, WithAsync) or (
-        isinstance(node, IntoTable) and node.backend is Backend.SQLALCHEMY
+        isinstance(node, IntoTable) and node.engine is TableEngine.SQLALCHEMY
     )
 
 
 def _build_mongo_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> CompiledMongoCDCSource:
     source = flow.source
     if not isinstance(source, FromMongoCDC):
-        raise TypeError(f"Expected FromMongoCDC source, got {type(source).__name__}.")
+        raise InternalError(f"Expected FromMongoCDC source, got {type(source).__name__}.")
     mongo = load_mongo_config(ctx)
     settings = mongo.source_for(source.logical_ref)
     watch_options = RedactedMap({**settings.watch_options, **source.watch_options})
@@ -100,7 +102,7 @@ def _build_mongo_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Compi
 
 def _build_single_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> CompiledSingleSource:
     source: FromTopic[Any] = flow.source  # type: ignore[assignment]
-    kafka = ctx.section(ConfigKey.KAFKA, KafkaSettings)
+    kafka = ctx.section(ConfigSection.KAFKA, KafkaSettings)
     consumer = kafka.consumer_for(source.logical_ref)
     decode_strategy: Literal["record", "batch"] = (
         "batch" if any(isinstance(n, CollectBatch) for n in flow.process.nodes) else "record"
@@ -110,13 +112,13 @@ def _build_single_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Comp
         topics=consumer.topics,
         payload_type=source.payload,
         decode_strategy=decode_strategy,
-        settings_key=f"{ConfigKey.KAFKA}.{kafka.consumer_key_for(source.logical_ref)}",
+        settings_key=f"{ConfigSection.KAFKA}.{kafka.consumer_key_for(source.logical_ref)}",
     )
 
 
 def _build_multi_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> CompiledMultiSource:
     source: FromMultiTypeTopic[Any] = flow.source  # type: ignore[assignment]
-    kafka = ctx.section(ConfigKey.KAFKA, KafkaSettings)
+    kafka = ctx.section(ConfigSection.KAFKA, KafkaSettings)
     consumer = kafka.consumer_for(source.logical_ref)
     decode_strategy: Literal["record", "batch"] = (
         "batch" if any(isinstance(n, CollectBatch) for n in flow.process.nodes) else "record"
@@ -127,7 +129,7 @@ def _build_multi_source(flow: StreamFlow[Any, Any], ctx: ConfigContext) -> Compi
         topics=consumer.topics,
         dispatch=dispatch,
         decode_strategy=decode_strategy,
-        settings_key=f"{ConfigKey.KAFKA}.{kafka.consumer_key_for(source.logical_ref)}",
+        settings_key=f"{ConfigSection.KAFKA}.{kafka.consumer_key_for(source.logical_ref)}",
     )
 
 
@@ -255,7 +257,7 @@ def _build_branch_terminal_sinks(
 
 
 def _build_sink(topic: IntoTopic[Any], ctx: ConfigContext) -> CompiledSink:
-    kafka = ctx.section(ConfigKey.KAFKA, KafkaSettings)
+    kafka = ctx.section(ConfigSection.KAFKA, KafkaSettings)
     producer = kafka.producer_for(topic.logical_ref)
     return CompiledSink(
         settings=producer,
@@ -269,21 +271,21 @@ def _build_storage_sink(
     node: IntoSink[Any], ctx: ConfigContext, catalog: StoreCatalog
 ) -> CompiledStorageSink:
     if isinstance(node, IntoTable):
-        if node.backend is Backend.SQLALCHEMY:
+        if node.engine is TableEngine.SQLALCHEMY:
             sql_resolved = resolve_sqlalchemy_table_config(node, ctx, catalog)
             return CompiledStorageSink(
                 node=node,
                 config=sql_resolved.sink,
                 database_config=sql_resolved.database,
             )
-        if node.backend is Backend.DELTA:
+        if node.engine is TableEngine.DELTA:
             delta_resolved = resolve_delta_table_config(node, ctx)
             return CompiledStorageSink(
                 node=node,
                 config=delta_resolved.sink,
                 database_config=None,
             )
-        if node.backend is Backend.CLICKHOUSE:
+        if node.engine is TableEngine.CLICKHOUSE:
             ch_resolved = resolve_clickhouse_table_config(node, ctx, catalog)
             return CompiledStorageSink(
                 node=node,

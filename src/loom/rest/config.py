@@ -34,7 +34,7 @@ from typing import Any, Literal
 import msgspec
 
 from loom.core.config.errors import ConfigError
-from loom.core.repository.abc.query import PaginationMode
+from loom.core.stores.repository.query import PaginationMode
 from loom.core.symbols import import_symbol
 from loom.core.use_case.constants import CrudOp
 from loom.core.use_case.use_case import UseCase
@@ -398,7 +398,7 @@ def validate_interfaces_config(raw: Mapping[str, Any]) -> None:
 
     Each entry is read as ``Any``, not ``Mapping[str, Any]``: the caller
     decodes the section that way on purpose (see
-    :func:`~loom.rest.fastapi.adapter._section_rest_config`) so a malformed
+    :func:`~loom.rest.fastapi.runtime._section_rest_config`) so a malformed
     entry — a string where a mapping belongs — reaches the type guard below
     instead of failing earlier inside ``msgspec`` with a diagnostic that
     does not name the interface.

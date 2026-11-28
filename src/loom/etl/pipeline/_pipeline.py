@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Generic, TypeVar
 
+from loom.core.errors import InvalidType
 from loom.etl.pipeline._generics import _extract_generic_arg
 
 ParamsT = TypeVar("ParamsT")
@@ -60,7 +61,7 @@ class ETLProcess(Generic[ParamsT]):
         super().__init_subclass__(**kwargs)
         cls._params_type = _extract_generic_arg(cls, ETLProcess)
         if not isinstance(cls.__dict__.get("steps", []), list):
-            raise TypeError(
+            raise InvalidType(
                 f"{cls.__qualname__}: 'steps' must be a list, "
                 f"got {type(cls.__dict__['steps']).__name__}"
             )
@@ -97,7 +98,7 @@ class ETLPipeline(Generic[ParamsT]):
         super().__init_subclass__(**kwargs)
         cls._params_type = _extract_generic_arg(cls, ETLPipeline)
         if not isinstance(cls.__dict__.get("processes", []), list):
-            raise TypeError(
+            raise InvalidType(
                 f"{cls.__qualname__}: 'processes' must be a list, "
                 f"got {type(cls.__dict__['processes']).__name__}"
             )

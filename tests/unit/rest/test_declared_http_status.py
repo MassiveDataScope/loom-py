@@ -1,4 +1,4 @@
-"""An application ``LoomError`` may declare the HTTP answer the mapper sends."""
+"""An application ``CodedError`` may declare the HTTP answer the mapper sends."""
 
 from __future__ import annotations
 
@@ -18,18 +18,19 @@ from fastapi.testclient import TestClient
 
 from loom.composition import create_app
 from loom.core.errors import (
-    LoomError,
+    CodedError,
     NotFound,
     PostCommitError,
     RateLimited,
-    RuleViolation,
+    RuleViolationError,
     SystemError,
 )
 from loom.core.errors.codes import ErrorCode
 from loom.core.tracing import get_trace_id
 from loom.rest.errors import HttpErrorMapper
-from loom.rest.fastapi.adapter import FastAPIAdapter
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.rest.event import RestEvent, RestKey
+from loom.rest.fastapi.runtime import FastAPIRuntime
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from loom.testing import LambdaTestClient
 
@@ -51,7 +52,7 @@ def _detail(exc: HTTPException) -> dict[str, Any]:
     return exc.detail
 
 
-class QueryFailed(LoomError):
+class QueryFailed(CodedError):
     """The pricing query did not answer; the client may see which query."""
 
     http_status = HTTPStatus.BAD_GATEWAY
@@ -65,7 +66,7 @@ class QueryFailed(LoomError):
         return {"failed": self.failed}
 
 
-class _HiddenUpstream(LoomError):
+class _HiddenUpstream(CodedError):
     """A 502 whose message names a host and must stay off the wire."""
 
     http_status = HTTPStatus.BAD_GATEWAY
@@ -77,7 +78,7 @@ class _HiddenUpstream(LoomError):
         return {"failed": _FAILED_QUERY}
 
 
-class _OverridesMessage(LoomError):
+class _OverridesMessage(CodedError):
     """A 5xx that tries to replace the message loom writes."""
 
     public_message = True
@@ -98,7 +99,7 @@ class _OverridesEntity(NotFound):
         return {"entity": "leaked-field-value"}
 
 
-def _assert_internal_fallback(exc: HTTPException, error: LoomError) -> None:
+def _assert_internal_fallback(exc: HTTPException, error: CodedError) -> None:
     assert exc.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     assert exc.headers is None
     assert _detail(exc) == {
@@ -116,16 +117,15 @@ def _assert_misdeclaration_logged(
     record = records[0]
     assert record.levelno == logging.ERROR
     assert record.exc_info is not None
-    assert class_name in record.getMessage()
-    assert problem in record.getMessage()
-    logged = record.getMessage()
-    if record.exc_info is not None:
-        logged = f"{logged} {record.exc_info[1]}"
+    assert record.msg == RestEvent.HTTP_ERROR_MISDECLARED
+    assert getattr(record, RestKey.ERROR_CLASS) == class_name
+    assert problem in str(record.exc_info[1])
+    logged = f"{record.getMessage()} {record.exc_info[1]}"
     for secret in hidden:
         assert secret not in logged
 
 
-class _RaisingDetail(LoomError):
+class _RaisingDetail(CodedError):
     def __init__(self) -> None:
         super().__init__("secret-raise-host", code=ErrorCode.SYSTEM_ERROR)
 
@@ -133,7 +133,7 @@ class _RaisingDetail(LoomError):
         raise RuntimeError("secret-raise-value")
 
 
-class _NoneDetail(LoomError):
+class _NoneDetail(CodedError):
     def __init__(self) -> None:
         super().__init__("secret-none-host", code=ErrorCode.SYSTEM_ERROR)
 
@@ -151,7 +151,7 @@ from enum import StrEnum
 from http import HTTPStatus
 from typing import Any
 
-from loom.core.errors import LoomError
+from loom.core.errors import CodedError
 from loom.core.model import BaseModel, ColumnField
 from loom.core.use_case.use_case import UseCase
 from loom.rest.model import RestInterface, RestRoute
@@ -168,7 +168,7 @@ class QueryCode(StrEnum):
     BAD_GATEWAY = "bad_gateway"
 
 
-class QueryFailed(LoomError):
+class QueryFailed(CodedError):
     http_status = HTTPStatus.BAD_GATEWAY
     public_message = True
 
@@ -194,18 +194,19 @@ def _write_project(
     directory: Path, *, source: str = _APP_SOURCE, slug: str = "declared_http"
 ) -> tuple[str, str]:
     module = f"loom_{slug}_{_NON_IDENTIFIER.sub('_', directory.name)}"
-    (directory / f"{module}.py").write_text(source, encoding="utf-8")
+    package = directory / module
+    package.mkdir()
+    (package / "__init__.py").write_text(source, encoding="utf-8")
     config: dict[str, Any] = {
         "app": {
             "name": "declared-http",
             "code_path": ".",
-            "discovery": {
-                "mode": "interfaces",
-                "interfaces": {"modules": [module], "warn_recommended": False},
-            },
+            "packages": [module],
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
     }
     path = directory / "app.yaml"
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
@@ -220,7 +221,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from loom.core.errors import LoomError
+from loom.core.errors import CodedError
 from loom.core.model import BaseModel, ColumnField
 from loom.core.use_case.use_case import UseCase
 from loom.rest.model import RestInterface, RestRoute
@@ -237,7 +238,7 @@ class QueryCode(StrEnum):
     BAD_GATEWAY = "bad_gateway"
 
 
-class CollidingQuery(LoomError):
+class CollidingQuery(CodedError):
     public_message = True
 
     def __init__(self) -> None:
@@ -247,7 +248,7 @@ class CollidingQuery(LoomError):
         return {"message": "LEAKED-COLLISION"}
 
 
-class BadStatusQuery(LoomError):
+class BadStatusQuery(CodedError):
     http_status = 200
     public_message = True
 
@@ -258,7 +259,7 @@ class BadStatusQuery(LoomError):
         return {"failed": "LEAKED-STATUS"}
 
 
-class RaisingDetailQuery(LoomError):
+class RaisingDetailQuery(CodedError):
     def __init__(self) -> None:
         super().__init__("postgresql://db.internal:5432/orders", code=QueryCode.BAD_GATEWAY)
 
@@ -360,7 +361,7 @@ class TestDeclaredPublicErrorBody:
     def test_a_truthy_non_bool_public_message_keeps_the_fixed_5xx_message(
         self,
     ) -> None:
-        class _Declared(LoomError):
+        class _Declared(CodedError):
             http_status = HTTPStatus.BAD_GATEWAY
 
             def __init__(self) -> None:
@@ -380,7 +381,7 @@ class TestMisdeclaredHttpStatus:
         ids=["message", "entity"],
     )
     def test_a_public_detail_that_overrides_a_mapper_field_answers_500(
-        self, error: LoomError, caplog: pytest.LogCaptureFixture
+        self, error: CodedError, caplog: pytest.LogCaptureFixture
     ) -> None:
         """A colliding key is logged and dropped; the client gets the fixed 500."""
         with caplog.at_level(logging.ERROR, logger="loom.rest.errors"):
@@ -389,7 +390,7 @@ class TestMisdeclaredHttpStatus:
         _assert_internal_fallback(exc, error)
         _assert_misdeclaration_logged(
             caplog,
-            type(error).__name__,
+            type(error).__qualname__,
             "public_detail",
             "leaked-field-value",
             "leaked-message-host",
@@ -399,14 +400,14 @@ class TestMisdeclaredHttpStatus:
         "error", [_RaisingDetail(), _NoneDetail()], ids=["raises", "not-a-mapping"]
     )
     def test_a_broken_public_detail_answers_the_internal_error(
-        self, error: LoomError, caplog: pytest.LogCaptureFixture
+        self, error: CodedError, caplog: pytest.LogCaptureFixture
     ) -> None:
         with caplog.at_level(logging.ERROR, logger="loom.rest.errors"):
             exc = HttpErrorMapper().to_http(error)
 
         _assert_internal_fallback(exc, error)
         _assert_misdeclaration_logged(
-            caplog, type(error).__name__, "public_detail", "secret-raise-value"
+            caplog, type(error).__qualname__, "public_detail", "secret-raise-value"
         )
 
     @pytest.mark.parametrize(
@@ -417,7 +418,7 @@ class TestMisdeclaredHttpStatus:
     def test_an_invalid_http_status_answers_the_internal_error(
         self, status: object, caplog: pytest.LogCaptureFixture
     ) -> None:
-        class _Declared(LoomError):
+        class _Declared(CodedError):
             public_message = True
 
             def __init__(self) -> None:
@@ -434,7 +435,11 @@ class TestMisdeclaredHttpStatus:
 
         _assert_internal_fallback(exc, error)
         _assert_misdeclaration_logged(
-            caplog, type(error).__name__, "http_status", "secret-status-host", "secret-status-field"
+            caplog,
+            type(error).__qualname__,
+            "http_status",
+            "secret-status-host",
+            "secret-status-field",
         )
 
 
@@ -444,7 +449,7 @@ class TestDeclaredStatusAcceptance:
     ) -> None:
         """``http_status = 502`` type-checks as ``int`` and is ``HTTPStatus.BAD_GATEWAY``."""
 
-        class _Declared(LoomError):
+        class _Declared(CodedError):
             http_status = 502
 
             def __init__(self) -> None:
@@ -464,7 +469,7 @@ class TestDeclaredStatusAcceptance:
     ) -> None:
         """Normalising matters: the challenge compares with ``is``, not equality."""
 
-        class _Declared(LoomError):
+        class _Declared(CodedError):
             http_status = 401
 
             def __init__(self) -> None:
@@ -478,7 +483,7 @@ class TestDeclaredStatusAcceptance:
 
     @pytest.mark.parametrize("status", [400, 451, 511])
     def test_the_registered_4xx_and_5xx_bounds_are_accepted(self, status: int) -> None:
-        class _Declared(LoomError):
+        class _Declared(CodedError):
             def __init__(self) -> None:
                 super().__init__("bound", code=ErrorCode.SYSTEM_ERROR)
 
@@ -498,7 +503,7 @@ class TestDeclaredStatusAcceptance:
                 None,
             ),
             (
-                RuleViolation("email", "invalid"),
+                RuleViolationError("email", "invalid"),
                 422,
                 "invalid",
                 {"field": "email"},
@@ -525,7 +530,7 @@ class TestDeclaredStatusAcceptance:
     )
     def test_an_error_without_an_http_declaration_keeps_its_answer(
         self,
-        error: LoomError,
+        error: CodedError,
         status: int,
         message: str,
         extra: dict[str, Any],
@@ -561,8 +566,8 @@ class TestDeclaredStatusAcrossRuntimes:
         """Both transports serve the use case through the same mapper."""
         config, module = _write_project(tmp_path)
         monkeypatch.syspath_prepend(str(tmp_path.resolve()))
-        fastapi_app = create_app(config, adapter=FastAPIAdapter(), environment="test")
-        handler = create_app(config, adapter=LambdaAdapter(), environment="test")
+        fastapi_app = create_app(config, runtime=FastAPIRuntime(), environment="test")
+        handler = create_app(config, runtime=LambdaRuntime(), environment="test")
         assert isinstance(fastapi_app, FastAPI)
         assert isinstance(handler, LambdaHTTPHandler)
         expected = {
@@ -595,8 +600,8 @@ class TestDeclaredStatusAcrossRuntimes:
             tmp_path, source=_MISDECLARED_APP_SOURCE, slug="misdeclared_http"
         )
         monkeypatch.syspath_prepend(str(tmp_path.resolve()))
-        fastapi_app = create_app(config, adapter=FastAPIAdapter(), environment="test")
-        handler = create_app(config, adapter=LambdaAdapter(), environment="test")
+        fastapi_app = create_app(config, runtime=FastAPIRuntime(), environment="test")
+        handler = create_app(config, runtime=LambdaRuntime(), environment="test")
         assert isinstance(fastapi_app, FastAPI)
         assert isinstance(handler, LambdaHTTPHandler)
         expected = {

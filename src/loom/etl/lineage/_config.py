@@ -6,6 +6,7 @@ from typing import Any
 
 import msgspec
 
+from loom.core.config import ConfigError
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Dsn, RedactedMap
 from loom.core.observability.config import LogObservabilityConfig, ObservabilityConfig
@@ -29,7 +30,7 @@ class LineageConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_
         has_root = self.root is not None
         has_database = bool(self.database.strip())
         if has_root == has_database:
-            raise ValueError("lineage requires exactly one destination: root or database")
+            raise ConfigError("lineage requires exactly one destination: root or database")
 
 
 class ETLObservabilityConfig(ObservabilityConfig, frozen=True, kw_only=True):

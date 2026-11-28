@@ -9,25 +9,33 @@ from typing import Any
 import pytest
 
 import loom.core.use_case as use_case_package
+from loom.core.bootstrap.bootstrap import BootstrapError
+from loom.core.config.errors import ConfigError
 from loom.core.errors import (
+    CodedError,
     Conflict,
     DomainError,
     Forbidden,
     ForeignSessionError,
     InsufficientAuthentication,
+    InternalError,
+    InvalidType,
+    InvalidUse,
+    InvalidValue,
     LoomError,
     NotFound,
     RateLimited,
-    RuleViolation,
-    RuleViolations,
+    RuleViolationError,
+    RuleViolationsError,
     SystemError,
     Unauthenticated,
+    UnknownKey,
 )
 from loom.core.errors.codes import ErrorCode
 from loom.core.use_case import rule as rule_module
 
 # ---------------------------------------------------------------------------
-# LoomError base
+# CodedError base
 # ---------------------------------------------------------------------------
 
 
@@ -37,25 +45,25 @@ class _AppCode(StrEnum):
     BROKEN = "broken"
 
 
-class TestLoomError:
+class TestCodedError:
     def test_stores_message_and_code(self) -> None:
-        err = LoomError("something broke", code=_AppCode.BROKEN)
+        err = CodedError("something broke", code=_AppCode.BROKEN)
         assert err.message == "something broke"
         assert err.code == "broken"
 
     def test_is_exception(self) -> None:
-        assert isinstance(LoomError("msg", code=_AppCode.BROKEN), Exception)
+        assert isinstance(CodedError("msg", code=_AppCode.BROKEN), Exception)
 
     def test_str_is_message(self) -> None:
-        assert str(LoomError("readable message", code=_AppCode.BROKEN)) == "readable message"
+        assert str(CodedError("readable message", code=_AppCode.BROKEN)) == "readable message"
 
     def test_is_retryable_by_default(self) -> None:
-        assert LoomError("msg", code=_AppCode.BROKEN).retryable is True
+        assert CodedError("msg", code=_AppCode.BROKEN).is_retryable is True
 
     def test_a_domain_error_is_never_retryable(self) -> None:
         """Repeating the work cannot fix the input or the rule it broke."""
-        assert DomainError("msg", code=_AppCode.BROKEN).retryable is False
-        assert SystemError("msg").retryable is True
+        assert DomainError("msg", code=_AppCode.BROKEN).is_retryable is False
+        assert SystemError("msg").is_retryable is True
 
 
 # ---------------------------------------------------------------------------
@@ -67,19 +75,35 @@ class TestErrorHierarchy:
     @pytest.mark.parametrize(
         "subclass,base",
         [
-            (DomainError, LoomError),
-            (SystemError, LoomError),
+            (CodedError, LoomError),
+            (DomainError, CodedError),
+            (SystemError, CodedError),
+            (InvalidValue, LoomError),
+            (InvalidValue, ValueError),
+            (InvalidType, LoomError),
+            (InvalidType, TypeError),
+            (InvalidUse, LoomError),
+            (InvalidUse, RuntimeError),
+            (InternalError, LoomError),
+            (InternalError, RuntimeError),
+            (UnknownKey, LoomError),
+            (UnknownKey, KeyError),
+            (ConfigError, LoomError),
+            (BootstrapError, LoomError),
             (NotFound, DomainError),
             (Forbidden, DomainError),
             (Conflict, DomainError),
             (RateLimited, DomainError),
             (InsufficientAuthentication, Unauthenticated),
-            (RuleViolation, DomainError),
-            (RuleViolations, DomainError),
+            (RuleViolationError, DomainError),
+            (RuleViolationsError, DomainError),
         ],
     )
     def test_error_hierarchy(self, subclass: type, base: type) -> None:
         assert issubclass(subclass, base)
+
+    def test_an_unknown_key_reads_as_written(self) -> None:
+        assert str(UnknownKey("no store named 'orders'")) == "no store named 'orders'"
 
     def test_domain_error_not_system_error(self) -> None:
         assert not issubclass(DomainError, SystemError)
@@ -95,8 +119,8 @@ class TestErrorCodes:
             (lambda: RateLimited(1), ErrorCode.RATE_LIMITED),
             (lambda: InsufficientAuthentication(), ErrorCode.INSUFFICIENT_AUTHENTICATION),
             (lambda: SystemError("x"), ErrorCode.SYSTEM_ERROR),
-            (lambda: RuleViolation("f", "m"), ErrorCode.RULE_VIOLATION),
-            (lambda: RuleViolations([]), ErrorCode.RULE_VIOLATIONS),
+            (lambda: RuleViolationError("f", "m"), ErrorCode.RULE_VIOLATION),
+            (lambda: RuleViolationsError([]), ErrorCode.RULE_VIOLATIONS),
         ],
     )
     def test_error_codes(self, factory: Any, expected_code: ErrorCode) -> None:
@@ -119,8 +143,8 @@ class TestNotFound:
         assert "Product" in err.message
         assert "abc-123" in err.message
 
-    def test_catchable_as_loom_error(self) -> None:
-        with pytest.raises(LoomError):
+    def test_catchable_as_coded_error(self) -> None:
+        with pytest.raises(CodedError):
             raise NotFound("User", id=1)
 
 
@@ -154,28 +178,21 @@ class TestForbidden:
         assert Forbidden("no", missing=iter(["grants.manage"])).missing == ("grants.manage",)
 
     @pytest.mark.parametrize(
-        "kwargs",
+        ("kwargs", "error"),
         [
-            {"reason": ""},
-            {"reason": "  "},
-            {"reason": 5},
-            {"missing": "grants.manage"},
-            {"missing": b"ab"},
-            {"missing": ["ok", ""]},
-            {"missing": [1]},
-        ],
-        ids=[
-            "empty-reason",
-            "blank-reason",
-            "reason-not-a-string",
-            "string-as-missing",
-            "bytes-as-missing",
-            "empty-permission",
-            "not-a-string",
+            pytest.param({"reason": ""}, InvalidValue, id="empty-reason"),
+            pytest.param({"reason": "  "}, InvalidValue, id="blank-reason"),
+            pytest.param({"reason": 5}, InvalidType, id="reason-not-a-string"),
+            pytest.param({"missing": "grants.manage"}, InvalidType, id="string-as-missing"),
+            pytest.param({"missing": b"ab"}, InvalidType, id="bytes-as-missing"),
+            pytest.param({"missing": ["ok", ""]}, InvalidValue, id="empty-permission"),
+            pytest.param({"missing": [1]}, InvalidType, id="not-a-string"),
         ],
     )
-    def test_a_malformed_reason_or_missing_is_refused(self, kwargs: dict[str, object]) -> None:
-        with pytest.raises(ValueError):
+    def test_a_malformed_reason_or_missing_is_refused(
+        self, kwargs: dict[str, object], error: type[Exception]
+    ) -> None:
+        with pytest.raises(error):
             Forbidden("no", **kwargs)  # type: ignore[arg-type]
 
 
@@ -197,51 +214,53 @@ class TestSystemErrorIsNotADomainError:
 
 
 # ---------------------------------------------------------------------------
-# RuleViolation
+# RuleViolationError
 # ---------------------------------------------------------------------------
 
 
-class TestRuleViolation:
+class TestRuleViolationError:
     def test_field_and_message(self) -> None:
-        err = RuleViolation("email", "Invalid format")
+        err = RuleViolationError("email", "Invalid format")
         assert err.field == "email"
         assert err.message == "Invalid format"
 
     def test_str_contains_field_and_message(self) -> None:
-        err = RuleViolation("email", "Invalid format")
+        err = RuleViolationError("email", "Invalid format")
         assert "email" in str(err)
         assert "Invalid format" in str(err)
 
     def test_catchable_as_domain_error(self) -> None:
         with pytest.raises(DomainError):
-            raise RuleViolation("x", "y")
+            raise RuleViolationError("x", "y")
 
 
 # ---------------------------------------------------------------------------
-# RuleViolations
+# RuleViolationsError
 # ---------------------------------------------------------------------------
 
 
-class TestRuleViolations:
+class TestRuleViolationsError:
     def test_stores_violations_as_tuple(self) -> None:
-        v1 = RuleViolation("email", "bad")
-        v2 = RuleViolation("name", "empty")
-        err = RuleViolations([v1, v2])
+        v1 = RuleViolationError("email", "bad")
+        v2 = RuleViolationError("name", "empty")
+        err = RuleViolationsError([v1, v2])
         assert err.violations == (v1, v2)
 
     def test_message_joins_violations(self) -> None:
-        err = RuleViolations([RuleViolation("email", "bad"), RuleViolation("name", "empty")])
+        err = RuleViolationsError(
+            [RuleViolationError("email", "bad"), RuleViolationError("name", "empty")]
+        )
         assert "email" in err.message
         assert "name" in err.message
 
     def test_catchable_as_domain_error(self) -> None:
-        error = RuleViolations([RuleViolation("f", "m")])
+        error = RuleViolationsError([RuleViolationError("f", "m")])
         with pytest.raises(DomainError):
             raise error
 
 
 class TestRuleErrorsAreExportedOnce:
-    @pytest.mark.parametrize("name", ["RuleViolation", "RuleViolations"])
+    @pytest.mark.parametrize("name", ["RuleViolationError", "RuleViolationsError"])
     @pytest.mark.parametrize("module", [use_case_package, rule_module])
     def test_rule_errors_are_public_only_from_loom_core_errors(
         self, module: ModuleType, name: str
@@ -259,7 +278,7 @@ class TestExecutorUsesNotFound:
         from unittest.mock import AsyncMock
 
         from loom.core.engine.compiler import UseCaseCompiler
-        from loom.core.engine.executor import RuntimeExecutor
+        from loom.core.engine.executor import UseCaseExecutor
         from loom.core.use_case.markers import LoadById
         from loom.core.use_case.use_case import UseCase
 
@@ -277,7 +296,7 @@ class TestExecutorUsesNotFound:
         repo = AsyncMock()
         repo.get_by_id = AsyncMock(return_value=None)
 
-        executor = RuntimeExecutor(UseCaseCompiler())
+        executor = UseCaseExecutor(UseCaseCompiler())
         uc = _UC()
         with pytest.raises(NotFound) as exc_info:
             await executor.execute(
@@ -298,7 +317,7 @@ class TestRateLimited:
 
     @pytest.mark.parametrize("seconds", [math.nan, math.inf, -math.inf])
     def test_a_non_finite_delay_is_refused(self, seconds: float) -> None:
-        with pytest.raises(ValueError, match="retry_after"):
+        with pytest.raises(InvalidValue, match="retry_after"):
             RateLimited(seconds)
 
 
@@ -312,36 +331,25 @@ class TestInsufficientAuthentication:
         assert InsufficientAuthentication(max_age=0).max_age == 0
 
     @pytest.mark.parametrize(
-        "kwargs",
+        ("kwargs", "error"),
         [
-            {"max_age": -1},
-            {"max_age": True},
-            {"acr_values": "urn:mfa"},
-            {"acr_values": [""]},
-            {"acr_values": ["urn mfa"]},
-            {"acr_values": ['urn"mfa']},
-            {"acr_values": ["urn\\mfa"]},
-            {"acr_values": ["urn:mfá"]},
-            {"acr_values": [1]},
-            {"acr_values": b"urn"},
-            {"message": 5},
-        ],
-        ids=[
-            "negative-age",
-            "bool-age",
-            "single-str",
-            "blank",
-            "space",
-            "quote",
-            "backslash",
-            "non-ascii",
-            "int-item",
-            "bytes",
-            "non-str-message",
+            pytest.param({"max_age": -1}, InvalidValue, id="negative-age"),
+            pytest.param({"max_age": True}, InvalidType, id="bool-age"),
+            pytest.param({"acr_values": "urn:mfa"}, InvalidType, id="single-str"),
+            pytest.param({"acr_values": [""]}, InvalidValue, id="blank"),
+            pytest.param({"acr_values": ["urn mfa"]}, InvalidValue, id="space"),
+            pytest.param({"acr_values": ['urn"mfa']}, InvalidValue, id="quote"),
+            pytest.param({"acr_values": ["urn\\mfa"]}, InvalidValue, id="backslash"),
+            pytest.param({"acr_values": ["urn:mfá"]}, InvalidValue, id="non-ascii"),
+            pytest.param({"acr_values": [1]}, InvalidType, id="int-item"),
+            pytest.param({"acr_values": b"urn"}, InvalidType, id="bytes"),
+            pytest.param({"message": 5}, InvalidType, id="non-str-message"),
         ],
     )
-    def test_refuses_what_a_challenge_cannot_carry(self, kwargs: dict[str, Any]) -> None:
-        with pytest.raises(ValueError, match="InsufficientAuthentication"):
+    def test_refuses_what_a_challenge_cannot_carry(
+        self, kwargs: dict[str, Any], error: type[Exception]
+    ) -> None:
+        with pytest.raises(error, match="InsufficientAuthentication"):
             InsufficientAuthentication(**kwargs)
 
 
@@ -387,3 +395,29 @@ class TestForeignSessionError:
         restored = pickle.loads(pickle.dumps(ForeignSessionError.between("own", "active")))
 
         assert restored.code == ErrorCode.FOREIGN_SESSION
+
+
+class TestMarkerBase:
+    @pytest.mark.parametrize(
+        "error",
+        [
+            InvalidValue("bad"),
+            InvalidType("bad"),
+            InvalidUse("bad"),
+            InternalError("bad"),
+            UnknownKey("bad"),
+            ConfigError("bad"),
+            BootstrapError("bad"),
+        ],
+        ids=[
+            "invalid-value",
+            "invalid-type",
+            "invalid-use",
+            "internal",
+            "unknown-key",
+            "config",
+            "bootstrap",
+        ],
+    )
+    def test_a_loom_error_without_a_code_is_not_a_coded_error(self, error: LoomError) -> None:
+        assert (isinstance(error, LoomError), isinstance(error, CodedError)) == (True, False)

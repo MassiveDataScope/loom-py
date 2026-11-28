@@ -1,4 +1,4 @@
-"""Keep an application open in one task of its own, across the calls that start and stop it."""
+"""Keep an application open in one task of its own, across the calls that start and shut it down."""
 
 from __future__ import annotations
 
@@ -8,14 +8,13 @@ from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from loom.composition.errors import CompositionErrorCode, CompositionStateError
+from loom.composition.event import CompositionEvent
 
 if TYPE_CHECKING:
     from loom.composition.application import Application
 
 _logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
-
-_FAILED_TO_CLOSE = "application failed to close"
 
 
 class ApplicationHost:
@@ -24,16 +23,16 @@ class ApplicationHost:
     A transport that starts and stops its application in separate calls (a
     worker's signals, a Lambda's Init and shutdown) cannot enter
     :meth:`Application.running` in one and exit it in another: each call runs
-    in a task of its own, and an agent runtime, an MCP client or a cancel
+    in a task of its own, and an agent host, an MCP client or a cancel
     scope refuses to be exited from a task other than the one that entered it.
     The host spawns one owner task on the running loop that enters
-    :meth:`~Application.running`, waits until :meth:`stop`, and exits it.
+    :meth:`~Application.running`, waits until :meth:`shutdown`, and exits it.
 
     A host opens its application once; compose a new host to open it again.
     The owner task runs on the loop that called :meth:`start`, so
-    :meth:`stop` must run on that same loop. If the loop is cancelled before
-    :meth:`stop`, the owner still exits :meth:`~Application.running` in its own
-    task. A failure to close that no :meth:`stop` can raise, after a cancelled
+    :meth:`shutdown` must run on that same loop. If the loop is cancelled before
+    :meth:`shutdown`, the owner still exits :meth:`~Application.running` in its own
+    task. A failure to close that no :meth:`shutdown` can raise, after a cancelled
     :meth:`start` say, is logged.
 
     Args:
@@ -46,7 +45,7 @@ class ApplicationHost:
         self._check = check
         self._started = False
         self._owner: asyncio.Task[None] | None = None
-        self._stopping = asyncio.Event()
+        self._shutting_down = asyncio.Event()
         self._close_failure: BaseException | None = None
 
     async def start(self) -> None:
@@ -57,7 +56,7 @@ class ApplicationHost:
 
         Raises:
             CompositionStateError: When this host was already started, or
-                when :meth:`stop` was called before the application finished
+                when :meth:`shutdown` was called before the application finished
                 opening; it is closed by then.
             Exception: The failure to open the application, as itself; nothing
                 is left open.
@@ -78,11 +77,11 @@ class ApplicationHost:
             await asyncio.wait({owner})
             raise
 
-    async def stop(self) -> None:
+    async def shutdown(self) -> None:
         """Close the application in its owner task and wait until it is closed.
 
         Every call waits for the same close, including one made while
-        :meth:`start` is still opening. Stopping a host that never opened, or
+        :meth:`start` is still opening. Shutting down a host that never opened, or
         one already closed, does nothing. Cancelling the call does not
         interrupt the closing.
 
@@ -93,8 +92,8 @@ class ApplicationHost:
         owner = self._owner
         if owner is None:
             return
-        first = not self._stopping.is_set()
-        self._stopping.set()
+        first = not self._shutting_down.is_set()
+        self._shutting_down.set()
         try:
             await asyncio.wait({owner})
         except asyncio.CancelledError:
@@ -105,36 +104,36 @@ class ApplicationHost:
             return
         failure = self._take_close_failure()
         if isinstance(failure, asyncio.CancelledError):
-            _logger.warning(_FAILED_TO_CLOSE, exc_info=failure)
+            _logger.warning(CompositionEvent.APPLICATION_CLOSE_FAILED, exc_info=failure)
         elif failure is not None:
             raise failure
 
     async def _own(self, opened: asyncio.Future[None]) -> None:
-        """Enter the application, report it open, wait for :meth:`stop` and exit."""
+        """Enter the application, report it open, wait for :meth:`shutdown` and exit."""
         entered = False
         try:
             async with self._application.running(check=self._check):
                 entered = True
-                if not self._stopping.is_set():
+                if not self._shutting_down.is_set():
                     opened.set_result(None)
-                    await self._stopping.wait()
+                    await self._shutting_down.wait()
         except BaseException as error:
             if not opened.done():
                 if isinstance(error, asyncio.CancelledError):
                     opened.cancel()
                 elif entered:
-                    opened.set_exception(_stopped_while_opening())
+                    opened.set_exception(_shut_down_while_opening())
                 else:
                     opened.set_exception(error)
                     return
             raise
         if not opened.done():
-            opened.set_exception(_stopped_while_opening())
+            opened.set_exception(_shut_down_while_opening())
 
     def _record_close_failure(self, owner: asyncio.Task[None]) -> None:
-        """Keep the owner's failure to close for :meth:`stop`, or log it if none is waiting."""
+        """Keep the owner's failure to close for :meth:`shutdown`, or log it if none is waiting."""
         self._close_failure = _failure_to_close(owner)
-        if not self._stopping.is_set():
+        if not self._shutting_down.is_set():
             self._log_failure()
 
     def _take_close_failure(self) -> BaseException | None:
@@ -146,7 +145,7 @@ class ApplicationHost:
         """Log the owner's failure to close, unless it was already reported."""
         failure = self._take_close_failure()
         if failure is not None:
-            _logger.warning(_FAILED_TO_CLOSE, exc_info=failure)
+            _logger.warning(CompositionEvent.APPLICATION_CLOSE_FAILED, exc_info=failure)
 
 
 class LoopHost:
@@ -159,6 +158,10 @@ class LoopHost:
     :class:`ApplicationHost`; every call then runs on that same loop, and
     :meth:`close` closes the application and disposes of the loop.
 
+    The loop runs only inside a call, and a Lambda environment is frozen
+    between invocations, so each call returns once the application's inline
+    jobs are idle: those its work dispatched have run.
+
     Args:
         application: The application to open.
     """
@@ -166,6 +169,7 @@ class LoopHost:
     def __init__(self, application: Application) -> None:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
+        self._application = application
         self._host = ApplicationHost(application)
         self._closed = False
 
@@ -187,9 +191,16 @@ class LoopHost:
         asyncio.set_event_loop(self._loop)
 
     def run(self, coroutine: Coroutine[Any, Any, _T]) -> _T:
-        """Run *coroutine* to completion on the host's loop and return its result."""
+        """Run *coroutine* on the host's loop, then the jobs it dispatched; return its result."""
         self.make_current()
-        return self._loop.run_until_complete(coroutine)
+        result = self._loop.run_until_complete(coroutine)
+        self.wait_until_idle()
+        return result
+
+    def wait_until_idle(self) -> None:
+        """Run the host's loop until no inline job of the application is running or waiting."""
+        self.make_current()
+        self._loop.run_until_complete(self._application.jobs.wait_until_idle())
 
     def close(self) -> None:
         """Close the application, then dispose of the loop; a second call does nothing.
@@ -201,7 +212,7 @@ class LoopHost:
         if self._closed:
             return
         try:
-            self._loop.run_until_complete(self._host.stop())
+            self._loop.run_until_complete(self._host.shutdown())
         finally:
             self._dispose()
 
@@ -232,5 +243,5 @@ def _failure_to_close(owner: asyncio.Task[None]) -> BaseException | None:
     return owner.exception()
 
 
-def _stopped_while_opening() -> CompositionStateError:
-    return CompositionStateError(CompositionErrorCode.HOST_STOPPED_WHILE_OPENING.issue())
+def _shut_down_while_opening() -> CompositionStateError:
+    return CompositionStateError(CompositionErrorCode.HOST_SHUT_DOWN_WHILE_OPENING.issue())

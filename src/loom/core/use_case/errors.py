@@ -58,8 +58,8 @@ class UseCaseErrorCode(IssueCode):
         "UNSERVED_MODEL",
         Template(
             "{component} injects {parameter}: repository for {model}, which is not "
-            "registered in the container. Add {model} to MODELS in your manifest module, "
-            "or include its module in app.discovery, so its repository is registered.",
+            "registered in the container. Include its defining package in app.packages "
+            "so its repository is registered.",
             field="{parameter}",
         ),
     )

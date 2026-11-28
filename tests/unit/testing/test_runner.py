@@ -12,7 +12,7 @@ from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.composition._ai import AgentDepsFactory
 from loom.core.command import Command
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.errors import NotFound, RuleViolation, RuleViolations
+from loom.core.errors import NotFound, RuleViolationError, RuleViolationsError
 from loom.core.identity import Identity
 from loom.core.model import LoomStruct
 from loom.core.use_case.markers import Agent, Caller, Input, LoadById, Mcp
@@ -67,7 +67,7 @@ def _always_fail_rule(
     fields_set: frozenset[str],
     context: dict[str, object] | None = None,
 ) -> None:
-    raise RuleViolation("email", "bad")
+    raise RuleViolationError("email", "bad")
 
 
 class _RuleFailUseCase(UseCase[Any, str]):
@@ -230,7 +230,7 @@ class TestUseCaseTestRun:
 class TestUseCaseTestErrors:
     async def test_rule_violation_propagated(self) -> None:
         test_case = UseCaseTest(_RuleFailUseCase()).with_input(email="bad@corp.com", name="X")
-        with pytest.raises(RuleViolations):
+        with pytest.raises(RuleViolationsError):
             await test_case.run()
 
     async def test_not_found_propagated(self) -> None:

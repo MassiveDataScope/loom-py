@@ -3,12 +3,9 @@
 Public API — import from :mod:`loom.etl.declarative.target` or :mod:`loom.etl`.
 """
 
+from loom.etl.declarative._history_date_type import HistoryDateType
 from loom.etl.declarative.target._history._builder import IntoHistory
-from loom.etl.declarative.target._history._enums import (
-    DeletePolicy,
-    HistorifyInputMode,
-    HistoryDateType,
-)
+from loom.etl.declarative.target._history._enums import DeletePolicy, HistorifyInputMode
 from loom.etl.declarative.target._history._errors import (
     HistorifyDateCollisionError,
     HistorifyDeleteMarkerError,

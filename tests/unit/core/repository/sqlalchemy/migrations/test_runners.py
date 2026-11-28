@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from loom.core.backend.scoped_ddl import ASSERT_SCHEMA, GUARD_FIRST, LOCK_TIMEOUT
 from loom.core.config import ConfigError
-from loom.core.repository.sqlalchemy.migrations import alembic_config
-from loom.core.repository.sqlalchemy.migrations.runners import (
+from loom.stores.sqlalchemy.migrations import alembic_config
+from loom.stores.sqlalchemy.migrations.runners import (
     LOCK,
     assert_revision,
     include_object_for,
@@ -15,7 +14,8 @@ from loom.core.repository.sqlalchemy.migrations.runners import (
     require_landing,
     validate_timeout,
 )
-from loom.core.repository.sqlalchemy.rls import SchemaNames
+from loom.stores.sqlalchemy.rls import SchemaNames
+from loom.stores.sqlalchemy.scoped_ddl import ASSERT_SCHEMA, GUARD_FIRST, LOCK_TIMEOUT
 
 URL = "postgresql+asyncpg://migrator:secret@localhost/app"
 
@@ -90,7 +90,7 @@ class TestRunnerConfiguration:
     def test_the_locator_puts_the_code_path_on_sys_path(self, tmp_path, monkeypatch) -> None:
         import sys
 
-        from loom.core.locator import load_application
+        from loom.stores.sqlalchemy.alembic import load_store_schema
 
         package = tmp_path / "code" / "located_pkg"
         package.mkdir(parents=True)
@@ -107,10 +107,7 @@ class TestRunnerConfiguration:
             "app:\n"
             "  name: located\n"
             f"  code_path: {tmp_path / 'code'}\n"
-            "  discovery:\n"
-            "    mode: modules\n"
-            "    modules:\n"
-            "      include: [located_pkg.models]\n"
+            "  packages: [located_pkg]\n"
             "stores:\n"
             "  default:\n"
             "    backend: sqlalchemy\n"
@@ -118,7 +115,7 @@ class TestRunnerConfiguration:
         )
         monkeypatch.setattr(sys, "path", list(sys.path))
 
-        application = load_application(str(config))
+        application = load_store_schema(str(config))
 
         assert "located" in application.metadata.tables
 

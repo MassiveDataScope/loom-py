@@ -64,42 +64,42 @@ def binder() -> StructBinder:
 
 
 class TestStructBinderPrimitives:
-    def test_binds_required_primitive(self, binder: StructBinder) -> None:
-        obj = binder.bind(_PrimitiveTarget, {"host": "localhost"})
+    def test_converts_required_primitive(self, binder: StructBinder) -> None:
+        obj = binder.convert(_PrimitiveTarget, {"host": "localhost"})
         assert obj.host == "localhost"
         assert obj.port == 8080
 
-    def test_binds_optional_primitive_override(self, binder: StructBinder) -> None:
-        obj = binder.bind(_PrimitiveTarget, {"host": "db", "port": 5432})
+    def test_converts_optional_primitive_override(self, binder: StructBinder) -> None:
+        obj = binder.convert(_PrimitiveTarget, {"host": "db", "port": 5432})
         assert obj.port == 5432
 
     def test_raises_config_error_for_missing_required(self, binder: StructBinder) -> None:
         with pytest.raises(ConfigError, match="requires config field 'host'"):
-            binder.bind(_PrimitiveTarget, {})
+            binder.convert(_PrimitiveTarget, {})
 
     def test_coerces_string_to_int_in_non_strict_mode(self, binder: StructBinder) -> None:
-        obj = binder.bind(_PrimitiveTarget, {"host": "h", "port": "9000"})
+        obj = binder.convert(_PrimitiveTarget, {"host": "h", "port": "9000"})
         assert obj.port == 9000
 
     def test_strict_mode_rejects_string_for_int(self) -> None:
         strict = StructBinder(strict=True)
         with pytest.raises(ConfigError, match="_PrimitiveTarget.port"):
-            strict.bind(_PrimitiveTarget, {"host": "h", "port": "9000"})
+            strict.convert(_PrimitiveTarget, {"host": "h", "port": "9000"})
 
 
 class TestStructBinderStructs:
     def test_converts_dict_to_struct(self, binder: StructBinder) -> None:
-        obj = binder.bind(_StructTarget, {"db": {"host": "pg", "port": 5432}})
+        obj = binder.convert(_StructTarget, {"db": {"host": "pg", "port": 5432}})
         assert isinstance(obj.db, AcmeDbConfig)
         assert obj.db.host == "pg"
 
     def test_struct_with_default_field(self, binder: StructBinder) -> None:
-        obj = binder.bind(_StructTarget, {"db": {"host": "pg"}})
+        obj = binder.convert(_StructTarget, {"db": {"host": "pg"}})
         assert obj.db.port == 5432
 
     def test_raises_config_error_for_invalid_struct_field(self, binder: StructBinder) -> None:
         with pytest.raises(ConfigError, match="_StructTarget.db"):
-            binder.bind(_StructTarget, {"db": {"host": "pg", "port": "wrong"}})
+            binder.convert(_StructTarget, {"db": {"host": "pg", "port": "wrong"}})
 
     def test_nested_struct_conversion(self, binder: StructBinder) -> None:
         raw = {
@@ -108,7 +108,7 @@ class TestStructBinderStructs:
                 "limits": {"max_connections": 50, "max_keepalive": 20},
             }
         }
-        obj = binder.bind(_NestedStructTarget, raw)
+        obj = binder.convert(_NestedStructTarget, raw)
         assert isinstance(obj.client, _ClientConfig)
         assert isinstance(obj.client.limits, _LimitsConfig)
         assert obj.client.limits.max_connections == 50
@@ -116,22 +116,22 @@ class TestStructBinderStructs:
 
 class TestStructBinderLiteral:
     def test_accepts_valid_literal(self, binder: StructBinder) -> None:
-        obj = binder.bind(_LiteralTarget, {"mode": "fast"})
+        obj = binder.convert(_LiteralTarget, {"mode": "fast"})
         assert obj.mode == "fast"
 
     def test_raises_config_error_for_invalid_literal(self, binder: StructBinder) -> None:
         with pytest.raises(ConfigError, match="_LiteralTarget.mode"):
-            binder.bind(_LiteralTarget, {"mode": "turbo"})
+            binder.convert(_LiteralTarget, {"mode": "turbo"})
 
 
 class TestStructBinderMixed:
-    def test_binds_struct_literal_and_primitive_together(self, binder: StructBinder) -> None:
+    def test_converts_struct_literal_and_primitive_together(self, binder: StructBinder) -> None:
         raw = {
             "db": {"host": "pg", "port": 5432},
             "mode": "batch",
             "batch_size": 500,
         }
-        obj = binder.bind(_MixedTarget, raw)
+        obj = binder.convert(_MixedTarget, raw)
         assert isinstance(obj.db, AcmeDbConfig)
         assert obj.mode == "batch"
         assert obj.batch_size == 500
@@ -140,4 +140,4 @@ class TestStructBinderMixed:
     def test_extra_keys_in_raw_are_passed_through(self, binder: StructBinder) -> None:
         raw = {"host": "h", "port": 80, "unknown_key": "ignored_by_target"}
         with pytest.raises(TypeError, match="unexpected keyword argument"):
-            binder.bind(_PrimitiveTarget, raw)
+            binder.convert(_PrimitiveTarget, raw)

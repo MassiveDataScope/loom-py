@@ -15,6 +15,7 @@ from __future__ import annotations
 from functools import singledispatch
 from typing import Any
 
+from loom.core.errors import InvalidType, UnknownKey
 from loom.core.expr.nodes import (
     AndExpr,
     EqExpr,
@@ -80,7 +81,7 @@ def _(node: InExpr, frames: dict[str, Any]) -> InExpr:
             df = frame_df
             break
     if df is None:
-        raise ValueError(
+        raise UnknownKey(
             f"SourceRef.source could not be resolved — no matching frame found. "
             f"Available aliases: {list(frames.keys())}"
         )
@@ -129,7 +130,7 @@ def predicate_to_mongo(node: Any, params_instance: Any) -> dict[str, Any]:
 
 @singledispatch
 def _to_mongo(node: object, params: Any) -> dict[str, Any]:
-    raise TypeError(
+    raise InvalidType(
         f"predicate_to_mongo: unsupported predicate node type {type(node)!r}. "
         "Call materialize_filter() before predicate_to_mongo() if the predicate "
         "contains SourceRef nodes."
@@ -141,7 +142,7 @@ def _col(ref: Any) -> str:
         return ref.name
     if isinstance(ref, str):
         return ref
-    raise TypeError(f"predicate_to_mongo: expected column reference, got {type(ref)!r}")
+    raise InvalidType(f"predicate_to_mongo: expected column reference, got {type(ref)!r}")
 
 
 def _val(value: Any, params: Any) -> Any:
@@ -184,7 +185,7 @@ def _(node: LeExpr, params: Any) -> dict[str, Any]:
 def _(node: InExpr, params: Any) -> dict[str, Any]:
     raw = node.values
     if _is_source_ref(raw):
-        raise TypeError(
+        raise InvalidType(
             "predicate_to_mongo: InExpr.values is a SourceRef — call "
             "materialize_filter() before predicate_to_mongo()."
         )

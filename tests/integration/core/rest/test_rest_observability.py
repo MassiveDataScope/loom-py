@@ -6,7 +6,7 @@ Verifies that:
   - A missing header causes the middleware to generate a valid trace-id.
   - Error response bodies carry the same ``trace_id`` that was set by the
     middleware (end-to-end correlation).
-  - ``ObservabilityRuntime.span()`` emits START → END/ERROR events to every
+  - ``Observability.span()`` emits START → END/ERROR events to every
     observer wired into the REST layer.
 
 Infrastructure:
@@ -20,16 +20,18 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from loom.core.bootstrap.bootstrap import bootstrap_app
+from loom.core.bootstrap import Kernel, create_kernel
 from loom.core.errors import NotFound
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.rest.compiler import RouteSources
 from loom.rest.fastapi.app import create_fastapi_app
 from loom.rest.middleware import TraceIdMiddleware
 from loom.testing import HttpTestHarness, InMemoryRepository
+from tests.integration.fake_repo.product.fake import InMemoryProductRepository
 from tests.integration.fake_repo.product.interface import ProductRestInterface
 from tests.integration.fake_repo.product.model import Product
+from tests.integration.fake_repo.product.repository_contract import ProductRepo
 from tests.integration.fake_repo.product.use_cases import (
     CreateProductUseCase,
     DeleteProductUseCase,
@@ -48,6 +50,30 @@ class _RecordingObserver:
         self.events.append(event)
 
 
+def _product_kernel(harness: HttpTestHarness) -> Kernel:
+    """A kernel serving every product use case from *harness*'s repositories.
+
+    ``ProductRepo`` is bound to a plain in-memory repository: the harness binds
+    its fakes under the model, which an error-forcing proxy would not carry to the
+    protocol that ``FindProductByNameUseCase`` injects.
+    """
+    return create_kernel(
+        config=object(),
+        use_cases=[
+            CreateProductUseCase,
+            GetProductUseCase,
+            UpdateProductUseCase,
+            DeleteProductUseCase,
+            ListProductsUseCase,
+            FindProductByNameUseCase,
+        ],
+        modules=[
+            harness._build_module(),
+            lambda container: container.register_instance(ProductRepo, InMemoryProductRepository()),
+        ],
+    )
+
+
 def _build_full_stack_client(
     repo: InMemoryRepository[Product] | None = None,
     error_on: tuple[str, Exception] | None = None,
@@ -55,29 +81,17 @@ def _build_full_stack_client(
 ) -> TestClient:
     """Build a TestClient with TraceIdMiddleware and optional observability."""
     harness = HttpTestHarness()
-    harness.inject_repo(Product, repo or InMemoryRepository(Product))
+    harness.inject_repo(Product, repo or InMemoryProductRepository())
     if error_on is not None:
         method, exc = error_on
         harness.force_error(Product, method, exc)
 
-    use_cases = [
-        CreateProductUseCase,
-        GetProductUseCase,
-        UpdateProductUseCase,
-        DeleteProductUseCase,
-        ListProductsUseCase,
-        FindProductByNameUseCase,
-    ]
-    result = bootstrap_app(
-        config=object(),
-        use_cases=use_cases,
-        modules=[harness._build_module()],
-    )
-    runtime = ObservabilityRuntime([observer]) if observer else ObservabilityRuntime.noop()
+    result = _product_kernel(harness)
+    runtime = Observability([observer]) if observer else Observability.noop()
     app = create_fastapi_app(
         result,
         RouteSources(python=[ProductRestInterface]),
-        observability_runtime=runtime,
+        observability=runtime,
         middleware=[TraceIdMiddleware],
     )
     return TestClient(app, raise_server_exceptions=False)
@@ -149,7 +163,7 @@ class TestTraceIdInErrorBody:
 
 
 # ---------------------------------------------------------------------------
-# ObservabilityRuntime span events through REST layer
+# Observability span events through REST layer
 # ---------------------------------------------------------------------------
 
 
@@ -213,23 +227,13 @@ class TestSpanEventsFromRESTLayer:
                 raise RuntimeError("observer crash")
 
         harness = HttpTestHarness()
-        harness.inject_repo(Product, InMemoryRepository(Product))
-        use_cases = [
-            CreateProductUseCase,
-            GetProductUseCase,
-            UpdateProductUseCase,
-            DeleteProductUseCase,
-            ListProductsUseCase,
-            FindProductByNameUseCase,
-        ]
-        result = bootstrap_app(
-            config=object(), use_cases=use_cases, modules=[harness._build_module()]
-        )
-        runtime = ObservabilityRuntime([_BrokenObserver()])
+        harness.inject_repo(Product, InMemoryProductRepository())
+        result = _product_kernel(harness)
+        runtime = Observability([_BrokenObserver()])
         app = create_fastapi_app(
             result,
             RouteSources(python=[ProductRestInterface]),
-            observability_runtime=runtime,
+            observability=runtime,
             middleware=[TraceIdMiddleware],
         )
         client = TestClient(app, raise_server_exceptions=False)

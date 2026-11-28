@@ -10,8 +10,9 @@ import anyio
 from bytewax.operators import branch, flat_map
 from bytewax.operators import map as bw_map
 
+from loom.core.errors.summary import ErrorSummary
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
 from loom.streaming.bytewax._batch_spans import BatchSpan, BatchWindow, emit_batch_spans
 from loom.streaming.bytewax._error_boundary import (
@@ -141,8 +142,9 @@ def _apply_with_async_process(
             _emit_node_batch_spans(
                 observer, flow_name, idx, node_type, batch, BatchWindow.since(started_ns), exc
             )
+            reason = ErrorSummary.message_for(exc)
             return [
-                _build_error_envelope(ErrorKind.TASK, str(exc), message, boundary)
+                _build_error_envelope(ErrorKind.TASK, reason, message, boundary)
                 for message in batch
             ]
         _emit_node_batch_spans(
@@ -216,7 +218,9 @@ async def _execute_with_async_message(
         )
         return current
     except Exception as exc:
-        return _build_error_envelope(_classify_task(exc), str(exc), message, boundary)
+        return _build_error_envelope(
+            _classify_task(exc), ErrorSummary.message_for(exc), message, boundary
+        )
 
 
 async def _execute_with_async_batch(
@@ -257,7 +261,7 @@ def _is_message_result(item: Any) -> bool:
 
 
 def _execute_with_step(
-    observer: ObservabilityRuntime,
+    observer: Observability,
     flow_name: str,
     idx: int,
     node_type: str,
@@ -308,7 +312,7 @@ def _run_inner_steps(
 
 
 def _emit_node_batch_spans(
-    observer: ObservabilityRuntime,
+    observer: Observability,
     flow_name: str,
     idx: int,
     node_type: str,

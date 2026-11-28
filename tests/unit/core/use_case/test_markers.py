@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 import loom.core.use_case as use_case
-from loom.core.errors import NotFound
+from loom.core.errors import InvalidType, NotFound
 from loom.core.use_case.markers import (
     Agent,
     Exists,
@@ -55,7 +55,7 @@ class TestMcp:
             Mcp("docs-server", include=[])
 
     def test_a_bare_string_include_raises_instead_of_being_split_into_chars(self) -> None:
-        with pytest.raises(ValueError, match="sequence"):
+        with pytest.raises(InvalidType, match="sequence"):
             Mcp("docs-server", include="search")
 
     def test_is_pinned_as_public(self) -> None:

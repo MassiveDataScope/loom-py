@@ -1,210 +1,186 @@
-"""Tests for ``loom.prefect.observer._logging_bridge``.
-
-Verifies:
-- The handler emits ``LogCreate``-compatible payloads tagged with the
-  active ``flow_run_id`` and, inside a step, its ``task_run_id`` too, so a
-  reader that scopes logs by flow run also gets the steps' lines.
-- Records emitted with neither binding are silently dropped.
-- ``install_log_bridge`` / ``uninstall_log_bridge`` are idempotent.
-"""
+"""Tests for the Prefect log bridge: loom's records through Prefect's API handler."""
 
 from __future__ import annotations
 
+import inspect
 import logging
+import sys
+import threading
 import uuid
+from collections.abc import Iterator
+from typing import Any
 
+import msgspec
 import pytest
+from prefect.logging.handlers import APILogWorker, set_api_log_sink
 
+from loom.core.log_names import LogField
+from loom.core.logger import log_context
+from loom.core.model.redaction import Secret
+from loom.core.observability.diagnostic import ObservabilityEvent
+from loom.core.tracing.context import active_trace_id
+from loom.prefect.flow import _assemble
+from loom.prefect.flow._assemble import assemble_flow, flow_settings_from_mapping
 from loom.prefect.observer._logging_bridge import (
     PrefectLogBridgeHandler,
-    _current_flow_run_id,
-    bind_task_run,
-    install_log_bridge,
-    uninstall_log_bridge,
+    active_task_run_id,
+    log_bridge,
 )
 
 
-def _make_record(message: str = "hello") -> logging.LogRecord:
-    return logging.LogRecord(
-        name="loom.test",
-        level=logging.INFO,
-        pathname=__file__,
-        lineno=1,
-        msg=message,
-        args=None,
-        exc_info=None,
+@pytest.fixture
+def sent() -> Iterator[list[dict[str, Any]]]:
+    """The payloads Prefect's API handler produces."""
+    payloads: list[dict[str, Any]] = []
+    set_api_log_sink(payloads.append)
+    yield payloads
+    set_api_log_sink(None)
+
+
+@pytest.fixture
+def task_run_id() -> Iterator[uuid.UUID]:
+    """A step's TaskRun, bound for the test."""
+    bound = uuid.uuid4()
+    token = active_task_run_id.set(bound)
+    yield bound
+    active_task_run_id.reset(token)
+
+
+def _record(
+    message: str = "hello", level: int = logging.INFO, **extra: object
+) -> logging.LogRecord:
+    return logging.makeLogRecord(
+        {"msg": message, "name": "loom.test", "levelno": level, "levelname": "X", **extra}
     )
 
 
 class TestPrefectLogBridgeHandler:
-    def test_emit_in_a_step_carries_its_task_run_and_its_flow_run(self) -> None:
-        handler = PrefectLogBridgeHandler()
+    def test_a_step_record_reaches_the_api_with_its_task_run_and_its_flow_run(
+        self, sent: list[dict[str, Any]], task_run_id: uuid.UUID
+    ) -> None:
         flow_id = uuid.uuid4()
-        task_id = uuid.uuid4()
-        token = _current_flow_run_id.set(flow_id)
-        try:
-            with bind_task_run(task_id):
-                payload = handler._record_to_payload(_make_record("step log"))
-        finally:
-            _current_flow_run_id.reset(token)
-            handler.close()
 
-        assert payload is not None
-        assert payload["task_run_id"] == task_id
-        assert payload["flow_run_id"] == flow_id
-        assert payload["message"] == "step log"
-        assert payload["level"] == logging.INFO
+        PrefectLogBridgeHandler(flow_id).handle(_record("step log", level=logging.WARNING))
 
-    def test_emit_falls_back_to_flow_run_id_when_no_task_bound(self) -> None:
-        handler = PrefectLogBridgeHandler()
+        (payload,) = sent
+        assert (payload["flow_run_id"], payload["task_run_id"]) == (str(flow_id), str(task_run_id))
+        assert (payload["message"], payload["level"]) == ("step log", logging.WARNING)
+
+    def test_a_record_between_steps_carries_the_flow_run_only(
+        self, sent: list[dict[str, Any]]
+    ) -> None:
         flow_id = uuid.uuid4()
-        token = _current_flow_run_id.set(flow_id)
-        try:
-            payload = handler._record_to_payload(_make_record("between-steps log"))
-        finally:
-            _current_flow_run_id.reset(token)
-            handler.close()
 
-        assert payload is not None
-        assert payload["flow_run_id"] == flow_id
-        assert "task_run_id" not in payload
+        PrefectLogBridgeHandler(flow_id).handle(_record())
 
-    def test_emit_in_a_step_without_a_flow_run_carries_only_its_task_run(self) -> None:
-        handler = PrefectLogBridgeHandler()
-        task_id = uuid.uuid4()
-        try:
-            with bind_task_run(task_id):
-                payload = handler._record_to_payload(_make_record("step log"))
-        finally:
-            handler.close()
+        (payload,) = sent
+        assert payload["flow_run_id"] == str(flow_id)
+        assert payload["task_run_id"] is None
 
-        assert payload is not None
-        assert payload["task_run_id"] == task_id
-        assert "flow_run_id" not in payload
-
-    def test_emit_returns_none_when_neither_binding_is_active(self) -> None:
-        handler = PrefectLogBridgeHandler()
-        try:
-            payload = handler._record_to_payload(_make_record("orphan log"))
-        finally:
-            handler.close()
-        assert payload is None
-
-    def test_bind_task_run_resets_on_exit(self) -> None:
-        task_id = uuid.uuid4()
-        from loom.prefect.observer._logging_bridge import current_task_run_id
-
-        assert current_task_run_id() is None
-        with bind_task_run(task_id):
-            assert current_task_run_id() == task_id
-        assert current_task_run_id() is None
-
-    def test_install_log_bridge_is_idempotent(self) -> None:
-        flow_id = uuid.uuid4()
-        install_log_bridge(flow_id)
-        try:
-            first_handlers = [
-                h for h in logging.getLogger().handlers if isinstance(h, PrefectLogBridgeHandler)
-            ]
-            install_log_bridge(flow_id)
-            second_handlers = [
-                h for h in logging.getLogger().handlers if isinstance(h, PrefectLogBridgeHandler)
-            ]
-            # Second call must not double-attach.
-            assert len(first_handlers) == 1
-            assert len(second_handlers) == 1
-            assert first_handlers[0] is second_handlers[0]
-        finally:
-            uninstall_log_bridge()
-
-        # After uninstall, no PrefectLogBridgeHandler on the root logger.
-        assert not any(isinstance(h, PrefectLogBridgeHandler) for h in logging.getLogger().handlers)
-
-    def test_a_parallel_step_carries_the_flow_run_of_its_flow_body(self) -> None:
-        from loom.etl.executor._dispatcher import ThreadDispatcher
-
-        handler = PrefectLogBridgeHandler()
-        flow_id = uuid.uuid4()
-        task_id = uuid.uuid4()
-        payloads: list[dict[str, object] | None] = []
-
-        def step() -> None:
-            # A step of a parallel group runs in a pool thread.
-            with bind_task_run(task_id):
-                payloads.append(handler._record_to_payload(_make_record("parallel step log")))
-
-        token = _current_flow_run_id.set(flow_id)
-        try:
-            ThreadDispatcher().run_all([step])
-        finally:
-            _current_flow_run_id.reset(token)
-            handler.close()
-
-        (payload,) = payloads
-        assert payload is not None
-        assert payload["task_run_id"] == task_id
-        assert payload["flow_run_id"] == flow_id
-
-    def test_install_log_bridge_none_flow_id_is_a_noop(self) -> None:
-        install_log_bridge(None)
-        assert not any(isinstance(h, PrefectLogBridgeHandler) for h in logging.getLogger().handlers)
-
-    def test_flush_retries_then_increments_dropped_counter(self) -> None:
-        handler = PrefectLogBridgeHandler()
-        attempts: list[int] = []
-
-        def _always_fail(batch: list[dict[str, object]], run_sync_fn: object) -> None:
-            attempts.append(1)
-            raise RuntimeError("simulated outage")
-
-        handler._post_batch = _always_fail  # type: ignore[method-assign]
-        handler._sleep = lambda _s: None  # type: ignore[attr-defined]
-        try:
-            handler._flush_with_retry(
-                [{"name": "x", "level": 20, "message": "m"}], run_sync_fn=None
-            )
-        finally:
-            handler.close()
-        assert len(attempts) == handler._MAX_ATTEMPTS
-        assert handler.dropped_logs == 1
-
-    def test_flush_succeeds_on_second_attempt_no_drop(self) -> None:
-        handler = PrefectLogBridgeHandler()
-        attempts: list[int] = []
-
-        def _fail_then_succeed(batch: list[dict[str, object]], run_sync_fn: object) -> None:
-            attempts.append(1)
-            if len(attempts) < 2:
-                raise RuntimeError("transient")
-
-        handler._post_batch = _fail_then_succeed  # type: ignore[method-assign]
-        handler._sleep = lambda _s: None  # type: ignore[attr-defined]
-        try:
-            handler._flush_with_retry(
-                [{"name": "x", "level": 20, "message": "m"}], run_sync_fn=None
-            )
-        finally:
-            handler.close()
-        assert len(attempts) == 2
-        assert handler.dropped_logs == 0
-
-    @pytest.mark.parametrize("level", [logging.DEBUG, logging.WARNING, logging.ERROR])
-    def test_record_level_is_preserved(self, level: int) -> None:
-        handler = PrefectLogBridgeHandler()
-        task_id = uuid.uuid4()
-        record = logging.LogRecord(
-            name="loom.test",
-            level=level,
-            pathname=__file__,
-            lineno=1,
-            msg="msg",
-            args=None,
-            exc_info=None,
+    def test_the_message_has_the_fields_as_loom_renders_them_and_no_code_origin(
+        self, sent: list[dict[str, Any]]
+    ) -> None:
+        record = _record(
+            ObservabilityEvent.LIFECYCLE_FAILED,
+            **{LogField.NAME: "Load step", "pw": Secret("x"), LogField.CODE_LINE: 3},
         )
+
+        PrefectLogBridgeHandler(uuid.uuid4()).handle(record)
+
+        assert sent[0]["message"] == (
+            f'{ObservabilityEvent.LIFECYCLE_FAILED} loom.name="Load step" pw=***'
+        )
+
+    def test_the_message_has_the_running_context_and_the_trace(
+        self, sent: list[dict[str, Any]]
+    ) -> None:
+        handler = PrefectLogBridgeHandler(uuid.uuid4())
+
+        with log_context({LogField.JOB: "Load"}), active_trace_id("trace-1"):
+            handler.handle(_record())
+
+        assert sent[0]["message"] == "hello loom.job.name=Load trace_id=trace-1"
+
+    def test_a_failure_sends_its_stack_after_the_line(self, sent: list[dict[str, Any]]) -> None:
         try:
-            with bind_task_run(task_id):
-                payload = handler._record_to_payload(record)
-        finally:
-            handler.close()
-        assert payload is not None
-        assert payload["level"] == level
+            raise ValueError("boom")
+        except ValueError:
+            exc_info = sys.exc_info()
+        record = _record("failed", logging.ERROR, exc_info=exc_info)
+
+        PrefectLogBridgeHandler(uuid.uuid4()).handle(record)
+
+        first, *stack = sent[0]["message"].split("\n")
+        assert first.startswith("failed ")
+        assert stack[-1] == "  | ValueError: boom"
+
+    def test_the_shared_record_is_not_given_the_run_ids(
+        self, sent: list[dict[str, Any]], task_run_id: uuid.UUID
+    ) -> None:
+        record = _record()
+
+        PrefectLogBridgeHandler(uuid.uuid4()).handle(record)
+
+        assert not {"flow_run_id", "task_run_id"} & set(vars(record))
+
+    def test_a_thread_without_the_callers_context_still_carries_the_flow_run(
+        self, sent: list[dict[str, Any]], task_run_id: uuid.UUID
+    ) -> None:
+        flow_id = uuid.uuid4()
+        handler = PrefectLogBridgeHandler(flow_id)
+        thread = threading.Thread(target=lambda: handler.handle(_record()))
+
+        thread.start()
+        thread.join()
+
+        (payload,) = sent
+        assert (payload["flow_run_id"], payload["task_run_id"]) == (str(flow_id), None)
+
+
+class TestLogBridge:
+    @staticmethod
+    def _bridges() -> list[logging.Handler]:
+        return [
+            h for h in logging.getLogger("loom").handlers if isinstance(h, PrefectLogBridgeHandler)
+        ]
+
+    def test_ships_only_loom_records_and_drains_and_detaches_on_exit(
+        self, sent: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        drained: list[int] = []
+        monkeypatch.setattr(APILogWorker, "drain_all", lambda **_kw: drained.append(1))
+        flow_id = uuid.uuid4()
+        library_logger = logging.getLogger("a.library")
+
+        with log_bridge(flow_id):
+            logging.getLogger("loom.test").warning(ObservabilityEvent.LIFECYCLE_FAILED)
+            library_logger.warning("theirs")
+            drained_inside = list(drained)
+
+        assert [p["message"] for p in sent] == [ObservabilityEvent.LIFECYCLE_FAILED]
+        assert (drained_inside, drained, self._bridges()) == ([], [1], [])
+
+    def test_no_flow_run_attaches_nothing(self) -> None:
+        with log_bridge(None):
+            attached = self._bridges()
+
+        assert attached == []
+
+    def test_a_flow_body_runs_inside_the_bridge(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        flow_id = uuid.uuid4()
+        inside: list[list[logging.Handler]] = []
+        monkeypatch.setattr(_assemble, "prefect_flow_run_id", lambda: flow_id)
+        flow = assemble_flow(
+            name="probe",
+            body=lambda **_kw: inside.append(self._bridges()),
+            signature=inspect.Signature(),
+            params_type=msgspec.Struct,
+            settings=flow_settings_from_mapping({}),
+            config_path="probe.yaml",
+            source_file=__file__,
+        )
+
+        flow.fn()
+
+        assert len(inside[0]) == 1
+        assert self._bridges() == []

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
+from loom.core.errors import InvalidType
 from loom.core.projection.loaders import (
     _MemoryCountLoader,
     _MemoryExistsLoader,
@@ -25,10 +26,7 @@ class _FakeNote:
 
 
 def _obj_with_relation(relation_name: str, related: list[Any]) -> Any:
-    obj = MagicMock()
-    obj.__dict__[relation_name] = related
-    setattr(obj, relation_name, related)
-    return obj
+    return SimpleNamespace(**{relation_name: related})
 
 
 # ---------------------------------------------------------------------------
@@ -63,18 +61,14 @@ class TestMemoryLoadersLoadFromObject:
 
     def test_count_none_relation_treated_as_empty(self) -> None:
         loader = _MemoryCountLoader(relation="notes")
-        obj = MagicMock()
-        obj.__dict__["notes"] = None
-        obj.notes = None
+        obj = SimpleNamespace(notes=None)
 
         assert loader.load_from_object(obj) == 0
 
     def test_join_fields_single_object_wrapped_in_list(self) -> None:
         owner = _FakeNote(7, "owner")
         loader = _MemoryJoinFieldsLoader(relation="owner", value_columns=("id",))
-        obj = MagicMock()
-        obj.__dict__["owner"] = owner
-        obj.owner = owner
+        obj = SimpleNamespace(owner=owner)
 
         assert loader.load_from_object(obj) == [{"id": 7}]
 
@@ -92,7 +86,7 @@ class TestMemoryLoadersSafetyCheck:
             pass
 
         bare = _Bare()
-        with pytest.raises(RuntimeError, match="relation 'notes' on _Bare"):
+        with pytest.raises(InvalidType, match="relation 'notes' on _Bare"):
             loader.load_from_object(bare)
 
     def test_error_includes_model_class_name(self) -> None:
@@ -102,7 +96,7 @@ class TestMemoryLoadersSafetyCheck:
             pass
 
         entity = MyEntity()
-        with pytest.raises(RuntimeError, match="MyEntity"):
+        with pytest.raises(InvalidType, match="MyEntity"):
             loader.load_from_object(entity)
 
     def test_error_includes_relation_name(self) -> None:
@@ -112,5 +106,5 @@ class TestMemoryLoadersSafetyCheck:
             pass
 
         model = SomeModel()
-        with pytest.raises(RuntimeError, match="attachments"):
+        with pytest.raises(InvalidType, match="attachments"):
             loader.load_from_object(model)

@@ -8,12 +8,12 @@ from typing import Any, ClassVar
 
 import pytest
 
-from loom.core.engine.events import EventKind, RuntimeEvent
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.events import EventKind, ExecutionEvent
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.post_commit import active_channel
 from loom.core.job.context import add_pending_dispatch
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.scope import current_scope
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.scope import current_scope
 from loom.core.use_case.use_case import UseCase
 
 
@@ -30,14 +30,14 @@ class Log:
         return self.entries.index(entry)
 
 
-class Metrics:
-    """Metrics adapter recording every event, in order, on the shared log when given."""
+class RecordingExecutionObserver:
+    """Execution observer recording every event, in order, on the shared log when given."""
 
     def __init__(self, log: Log | None = None) -> None:
-        self.events: list[RuntimeEvent] = []
+        self.events: list[ExecutionEvent] = []
         self._log = log
 
-    def on_event(self, event: RuntimeEvent) -> None:
+    def on_event(self, event: ExecutionEvent) -> None:
         self.events.append(event)
         if self._log is not None:
             self._log(f"event.{event.kind.name}")
@@ -45,21 +45,21 @@ class Metrics:
     def kinds(self) -> list[EventKind]:
         return [event.kind for event in self.events]
 
-    def only(self, kind: EventKind) -> RuntimeEvent:
+    def only(self, kind: EventKind) -> ExecutionEvent:
         matching = [event for event in self.events if event.kind is kind]
         assert len(matching) == 1, matching
         return matching[0]
 
 
 class Broker:
-    """Job service double: ``dispatch`` enqueues a send on the post-commit channel."""
+    """Job service double: ``dispatch_after_commit`` enqueues a send on the post-commit channel."""
 
     def __init__(self, log: Log) -> None:
         self._log = log
         self.sent: list[str] = []
         self.failing: set[str] = set()
 
-    def dispatch(self, job_name: str) -> None:
+    def dispatch_after_commit(self, job_name: str) -> None:
         def send() -> None:
             scope = current_scope()
             open_uow = scope is not None and bool(scope.participants)
@@ -84,7 +84,7 @@ class StubUnitOfWork:
         begin_raises: Exception ``begin`` raises, if any.
     """
 
-    transactional: ClassVar[bool] = True
+    is_transactional: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -188,7 +188,7 @@ class Dispatching(UseCase[Any, str]):
         self._broker = broker
 
     async def execute(self, value: str) -> str:
-        self._broker.dispatch(value)
+        self._broker.dispatch_after_commit(value)
         return value
 
 
@@ -197,7 +197,7 @@ class DispatchThenFail(UseCase[Any, str]):
         self._broker = broker
 
     async def execute(self, value: str) -> str:
-        self._broker.dispatch(value)
+        self._broker.dispatch_after_commit(value)
         raise RuntimeError("after dispatch")
 
 
@@ -206,7 +206,7 @@ def context_is_clean() -> bool:
     return current_scope() is None and active_channel() is None
 
 
-def start_hanging(executor: RuntimeExecutor) -> tuple[asyncio.Task[None], list[bool]]:
+def start_hanging(executor: UseCaseExecutor) -> tuple[asyncio.Task[None], list[bool]]:
     """Start a hanging execution in a task that records its own context state at the end.
 
     The task runs in a copied context, so the cleanliness check must happen
@@ -223,7 +223,7 @@ def start_hanging(executor: RuntimeExecutor) -> tuple[asyncio.Task[None], list[b
     return asyncio.create_task(run()), observed
 
 
-async def cancel_mid_flight(executor: RuntimeExecutor) -> None:
+async def cancel_mid_flight(executor: UseCaseExecutor) -> None:
     """Cancel a hanging execution once and assert the task saw a clean context."""
     task, observed = start_hanging(executor)
     await asyncio.sleep(0.01)

@@ -1,4 +1,4 @@
-"""Build a persistence backend the way the composition root does."""
+"""Build a store backend the way the composition root does."""
 
 from __future__ import annotations
 
@@ -7,21 +7,23 @@ from typing import Any
 
 import pytest
 
+from loom.connections.aws import AwsClients
 from loom.core.config import ConfigContext
 from loom.core.model import BaseModel
-from loom.core.persistence import (
+from loom.core.stores import (
     SERVER_PROFILE,
-    BackendRuntime,
-    PersistenceBackend,
-    PersistenceWiring,
     PoolMetricsSink,
     RuntimeProfile,
+    StorePlugin,
+    StorePluginContext,
+    StoreWiring,
 )
-from loom.core.persistence.stores import DEFAULT_STORE, StoreCatalog, StoreKey, load_catalog
+from loom.core.stores.catalog import DEFAULT_STORE, StoreCatalog, StoreKey, load_catalog
+from loom.core.stores.repository import CursorCodec
 
 
 def build_backend(
-    backend: PersistenceBackend,
+    backend: StorePlugin,
     ctx: ConfigContext,
     models: Sequence[type[BaseModel]] = (),
     profile: RuntimeProfile = SERVER_PROFILE,
@@ -29,16 +31,19 @@ def build_backend(
     pool_metrics: PoolMetricsSink | None = None,
     connection_only: bool = False,
     store: StoreKey = DEFAULT_STORE,
-) -> PersistenceWiring:
+    aws: AwsClients | None = None,
+) -> StoreWiring:
     """Build *backend* for *store* with the catalog of *ctx*, loaded once, as a composition does."""
-    runtime = BackendRuntime(
+    context = StorePluginContext(
         profile,
         pool_metrics=pool_metrics,
         connection_only=connection_only,
         catalog=load_catalog(ctx),
         store=store,
+        cursor_codec=CursorCodec.from_context(ctx),
+        aws=AwsClients() if aws is None else aws,
     )
-    return backend.build(ctx, models, runtime)
+    return backend.build(ctx, models, context)
 
 
 def record_catalogs(monkeypatch: pytest.MonkeyPatch) -> list[StoreCatalog]:

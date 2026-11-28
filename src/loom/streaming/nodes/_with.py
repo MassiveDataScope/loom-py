@@ -9,7 +9,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Generic, TypeGuard, TypeVar
 
 from loom.core.config import Configurable
-from loom.core.logger import LoggerPort, get_logger
+from loom.core.errors import InvalidType, InvalidValue
 from loom.core.model import LoomFrozenStruct, LoomStruct
 
 if TYPE_CHECKING:
@@ -34,7 +34,7 @@ class ResourceScope(StrEnum):
     BATCH = "batch"
 
 
-class ContextFactory(Configurable):
+class ContextSupplier(Configurable):
     """Factory that creates a fresh context manager on demand.
 
     Pattern:
@@ -48,34 +48,18 @@ class ContextFactory(Configurable):
 
     Example::
 
-        db = ContextFactory(lambda: SessionLocal())
+        db = ContextSupplier(lambda: SessionLocal())
         With(process=Process(ValidateOrder, IntoTopic("validated")), scope=BATCH, db=db)
     """
 
-    __slots__ = ("_factory", "_log")
+    __slots__ = ("_factory",)
 
     def __init__(self, factory: Callable[[], ContextDependency]) -> None:
         self._factory = factory
-        self._log: LoggerPort | None = None
 
     def create(self) -> ContextDependency:
         """Return a fresh context-manager instance."""
         return self._factory()
-
-    @property
-    def log(self) -> LoggerPort:
-        """Structured logger bound to this factory class and module."""
-        logger = self._log
-        if logger is None:
-            cls = type(self)
-            logger = get_logger(cls.__qualname__).bind(
-                component="context_factory",
-                class_name=cls.__qualname__,
-                module=cls.__module__,
-                factory_name=cls.__qualname__,
-            )
-            self._log = logger
-        return logger
 
 
 class _WithBase(Generic[InT, OutT]):
@@ -85,7 +69,7 @@ class _WithBase(Generic[InT, OutT]):
         Wrapper node.
 
     Classifies keyword dependencies into async context managers, sync context
-    managers, :class:`ContextFactory` instances, and plain values.  Subclasses
+    managers, :class:`ContextSupplier` instances, and plain values.  Subclasses
     are responsible for declaring and validating their primary execution target
     (a step or a process).
 
@@ -97,7 +81,7 @@ class _WithBase(Generic[InT, OutT]):
 
     __slots__ = (
         "_async_contexts",
-        "_context_factories",
+        "_context_suppliers",
         "_plain_deps",
         "_sync_contexts",
         "process",
@@ -115,11 +99,11 @@ class _WithBase(Generic[InT, OutT]):
         self.scope = scope
         sync_contexts: dict[str, SyncContextDependency] = {}
         async_contexts: dict[str, AsyncContextDependency] = {}
-        context_factories: dict[str, ContextFactory] = {}
+        context_suppliers: dict[str, ContextSupplier] = {}
         plain_deps: dict[str, object] = {}
         for name, dependency in dependencies.items():
-            if isinstance(dependency, ContextFactory):
-                context_factories[name] = dependency
+            if isinstance(dependency, ContextSupplier):
+                context_suppliers[name] = dependency
             elif _is_sync_context_manager(dependency):
                 sync_contexts[name] = dependency
             elif _is_async_context_manager(dependency):
@@ -128,7 +112,7 @@ class _WithBase(Generic[InT, OutT]):
                 plain_deps[name] = dependency
         self._sync_contexts = sync_contexts
         self._async_contexts = async_contexts
-        self._context_factories = context_factories
+        self._context_suppliers = context_suppliers
         self._plain_deps = plain_deps
 
     @property
@@ -142,9 +126,9 @@ class _WithBase(Generic[InT, OutT]):
         return MappingProxyType(self._async_contexts)
 
     @property
-    def context_factories(self) -> Mapping[str, ContextFactory]:
+    def context_suppliers(self) -> Mapping[str, ContextSupplier]:
         """Context-manager factories keyed by injection name."""
-        return MappingProxyType(self._context_factories)
+        return MappingProxyType(self._context_suppliers)
 
     @property
     def plain_deps(self) -> Mapping[str, object]:
@@ -173,7 +157,7 @@ class With(_WithBase[InT, OutT]):
             values injected into step execution.
 
     Raises:
-        TypeError: If an async context manager is passed directly.
+        InvalidType: If an async context manager is passed directly.
 
     Example::
 
@@ -196,7 +180,7 @@ class With(_WithBase[InT, OutT]):
         super().__init__(scope=scope, process=process, **dependencies)
         if self._async_contexts:
             names = ", ".join(self._async_contexts.keys())
-            raise TypeError(
+            raise InvalidType(
                 f"With only accepts sync context managers. "
                 f"Async context manager(s) found: {names}. "
                 f"Use WithAsync for async context managers."
@@ -228,9 +212,9 @@ class WithAsync(_WithBase[InT, OutT]):
             values injected into step execution.
 
     Raises:
-        TypeError: If a sync context manager is passed directly.
-        ValueError: If *max_concurrency* is not positive.
-        ValueError: If *task_timeout_ms* is not positive when provided.
+        InvalidType: If a sync context manager is passed directly.
+        InvalidValue: If *max_concurrency* is not positive.
+        InvalidValue: If *task_timeout_ms* is not positive when provided.
 
     Example::
 
@@ -238,7 +222,7 @@ class WithAsync(_WithBase[InT, OutT]):
             process=Process(FetchTask(), IntoTopic("results", payload=Result)),
             scope=ResourceScope.WORKER,
             max_concurrency=50,
-            http=ContextFactory(lambda: httpx.AsyncClient()),
+            http=ContextSupplier(lambda: httpx.AsyncClient()),
         )
     """
 
@@ -254,13 +238,13 @@ class WithAsync(_WithBase[InT, OutT]):
         **dependencies: object,
     ) -> None:
         if max_concurrency <= 0:
-            raise ValueError("max_concurrency must be greater than zero")
+            raise InvalidValue("max_concurrency must be greater than zero")
         if task_timeout_ms is not None and task_timeout_ms <= 0:
-            raise ValueError("task_timeout_ms must be greater than zero when provided")
+            raise InvalidValue("task_timeout_ms must be greater than zero when provided")
         super().__init__(scope=scope, process=process, **dependencies)
         if self._sync_contexts:
             names = ", ".join(self._sync_contexts.keys())
-            raise TypeError(
+            raise InvalidType(
                 f"WithAsync only accepts async context managers. "
                 f"Sync context manager(s) found: {names}. "
                 f"Use With for sync context managers."
@@ -280,7 +264,7 @@ def _is_async_context_manager(value: object) -> TypeGuard[AsyncContextDependency
 __all__ = [
     "AsyncContextDependency",
     "ContextDependency",
-    "ContextFactory",
+    "ContextSupplier",
     "ResourceScope",
     "SyncContextDependency",
     "With",

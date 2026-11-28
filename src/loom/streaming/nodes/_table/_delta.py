@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from tempfile import SpooledTemporaryFile
@@ -13,12 +14,16 @@ import pyarrow as _pa
 import pyarrow.ipc as _pa_ipc
 from deltalake.writer import WriterProperties, write_deltalake
 
+from loom.core.log_names import LogField
 from loom.core.model.redaction import reveal_for_driver
+from loom.streaming.event import StreamingEvent, StreamingKey
 from loom.streaming.nodes._table.common import (
     DeltaSinkConfig,
     _column_names,
     _set_column_values,
 )
+
+_log = logging.getLogger(__name__)
 
 
 def build_writer_properties(config: Mapping[str, Any]) -> WriterProperties:
@@ -53,9 +58,7 @@ class _DeltaTablePartition:
         self,
         settings: DeltaSinkConfig,
         payload_type: type[Any],
-        logger: Any = None,
     ) -> None:
-        self._logger = logger
         self._column_names = _column_names(payload_type)
         self._target = f"Delta table {settings.table!r}"
         self._uri = settings.uri
@@ -122,23 +125,8 @@ class _DeltaTablePartition:
         if self._ipc_writer is None:
             options = _pa_ipc.IpcWriteOptions(compression=self._ipc_compression())
             self._ipc_writer = _pa_ipc.new_stream(self._spool, batch.schema, options=options)
-            if self._logger is not None:
-                self._logger.debug(
-                    "delta_staging_stream_opened",
-                    uri=self._uri,
-                    schema_fields=len(batch.schema),
-                    compression=self._staging_compression,
-                )
         self._ipc_writer.write_batch(batch)
-        pos = self._spool.tell()
-        self._staged_bytes = pos
-        if self._logger is not None:
-            self._logger.debug(
-                "delta_mini_batch_written",
-                uri=self._uri,
-                batch_rows=len(self._mini_batch),
-                spool_bytes=pos,
-            )
+        self._staged_bytes = self._spool.tell()
         self._mini_batch.clear()
 
     def _should_flush(self) -> bool:
@@ -147,13 +135,10 @@ class _DeltaTablePartition:
         if self._staged_records >= self._buffer_policy.max_records:
             return True
         if self._staged_bytes >= self._buffer_policy.max_bytes:
-            if self._logger is not None:
-                self._logger.warning(
-                    "delta_staging_max_bytes_reached",
-                    uri=self._uri,
-                    staged_bytes=self._staged_bytes,
-                    max_bytes=self._buffer_policy.max_bytes,
-                )
+            _log.warning(
+                StreamingEvent.DELTA_STAGING_LIMIT_REACHED,
+                extra={StreamingKey.TARGET: self._uri},
+            )
             return True
         if self._buffer_started_at is None:
             return False
@@ -180,13 +165,10 @@ class _DeltaTablePartition:
             reader = _pa_ipc.open_stream(spool)
             self._write_to_delta(reader, n, trace_id, correlation_id, t0)
         except Exception:
-            if self._logger is not None:
-                self._logger.error(
-                    "sink_flush_error",
-                    backend="delta",
-                    uri=self._uri,
-                    records=n,
-                )
+            _log.error(
+                StreamingEvent.SINK_FLUSH_FAILED,
+                extra={StreamingKey.TARGET: self._uri, StreamingKey.RECORDS: n},
+            )
             raise
         finally:
             spool.close()
@@ -210,24 +192,17 @@ class _DeltaTablePartition:
             kwargs["target_file_size"] = self._target_file_size
         if self._writer_properties is not None:
             kwargs["writer_properties"] = self._writer_properties
-        if self._logger is not None:
-            self._logger.debug(
-                "delta_write_start",
-                uri=self._uri,
-                records=n,
-                mode=self._mode,
-            )
         write_deltalake(self._uri.reveal(), reader, **kwargs)
-        if self._logger is not None:
-            self._logger.info(
-                "sink_flush",
-                trace_id=trace_id,
-                correlation_id=correlation_id,
-                backend="delta",
-                uri=self._uri,
-                records=n,
-                duration_ms=round((monotonic() - t0) * 1000, 1),
-            )
+        _log.info(
+            StreamingEvent.SINK_FLUSHED,
+            extra={
+                LogField.TRACE_ID: trace_id,
+                LogField.CORRELATION_ID: correlation_id,
+                StreamingKey.TARGET: self._uri,
+                StreamingKey.RECORDS: n,
+                LogField.DURATION_MS: round((monotonic() - t0) * 1000, 1),
+            },
+        )
 
     def close(self) -> int:
         """Flush staged records if configured and release all resources.
@@ -241,11 +216,13 @@ class _DeltaTablePartition:
         try:
             if self._staged_records and self._buffer_policy.flush_on_shutdown:
                 return self._flush()
-            if self._staged_records and self._logger is not None:
-                self._logger.warning(
-                    "delta_staged_records_discarded_on_close",
-                    uri=self._uri,
-                    records=self._staged_records,
+            if self._staged_records:
+                _log.warning(
+                    StreamingEvent.DELTA_STAGED_RECORDS_DISCARDED,
+                    extra={
+                        StreamingKey.TARGET: self._uri,
+                        StreamingKey.RECORDS: self._staged_records,
+                    },
                 )
             return 0
         finally:

@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.use_case.use_case import UseCase
 
@@ -34,13 +34,13 @@ def compiler() -> UseCaseCompiler:
 
 
 @pytest.fixture
-def executor(compiler: UseCaseCompiler) -> RuntimeExecutor:
-    return RuntimeExecutor(compiler)
+def executor(compiler: UseCaseCompiler) -> UseCaseExecutor:
+    return UseCaseExecutor(compiler)
 
 
 class TestSubclassPlanResolution:
     async def test_parent_compiled_first_child_executes_with_its_own_plan(
-        self, compiler: UseCaseCompiler, executor: RuntimeExecutor
+        self, compiler: UseCaseCompiler, executor: UseCaseExecutor
     ) -> None:
         parent, child = _fresh_hierarchy()
         compiler.compile(parent)
@@ -55,7 +55,7 @@ class TestSubclassPlanResolution:
         assert child_plan is not _own_plan(parent)
 
     async def test_child_compiled_first_parent_executes_with_its_own_plan(
-        self, compiler: UseCaseCompiler, executor: RuntimeExecutor
+        self, compiler: UseCaseCompiler, executor: UseCaseExecutor
     ) -> None:
         parent, child = _fresh_hierarchy()
         compiler.compile(child)
@@ -68,7 +68,7 @@ class TestSubclassPlanResolution:
         assert parent_plan.use_case_type is parent
 
     async def test_both_compiled_explicitly(
-        self, compiler: UseCaseCompiler, executor: RuntimeExecutor
+        self, compiler: UseCaseCompiler, executor: UseCaseExecutor
     ) -> None:
         parent, child = _fresh_hierarchy()
         compiler.compile(parent)
@@ -78,7 +78,7 @@ class TestSubclassPlanResolution:
         assert await executor.execute(parent(), params={"value": "v"}) == "parent:v"
 
     async def test_parent_only_params_bind_against_the_child_plan(
-        self, compiler: UseCaseCompiler, executor: RuntimeExecutor
+        self, compiler: UseCaseCompiler, executor: UseCaseExecutor
     ) -> None:
         parent, child = _fresh_hierarchy()
         compiler.compile(parent)

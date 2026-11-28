@@ -43,7 +43,7 @@ ai:
   specs: ["ai/agents/*/agent.yaml"]
 ```
 
-or declare them on the application manifest's `AGENTS` attribute instead. The
+or declare them in `app.agents` instead. The
 two are **mutually exclusive**: declaring both is a compilation error, because
 an application must have exactly one answer to "which agents do I run".
 
@@ -119,7 +119,7 @@ metadata:
 | `conversation` | no | — | Use case executed before a run that carries a `conversation_id`; returns the prior history; see below. |
 | `capabilities` | no | `[]` | Explicit grants. Empty means the agent can only talk. |
 | `policies` | no | see below | Execution limits. |
-| `metadata` | no | `{}` | Free-form `string: string` labels. **Never published**, never read by the runtime. |
+| `metadata` | no | `{}` | Free-form `string: string` labels. **Never published**, never read by the host. |
 
 ### `instructions` are not authorization
 
@@ -324,6 +324,7 @@ output_check: "myapp.agents.checks:incident_answer_complete"
 from typing import Any
 from collections.abc import Mapping
 
+
 def incident_answer_complete(answer: Mapping[str, Any]) -> str | None:
     if not answer.get("root_cause"):
         return "The answer is missing a root cause; consult the incident timeline."
@@ -358,7 +359,7 @@ on_output:
 `usecase` is a use-case key of the registry; it must not also be a grant.
 
 For every run that **completes** with an output validated against the declared
-shape, the runtime executes that use case **exactly once**, as the caller,
+shape, the host executes that use case **exactly once**, as the caller,
 through the normal use-case path — executor, rules, unit of work. The use
 case's return value comes back to the caller as `hook_result`.
 
@@ -383,12 +384,12 @@ context beside it:
 |---|---|
 | `output` | The validated answer, as **one nested value**, whatever the artifact's `output` block declares. |
 | `messages` | This run's **new** messages in the engine's serialised form, as `bytes`; `None` on a run that carried no conversation. See [`conversation`](#conversation--loading-the-prior-turns). Never return `cmd.messages` or the stored thread from the hook: `hook_result` is encoded as-is. |
-| `interaction_id` | Identifier the runtime mints for every admitted run. |
+| `interaction_id` | Identifier the host mints for every admitted run. |
 | `conversation_id` | The request's `conversation_id`, verbatim; `None` when the request carried none; over A2A it is never `None`: loom mints a `contextId` when the client sends none. |
 | `subject`, `mechanism` | The caller's identity. |
 | `agent`, `provider`, `model` | The agent's name, and the provider and model its `model_role` resolved to. |
 
-**The Command declares what it wants** and receives only that: the runtime
+**The Command declares what it wants** and receives only that: the host
 filters the offered names down to the ones the Input declares, so a strict
 Command (`forbid_unknown_fields=True`) decodes without listing every context
 name. Because `output` is always nested, a field called `subject` inside the
@@ -396,7 +397,7 @@ model's answer can never shadow the caller's.
 
 ```python
 class RecordTriageCommand(Command):
-    output: TriageReport                # the type_ref type itself; dict[str, Any] also works
+    output: TriageReport  # the type_ref type itself; dict[str, Any] also works
     interaction_id: str
     conversation_id: str | None = None
     agent: str
@@ -416,14 +417,18 @@ class RecordTriage(UseCase[Triage, TriageRecorded]):
     async def execute(
         self,
         cmd: RecordTriageCommand = Input(),
-        caller: Identity = Caller(),      # the agent's caller
+        caller: Identity = Caller(),  # the agent's caller
     ) -> TriageRecorded:
         report = cmd.output
         await self._triages.save(
             Triage(
-                id=cmd.interaction_id, conversation_id=cmd.conversation_id,
-                subject=caller.subject, agent=cmd.agent, model=cmd.model,
-                incident_ref=report.incident_ref, severity=report.severity,
+                id=cmd.interaction_id,
+                conversation_id=cmd.conversation_id,
+                subject=caller.subject,
+                agent=cmd.agent,
+                model=cmd.model,
+                incident_ref=report.incident_ref,
+                severity=report.severity,
                 confidence=report.confidence,
             )
         )
@@ -458,7 +463,7 @@ when the application compiles its agents.
 
 Same vocabulary, same registry, same caller identity, same executor — and
 opposite owners. A **grant** is a tool the *model* may call, when and how it
-decides. A **hook** is a use case the *runtime* calls, once, with the
+decides. A **hook** is a use case the *host* calls, once, with the
 validated output. That is why one key cannot be both. Deciding whether an
 operation is a tool at all follows
 [the rule](mcp.md#the-rule-your-own-tools-are-a-usecase-grant) on the MCP page;
@@ -591,7 +596,7 @@ conversation:
 
 The `on_output` use case persists the answer and the turn's messages. The `conversation` use case returns the prior messages, or `None`.
 
-For every run that carries a `conversation_id`, the runtime executes that use
+For every run that carries a `conversation_id`, the host executes that use
 case **exactly once, before the engine starts**, as the caller, through the
 same path as `on_output` — executor, rules, unit of work. The use case returns
 the prior turns of that conversation as opaque `bytes`, or `None` on the first
@@ -610,13 +615,13 @@ case and the engine runs single-shot.
 
 ### The loader contract
 
-The runtime offers the loader's Input five names and, exactly as for the
+The host offers the loader's Input five names and, exactly as for the
 hook, filters them down to the ones the Input declares:
 
 | Name | Value |
 |---|---|
 | `conversation_id` | The request's `conversation_id`, verbatim. **The Input must declare it**: a loader that cannot know which conversation it loads is refused at compile time. |
-| `interaction_id` | Identifier the runtime mints for every admitted run, so an auditing loader can correlate with the run's own log line. |
+| `interaction_id` | Identifier the host mints for every admitted run, so an auditing loader can correlate with the run's own log line. |
 | `subject`, `mechanism` | The caller's identity. |
 | `agent` | The agent's name. |
 
@@ -638,8 +643,8 @@ not JSON and fails the next turn with `CONVERSATION_LOAD_FAILED`.
 
 ```python
 class LoadConversationCommand(Command):
-    conversation_id: str                    # required: the loader must know the thread
-    agent: str                              # scope: a thread belongs to one agent
+    conversation_id: str  # required: the loader must know the thread
+    agent: str  # scope: a thread belongs to one agent
     # `interaction_id`, `subject`, `mechanism` are offered but not declared: filtered out.
 
 
@@ -651,12 +656,12 @@ class LoadConversation(UseCase[Thread, bytes | None]):
     async def execute(
         self,
         cmd: LoadConversationCommand = Input(),
-        caller: Identity = Caller(),        # tenancy: the thread must belong to this caller
+        caller: Identity = Caller(),  # tenancy: the thread must belong to this caller
     ) -> bytes | None:
         thread = await self._threads.get(
             owner=caller.subject, agent=cmd.agent, id=cmd.conversation_id
         )
-        return None if thread is None else thread.messages    # one JSON array, stored verbatim
+        return None if thread is None else thread.messages  # one JSON array, stored verbatim
 
 
 class RecordTurnCommand(Command):
@@ -664,7 +669,7 @@ class RecordTurnCommand(Command):
     interaction_id: str
     agent: str
     conversation_id: str | None = None
-    messages: bytes | None = None           # this run's new messages; None on a single-shot run
+    messages: bytes | None = None  # this run's new messages; None on a single-shot run
 
 
 @use_case_key("incidents.record_turn")
@@ -775,7 +780,7 @@ already-committed `200`, exactly as admission is today.
 
 ### What the engine receives
 
-The runtime hands the engine one neutral value, `Conversation(conversation_id,
+The host hands the engine one neutral value, `Conversation(conversation_id,
 history)` — exported from `loom.ai` — only when the artifact declares a loader
 and the run carries a `conversation_id`; otherwise it receives `None` and
 follows the single-shot path exactly, serialising nothing. `Conversation`,
@@ -803,7 +808,7 @@ stamp — the hook's command carries loom's `conversation_id` beside `messages`
 ```{admonition} Breaking for third-party engines
 :class: warning
 `AgentEngine.run` and `run_stream` gained a keyword-only parameter,
-`conversation: Conversation | None = None`, and the runtime passes
+`conversation: Conversation | None = None`, and the host passes
 `conversation=` on **every** run. The handshake version is bumped so a
 mismatch is refused at load rather than failing every run: an engine built
 for this release must declare `LOOM_AI_ENGINE_API = 2`. The engine surface is
@@ -817,7 +822,7 @@ Clients keep sending `{"prompt", "conversation_id"}`. The `/run` body has
 exactly `output`, `usage`, `interaction_id` and `hook_result`; the `final`
 frame has the same four keys; `messages` and `provider_details` appear in
 neither, nor in any A2A frame. Over A2A the thread travels as the message's `contextId`, which the
-runtime treats as the `conversation_id` (see [the A2A surface](a2a.md#conversations)).
+host treats as the `conversation_id` (see [the A2A surface](a2a.md#conversations)).
 
 ### Two turns
 
@@ -984,7 +989,7 @@ exception class is reported, its message is not.
 
 A toolset caches through `cached_calls`, never by writing its own keys: a
 factory typed `(ctx: ToolsetContext) -> AbstractToolset[Any]` returns
-`FunctionToolset(cached_calls(ctx.container).bind(MyTools()))`, and every method
+`FunctionToolset(cached_calls(ctx.container).wrap_methods(MyTools()))`, and every method
 marked `@cache_call` is served from the application's `cache:` section. What is
 cached, what is refused and why a cached call is never invalidated are in
 [Caching any coroutine](../rest/cache.md#caching-any-coroutine).
@@ -1422,8 +1427,8 @@ a generator in **any** language can validate an artifact:
 ```python
 from loom.ai.declarative import agent_spec_json_schema, agent_spec_schema_path
 
-agent_spec_json_schema(1)      # the document, as a dict
-agent_spec_schema_path(1)      # the path of the file shipped in the distribution
+agent_spec_json_schema(1)  # the document, as a dict
+agent_spec_schema_path(1)  # the path of the file shipped in the distribution
 ```
 
 The file ships inside the wheel and the sdist at

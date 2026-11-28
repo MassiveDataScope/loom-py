@@ -25,7 +25,7 @@ _SIGNATURES: dict[frozenset[str], str] = {
     frozenset({"url", "password", "executor_threads"}): (
         "core/connections/clickhouse/config.py:ClickHouseConnection"
     ),
-    frozenset({"url", "connect_args"}): "core/persistence/database.py:DatabaseConfig",
+    frozenset({"url", "connect_args"}): "core/stores/database.py:DatabaseConfig",
 }
 
 _DRIVER_MODULES = frozenset({"boto3", "clickhouse_connect", "pymongo"})
@@ -33,9 +33,9 @@ _DRIVER_FACTORIES = frozenset({"client", "resource", "Session", "get_client", "g
 _DRIVER_CLASSES = frozenset({"MongoClient", "AsyncMongoClient"})
 _BUILDERS = frozenset(
     {
-        "core/connections/aws/client.py",
-        "core/connections/clickhouse/client.py",
-        "core/connections/mongo/client.py",
+        "connections/aws/client.py",
+        "connections/clickhouse/client.py",
+        "connections/mongo/client.py",
     }
 )
 

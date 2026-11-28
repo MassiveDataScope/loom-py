@@ -10,7 +10,7 @@ import pytest
 
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.errors import UnsupportedQuery
-from loom.core.repository.abc import (
+from loom.core.stores.repository import (
     Cursor,
     CursorCodec,
     CursorConfig,
@@ -18,8 +18,9 @@ from loom.core.repository.abc import (
     PaginationMode,
     QuerySpec,
 )
+from loom.testing import make
 
-_QUERY = QuerySpec(pagination=PaginationMode.CURSOR)
+_QUERY = make(QuerySpec, pagination=PaginationMode.CURSOR)
 _POSITION = Cursor(backend="sqlalchemy", keys=(), tie_breaker=1)
 _ENV = "CURSOR_KEY_TEST"
 
@@ -51,7 +52,7 @@ def _from_env(monkeypatch: pytest.MonkeyPatch, secret: str) -> CursorCodec:
 
 class TestDefaultMode:
     def test_without_keys_the_default_fails_and_names_the_opt_out(self) -> None:
-        with pytest.raises(ConfigError, match=r"persistence\.cursors\.signing: ephemeral"):
+        with pytest.raises(ConfigError, match=r"stores\.settings\.cursors\.signing: ephemeral"):
             CursorCodec.from_config(CursorConfig())
 
     def test_the_default_signs_and_refuses_an_unsigned_token(
@@ -67,19 +68,29 @@ class TestDefaultMode:
 class TestSection:
     @pytest.mark.parametrize(
         "section",
-        [{"signing": "sigend"}, {"singing": "ephemeral"}, {"keys": {"k1": {}}}],
-        ids=["unknown-mode", "unknown-field", "sourceless-key"],
+        [
+            {"signing": "sigend"},
+            {"signing": "disabled"},
+            {"singing": "ephemeral"},
+            {"keys": {"k1": {}}},
+        ],
+        ids=["unknown-mode", "disabled-mode", "unknown-field", "sourceless-key"],
     )
     def test_an_invalid_section_fails_startup(self, section: dict[str, object]) -> None:
-        ctx = ConfigContext.from_dict({"persistence": {"cursors": section}})
+        ctx = ConfigContext.from_dict({"stores": {"settings": {"cursors": section}}})
 
-        with pytest.raises(ConfigError, match=r"persistence\.cursors"):
+        with pytest.raises(ConfigError, match=r"stores\.settings\.cursors"):
             CursorCodec.from_context(ctx)
 
-    def test_an_absent_section_is_the_signed_default(self) -> None:
+    def test_an_absent_section_builds_the_disabled_codec(self) -> None:
         ctx = ConfigContext.from_dict({"stores": {"default": {"backend": "sqlalchemy"}}})
 
-        with pytest.raises(ConfigError, match=r"persistence\.cursors\.signing: ephemeral"):
+        assert CursorCodec.from_context(ctx) is CursorCodec.disabled()
+
+    def test_an_empty_section_is_the_signed_default_and_needs_keys(self) -> None:
+        ctx = ConfigContext.from_dict({"stores": {"settings": {"cursors": {}}}})
+
+        with pytest.raises(ConfigError, match=r"stores\.settings\.cursors\.signing: ephemeral"):
             CursorCodec.from_context(ctx)
 
 

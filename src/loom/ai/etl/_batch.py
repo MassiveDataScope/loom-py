@@ -1,4 +1,4 @@
-"""One batch of runs of one agent on an entered runtime, bounded and budgeted."""
+"""One batch of runs of one agent on an entered host, bounded and budgeted."""
 
 from __future__ import annotations
 
@@ -12,7 +12,9 @@ from typing import Any, Final
 from loom.ai.abc import AgentUsage
 from loom.ai.errors import AgentRunError
 from loom.ai.etl._ledger import SpendLedger
-from loom.ai.runtime import AgentRuntime
+from loom.ai.event import AiEvent, AiKey
+from loom.ai.execution import AgentHost
+from loom.core.errors import InternalError
 from loom.core.identity import Identity
 
 PROMPT_MISSING: Final = "PROMPT_MISSING"
@@ -42,7 +44,7 @@ class Batch:
     """Runs one agent once per prompt, never more than *limit* at a time.
 
     Attributes:
-        runtime: Runtime serving the agent, not yet entered.
+        host: Host serving the agent, not yet entered.
         name: Agent to run.
         limit: Runs in flight at once.
         ledger: Spend of the batch against its budget.
@@ -50,7 +52,7 @@ class Batch:
         to_builtins: Projects an answer onto builtins.
     """
 
-    runtime: AgentRuntime
+    host: AgentHost
     name: str
     limit: int
     ledger: SpendLedger
@@ -58,7 +60,7 @@ class Batch:
     to_builtins: Callable[[Any], Mapping[str, Any]]
 
     async def answer_all(self, prompts: Sequence[str | None]) -> list[RowOutcome]:
-        """Enter the runtime, answer every prompt in order, and close it in the same task.
+        """Enter the host, answer every prompt in order, and close it in the same task.
 
         *limit* workers take the prompts in order from one shared iterator, so
         the batch creates at most *limit* tasks whatever the number of rows.
@@ -70,13 +72,13 @@ class Batch:
         identity = Identity(subject=f"etl:{self.name}")
         outcomes: list[RowOutcome | None] = [None] * len(prompts)
         pending = iter(enumerate(prompts))
-        async with self.runtime, asyncio.TaskGroup() as workers:
+        async with self.host, asyncio.TaskGroup() as workers:
             for _ in range(min(self.limit, len(prompts))):
                 workers.create_task(self._work(pending, outcomes, identity))
         if None in outcomes:
-            raise RuntimeError(
-                f"agent {self.name!r} left {outcomes.count(None)} row(s) without an outcome, the "
-                f"first row {outcomes.index(None)}: a run was cancelled while the batch was not"
+            raise InternalError(
+                f"agent {self.name!r} left rows without an outcome: "
+                "a run was cancelled while the batch was not"
             )
         return [outcome for outcome in outcomes if outcome is not None]
 
@@ -99,14 +101,16 @@ class Batch:
     async def _run(self, prompt: str, identity: Identity) -> RowOutcome:
         usage: AgentUsage | None = None
         try:
-            result = await self.runtime.run(self.name, prompt, identity=identity)
+            result = await self.host.run(self.name, prompt, identity=identity)
             usage = result.usage
             output = self.to_builtins(result.output)
         except AgentRunError as error:
             return self._failed(error.code.value, error.usage)
         except Exception as error:
             _log.warning(
-                "agent %r failed a row with an unexpected %s", self.name, type(error).__qualname__
+                AiEvent.ROW_FAILED,
+                extra={AiKey.AGENT: self.name},
+                exc_info=error,
             )
             return self._failed(UNEXPECTED_ERROR, usage)
         self._settle(usage)

@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from loom.core.config.errors import ConfigError
 from loom.prefect._config import FlowConfig, _load_flow_config, flow_config_from_mapping
 
 # ---------------------------------------------------------------------------
@@ -139,5 +140,5 @@ class TestFlowConfigFromMapping:
             flow_config_from_mapping({"flow_retry_delay_seconds": [5400, 12600]})
 
     def test_rejects_a_negative_delay(self) -> None:
-        with pytest.raises(ValueError, match="negative"):
+        with pytest.raises(ConfigError, match="negative"):
             flow_config_from_mapping({"flow_retry_delay_seconds": -1})

@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from loom.composition import create_app
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
 from tests.helpers.composition import application_openings
 from tests.unit.serverless.aws.lambda_.http._clients import (
@@ -76,7 +76,7 @@ def open_lambda(contract_project: Callable[..., str]) -> Iterator[Callable[..., 
 
     def open_project(**options: Any) -> LambdaProject:
         config = contract_project(**options)
-        handler = create_app(config, adapter=LambdaAdapter(), environment="test")
+        handler = create_app(config, runtime=LambdaRuntime(), environment="test")
         opened.append(handler)
         return LambdaProject(config, handler)
 

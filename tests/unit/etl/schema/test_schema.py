@@ -1,4 +1,4 @@
-"""Tests for schema primitives and StubCatalog behavior."""
+"""Tests for schema primitives and InMemoryCatalog behavior."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 import pytest
 
+from loom.core.errors import InvalidType
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.target import IntoTable, SchemaMode
 from loom.etl.declarative.target._table import (
@@ -14,8 +15,8 @@ from loom.etl.declarative.target._table import (
     ReplaceSpec,
     UpsertSpec,
 )
-from loom.etl.schema._schema import ColumnSchema, LoomDtype
-from loom.etl.testing import StubCatalog
+from loom.etl.schema._schema import ArrayType, ColumnSchema, LoomDtype
+from loom.etl.testing import InMemoryCatalog
 
 ORDERS_SCHEMA = (
     ColumnSchema("order_id", LoomDtype.INT64, nullable=False),
@@ -34,7 +35,6 @@ class TestLoomDtype:
             (LoomDtype.BOOLEAN, "Boolean"),
             (LoomDtype.FLOAT32, "Float32"),
             (LoomDtype.FLOAT64, "Float64"),
-            (LoomDtype.DECIMAL, "Decimal"),
         ],
     )
     def test_value_contract(self, dtype: LoomDtype, expected: str) -> None:
@@ -59,6 +59,13 @@ class TestLoomDtype:
     )
     def test_expected_members_present(self, member: str) -> None:
         assert hasattr(LoomDtype, member)
+
+
+class TestArrayType:
+    @pytest.mark.parametrize("width", [0, -1], ids=["zero", "negative"])
+    def test_a_width_below_one_is_refused(self, width: int) -> None:
+        with pytest.raises(InvalidType, match="width must be at least 1"):
+            ArrayType(LoomDtype.INT64, width)
 
 
 class TestColumnSchema:
@@ -133,7 +140,7 @@ class TestSchemaModeAndIntoTable:
         assert evolve._to_spec().schema_mode is SchemaMode.EVOLVE
 
 
-class TestStubCatalog:
+class TestInMemoryCatalog:
     @pytest.mark.parametrize(
         "ref,expected",
         [
@@ -142,11 +149,11 @@ class TestStubCatalog:
         ],
     )
     def test_schema_lookup(self, ref: str, expected: tuple[ColumnSchema, ...] | None) -> None:
-        catalog = StubCatalog(schemas={"raw.orders": ORDERS_SCHEMA})
+        catalog = InMemoryCatalog(schemas={"raw.orders": ORDERS_SCHEMA})
         assert catalog.schema(TableRef(ref)) == expected
 
     def test_update_schema_existing_and_new_tables(self) -> None:
-        catalog = StubCatalog(schemas={"staging.out": ()})
+        catalog = InMemoryCatalog(schemas={"staging.out": ()})
         new_schema = (ColumnSchema("id", LoomDtype.INT64),)
         catalog.update_schema(TableRef("staging.out"), new_schema)
         assert catalog.schema(TableRef("staging.out")) == new_schema
@@ -156,26 +163,26 @@ class TestStubCatalog:
         assert catalog.schema(TableRef("new.table")) == new_schema
 
     def test_columns_and_exists_derived_from_schema(self) -> None:
-        catalog = StubCatalog(schemas={"raw.orders": ORDERS_SCHEMA})
+        catalog = InMemoryCatalog(schemas={"raw.orders": ORDERS_SCHEMA})
         assert catalog.columns(TableRef("raw.orders")) == ("order_id", "amount", "year")
         assert catalog.exists(TableRef("raw.orders"))
         assert not catalog.exists(TableRef("raw.missing"))
 
     def test_tables_are_materialized_as_unknown_dtype_schema(self) -> None:
-        catalog = StubCatalog(tables={"raw.orders": ("id", "amount")})
+        catalog = InMemoryCatalog(tables={"raw.orders": ("id", "amount")})
         schema = catalog.schema(TableRef("raw.orders"))
         assert schema is not None
         assert [col.name for col in schema] == ["id", "amount"]
 
     def test_schemas_override_tables_on_same_ref(self) -> None:
-        catalog = StubCatalog(
+        catalog = InMemoryCatalog(
             tables={"raw.orders": ("id",)},
             schemas={"raw.orders": ORDERS_SCHEMA},
         )
         assert catalog.schema(TableRef("raw.orders")) == ORDERS_SCHEMA
 
     def test_schema_updates_visible_to_subsequent_reads(self) -> None:
-        catalog = StubCatalog(schemas={"staging.out": ()})
+        catalog = InMemoryCatalog(schemas={"staging.out": ()})
         evolved = ORDERS_SCHEMA + (ColumnSchema("region", LoomDtype.UTF8),)
         catalog.update_schema(TableRef("staging.out"), evolved)
         assert catalog.schema(TableRef("staging.out")) == evolved

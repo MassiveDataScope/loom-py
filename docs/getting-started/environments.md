@@ -99,7 +99,7 @@ directory without `base.yaml` is a startup error. The Celery
 `create_app(config_dir=...)` and `bootstrap_worker(config_dir=...)` do the
 same, and so do `ETLRunner.from_yaml`, `StreamingRunner.from_yaml`, the
 storage configuration of a Prefect flow run (`LOOM_STORAGE_CONFIG_PATH`) and
-the migration locator (`LOOM_CONFIG`) when given a directory instead of a
+the migration locator when given a directory instead of a
 file.
 
 loom does not read `.env`: your runner does, for example
@@ -122,10 +122,7 @@ In `config/base.yaml`:
 app:
   name: my_store
   code_path: src
-  discovery:
-    mode: modules
-    modules:
-      include: [app.product.model, app.product.interface]
+  packages: [app]
 stores:
   default:
     backend: sqlalchemy
@@ -136,12 +133,12 @@ In `config/development.yaml`:
 
 ```yaml
 stores:
+  settings:
+    cursors:
+      signing: ephemeral
   default:
     backend: sqlalchemy
     url: sqlite+aiosqlite:///store.db
-persistence:
-  cursors:
-    signing: ephemeral
 ```
 
 `signing: ephemeral` is a random key per process; see the persistence guide.
@@ -150,12 +147,12 @@ In `config/test.yaml`:
 
 ```yaml
 stores:
+  settings:
+    cursors:
+      signing: unsigned
   default:
     backend: sqlalchemy
     url: sqlite+aiosqlite:///
-persistence:
-  cursors:
-    signing: unsigned
 ```
 
 In `config/production.yaml`:
@@ -172,11 +169,12 @@ app:
         algorithms: [HS256]
         audience: my-store
         issuer: https://idp.example.com
-persistence:
-  cursors:
-    current_key_id: "2026-10"
-    keys:
-      "2026-10": {path: /run/secrets/cursor-2026-10}
+stores:
+  settings:
+    cursors:
+      current_key_id: "2026-10"
+      keys:
+        "2026-10": {path: /run/secrets/cursor-2026-10}
 ```
 
 ```bash
@@ -185,9 +183,29 @@ LOOM_ENV=development
 ```
 
 The logger section refuses a key it does not declare, a removed one included
-(`observability.log.config.environment`), and an `observability` section that
+(`observability.log.environment`), and an `observability` section that
 fails validation stops startup: a stale setting fails loudly instead of being
 silently ignored.
+
+### Where the configuration is found
+
+Called with no path, every entry point loads the same directory: the one
+`LOOM_CONFIG_DIR` names, else `./config`. This covers `create_app()`,
+`bootstrap_worker()` and `Project.load()`, the Lambda handler, `loom check
+--deploy`, `loom deploy manifest`, `loom schema bootstrap` and `verify`, the
+Alembic `env.py` and `load_store_schema()`, and `LambdaTestClient()`.
+
+```bash
+LOOM_CONFIG_DIR=/srv/acme/config loom check --deploy
+loom check --deploy            # ./config
+loom check --deploy config/base.yaml config/eu.yaml
+```
+
+An explicit path or `config_dir=` always wins over both. loom does not read
+the project's `pyproject.toml`: it is absent at runtime, so the CLI and the
+running application could disagree silently. A missing directory is a
+`ConfigError` naming `LOOM_CONFIG_DIR`, `./config` and the path it tried.
+`LOOM_CONFIG_DIR` takes a directory, not a file.
 
 ### `LOOM__*` overrides
 
@@ -197,7 +215,7 @@ pydantic-settings. In development and test any leaf can; in production and
 staging only an allowlisted key can (below):
 
 ```bash
-LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL=DEBUG     # observability.log.config.level
+LOOM__OBSERVABILITY__LOG__LEVEL=DEBUG     # observability.log.level
 LOOM__SQL__CONNECTIONS__ANALYTICS__POOL__SIZE=20  # sql.connections.analytics.pool.size
 LOOM__STORES__DEFAULT__POOL__SIZE=1               # stores.default.pool.size
 LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
@@ -209,7 +227,7 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   added in lower case; the section types that refuse unknown keys
   (`app.rest`, the `observability` sub-sections, `sql`, `celery`, `jobs`,
   `storage`, `kafka`, the bytewax runtime, `dynamodb`) then refuse a typo.
-  The keys of `app`, a `sqlalchemy` store, `persistence` and the top of
+  The keys of `app`, a `sqlalchemy` store, `stores.settings` and the top of
   `observability`, which several readers share, are not checked.
 - The first level must name a section the configuration declares or loom
   knows. Anything else (`LOOM__APPP__NAME`) stops startup with an error naming
@@ -248,10 +266,10 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   authentication settings, the deploy checks, the documentation and metrics
   paths and the per-query time limit (`max_execution_time`). `config` itself
   can never be overridden. An entry cannot start with `*`, and an entry
-  that can match a key inside `checks`, `config`, `persistence.cursors`,
-  `aws`, `sqs.queues`, `app.discovery`, `lambda.handler` or a Lambda
+  that can match a key inside `checks`, `config`, `stores.settings.cursors`,
+  `aws`, `sqs.queues`, `app.packages`, `lambda.handler` or a Lambda
   function's `trigger`
-  (`persistence.*.signing` and `lambda.functions.*.trigger.job` included)
+  (`stores.settings.*.signing` and `lambda.functions.*.trigger.job` included)
   stops startup naming the entry; the entries
   are checked at every load, in every environment. Any other key you list
   is a reviewed choice, much like setting it from `${oc.env:...}` in the
@@ -281,7 +299,7 @@ LOOM__CELERY__WORKER_CONCURRENCY=8                # celery.worker_concurrency
   values are never logged.
 - A log level on a parent cannot hide the deploy checks: the
   `loom.core.checks` logger sets its own WARNING level, so
-  `LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL=CRITICAL` still shows a check's
+  `LOOM__OBSERVABILITY__LOG__LEVEL=CRITICAL` still shows a check's
   warning and the silenced ids. To quiet them on purpose, name the logger:
   `named_levels: {loom.core.checks: ERROR}`.
 
@@ -296,7 +314,7 @@ sets.
 
 The allowlist guards against careless per-deploy overrides, not against an
 attacker. Whoever controls the process environment also controls `LOOM_ENV`,
-`LOOM_CONFIG`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG` and
+`LOOM_CONFIG_DIR`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG` and
 `PYTHONPATH`, and so which files load and which code runs; protect the
 environment itself (the task definition, its IAM permissions) for that.
 
@@ -318,7 +336,7 @@ injects them as variables, and the YAML references them with
       "name": "api",
       "environment": [
         {"name": "LOOM_ENV", "value": "production"},
-        {"name": "LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL", "value": "INFO"},
+        {"name": "LOOM__OBSERVABILITY__LOG__LEVEL", "value": "INFO"},
         {"name": "LOOM__CELERY__WORKER_CONCURRENCY", "value": "8"}
       ],
       "secrets": [
@@ -344,16 +362,16 @@ In `config/base.yaml`:
 
 ```yaml
 stores:
+  settings:
+    cursors:
+      current_key_id: "2026-10"
+      keys:
+        "2026-10": {env: CURSOR_KEY_2026_10}
   default:
     backend: sqlalchemy
     url: ${oc.env:DATABASE_URL}
 payments:
   api_key: ${oc.env:PAYMENTS_API_KEY}
-persistence:
-  cursors:
-    current_key_id: "2026-10"
-    keys:
-      "2026-10": {env: CURSOR_KEY_2026_10}
 ```
 
 The variable is named, never interpolated.
@@ -391,13 +409,14 @@ In `.github/workflows/ci.yml` (a step):
 
 ## Logger defaults
 
-The logger's renderer and colours follow the environment unless
-`observability.log.config` sets them:
+The log format follows the environment unless `observability.log.format` sets it
+(see the [logging guide](../guides/logging.md)):
 
-| Environment | Renderer | Colours |
-|---|---|---|
-| `production`, `staging` | `json` | off |
-| `development`, `test` | `console` | on |
+| Environment | Format |
+|---|---|
+| inside AWS Lambda | `lambda` (the runtime's own JSON) |
+| `production`, `staging` | `json` |
+| `development`, `test` | `text` |
 
 ## Deploy checks
 
@@ -414,8 +433,10 @@ check fails startup, a `W` check logs a warning.
 |---|---|
 | `loom.rest.E001` | The API authenticates no caller: neither a literal `app.rest.auth.jwt` mapping nor the literal `app.rest.auth.custom: true` is set, or the trigger `auth` of an http function of `lambda.functions`, which replaces it for that function, sets neither. A `jwt` given by a placeholder fails, since it may resolve to null. |
 | `loom.rest.W001` | The API publishes its documentation or schema: one of `app.rest.docs_url`, `redoc_url`, `openapi_url` is not `null`. |
-| `loom.logger.W001` | `observability.log.config` asks for the `console` renderer, top-level or on a handler. |
-| `loom.cursors.E001` | A store whose backend is `sqlalchemy` or `mongo` is declared and pagination cursors are not signed with a configured key: `persistence.cursors.signing` is set to anything but the literal `signed`, or `current_key_id` names no entry of `keys`. |
+| `loom.logger.E001` | `observability.log.format` is not `lambda`, `json` or `text`. |
+| `loom.logger.E002` | `observability.log.level` or `named_levels` values are not a log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`, in capitals); one finding names every one. |
+| `loom.discovery.W001` | A required group of `app.entry_points` has no installed entry point: it adds nothing to the scan. A typo in the name shows here; declare a legitimately empty group as `{group: <name>, optional: true}` to leave it out of the check. |
+| `loom.cursors.E001` | `stores.settings.cursors` is configured and pagination cursors are not signed with a configured key (without that section no cursor is issued and nothing is checked): `stores.settings.cursors.signing` is set to anything but the literal `signed`, or `current_key_id` names no entry of `keys`. |
 
 Processes that serve no HTTP (the worker and the runners) skip the
 `loom.rest` checks. A runner built from a whole configuration (a file, a
@@ -509,17 +530,22 @@ loom check --deploy config/base.yaml config/production.yaml
 
 `--env` picks the overlay of a directory and defaults to `LOOM_ENV`. The
 `LOOM__*` variables of the shell apply as at startup; those of the deployed
-task do not, so keep security settings in the files. The command cannot tell
-which process a configuration is for, so it runs every check: pass
-`--skip loom.rest` (repeatable, any id or area) for a worker, ETL or
-streaming configuration, as those processes skip the REST checks at startup.
+task do not, so keep security settings in the files. A set of checks runs when
+the configuration declares the path it validates (`observability.log`,
+`stores`, `stores.settings.cursors`, `app.rest`; `app.rest` also when
+`app.entry` is `fastapi`), and the report lists `checked:` and `skipped:` paths.
+The command cannot tell which process a configuration is for, so pass
+`--skip app.rest` (repeatable, a configuration path) for a worker, ETL or
+streaming configuration, as those processes leave the REST checks out at startup.
 The configuration loads with loom's default resolvers, and the checks read
 keys as written, so a `${secrets:...}` value no check reads needs no access. `app.code_path` (`src`
 by default, relative to the first file) joins the import path as `create_app`
 adds it, so `checks.modules` import here as well. The checks read
-configuration keys only, so no secret needs to be reachable. The command
-loads loom's own checks, the REST ones only when the `rest` extra is
-installed.
+configuration keys only, so no secret needs to be reachable. A check
+set whose path is used but whose third-party dependency is not installed (the
+REST checks without FastAPI) is a configuration error naming the path, the
+module and the extras, not a finding, so it cannot be silenced: install the
+extra, or pass `--skip <path>` for a process that does not use it.
 
 ## Tests
 

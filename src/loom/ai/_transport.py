@@ -275,7 +275,7 @@ def project_output(value: _WireResultT, output_type: LoomType) -> _WireResultT:
         value: Result or terminal event whose ``output`` is still the
             engine's validated instance.
         output_type: The run's compiled boundary type, read from
-            :meth:`~loom.ai.runtime.AgentRuntime.output_type`.
+            :meth:`~loom.ai.execution.AgentHost.output_type`.
 
     Returns:
         *value* with ``output`` replaced by its builtins projection.
@@ -297,7 +297,7 @@ async def with_projected_output(
     Args:
         events: Run events, terminal event last.
         output_type: The run's compiled boundary type, read from
-            :meth:`~loom.ai.runtime.AgentRuntime.output_type`.
+            :meth:`~loom.ai.execution.AgentHost.output_type`.
 
     Yields:
         Every event, in order; the ``final`` event's ``output`` projected.

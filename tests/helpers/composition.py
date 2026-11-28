@@ -5,55 +5,65 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import msgspec
 import pytest
 
-from loom.composition import AppConfig, Application, CompositionSource, Recipe
-from loom.composition.resources import Resource, ResourceKind
-from loom.core.config import ConfigContext, ConfigKey
+from loom.composition import AppConfig, Application, Project, Recipe
+from loom.core.config import ConfigContext, ConfigSection
 from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.environment import Environment
+from loom.core.job.service import JobService
 from loom.core.model import BaseModel
 from loom.core.observability.config import ObservabilityConfig
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence import SERVER_PROFILE
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.uow.abc import UnitOfWorkFactory
+from loom.core.observability.observability import Observability
+from loom.core.resources import Resource, ResourceKind
+from loom.core.stores import SERVER_PROFILE
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.uow.abc import UnitOfWorkFactory
+from loom.testing.jobs import RecordingJobTransport
 from tests.unit.rest._fixture_app import write_project
 
 ProjectFactory = Callable[..., str]
 
 
-def composition_source(
+def composition_project(
     ctx: ConfigContext,
     *,
     environment: Environment = Environment.TEST,
     app: AppConfig | None = None,
     code_path: Path | None = None,
     config_root: Path | None = None,
-) -> CompositionSource:
-    """What ``build_application`` would have resolved from files holding *ctx*.
+) -> Project:
+    """What ``Project.load`` would have resolved from files holding *ctx*.
 
     Without *app*, the ``app`` section of *ctx* is decoded, as its
     ``observability`` section always is; the paths default to the working
     directory.
     """
-    return CompositionSource(
+    return Project(
         config=ctx,
         environment=environment,
         code_path=code_path if code_path is not None else Path.cwd(),
         config_root=config_root if config_root is not None else Path.cwd(),
-        app=app if app is not None else ctx.section(ConfigKey.APP, AppConfig),
-        observability=ObservabilityRuntime.noop(),
+        app=app if app is not None else ctx.section(ConfigSection.APP, AppConfig),
+        observability=Observability.noop(),
         observability_config=ctx.section_or_default(
-            ConfigKey.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
+            ConfigSection.OBSERVABILITY, ObservabilityConfig, ObservabilityConfig()
         ),
     )
+
+
+def scanning(project: Project, *modules: str) -> Project:
+    """*project*, its ``app.packages`` listing *modules* besides its own."""
+    app = msgspec.structs.replace(project.app, packages=[*project.app.packages, *modules])
+    return replace(project, app=app)
 
 
 class Serving:
@@ -71,13 +81,13 @@ class Serving:
         lenient: bool = False,
     ) -> None:
         self.discovered = DiscoveryResult(
-            models=models, use_cases=cast(Any, use_cases), interfaces=(), jobs=cast(Any, jobs)
+            models=models, use_cases=cast(Any, use_cases), jobs=cast(Any, jobs)
         )
         self.overrides = overrides
         self.lenient = lenient
 
-    def recipe(self, source: CompositionSource) -> Recipe:
-        del source
+    def recipe(self, project: Project) -> Recipe:
+        del project
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=self.discovered,
@@ -85,11 +95,28 @@ class Serving:
             lenient=self.lenient,
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
-def coordinator_of(executor: RuntimeExecutor) -> Any:
+class WithOverrides:
+    """Apply registration callbacks to an adapter's recipe in a composition test."""
+
+    def __init__(self, adapter: Any, *overrides: Callable[[LoomContainer], None]) -> None:
+        self._adapter = adapter
+        self._overrides = overrides
+
+    def recipe(self, project: Project) -> Recipe:
+        """Return the wrapped adapter's recipe with registrations."""
+        recipe = self._adapter.recipe(project)
+        return replace(recipe, overrides=(*recipe.overrides, *self._overrides))
+
+    def mount(self, application: Application) -> Any:
+        """Bind the wrapped adapter."""
+        return self._adapter.mount(application)
+
+
+def coordinator_of(executor: UseCaseExecutor) -> Any:
     """The coordinator *executor* opens a top-level writer's scope over, if any."""
     top_level = executor._boundaries._top_level  # noqa: SLF001
     return getattr(top_level, "coordinator", None)
@@ -121,16 +148,16 @@ def fixture_project(tmp_path: Path) -> ProjectFactory:
 
 
 @pytest.fixture
-def executors(monkeypatch: pytest.MonkeyPatch) -> list[RuntimeExecutor]:
-    """Every ``RuntimeExecutor`` constructed during the test, in order."""
-    built: list[RuntimeExecutor] = []
-    construct = RuntimeExecutor.__init__
+def executors(monkeypatch: pytest.MonkeyPatch) -> list[UseCaseExecutor]:
+    """Every ``UseCaseExecutor`` constructed during the test, in order."""
+    built: list[UseCaseExecutor] = []
+    construct = UseCaseExecutor.__init__
 
-    def counted(self: RuntimeExecutor, *args: Any, **kwargs: Any) -> None:
+    def counted(self: UseCaseExecutor, *args: Any, **kwargs: Any) -> None:
         built.append(self)
         construct(self, *args, **kwargs)
 
-    monkeypatch.setattr(RuntimeExecutor, "__init__", counted)
+    monkeypatch.setattr(UseCaseExecutor, "__init__", counted)
     return built
 
 
@@ -151,11 +178,19 @@ def application_openings(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return events
 
 
-def application_of(*resources: Resource) -> Application:
-    """An application owning *resources*, whose composition facts play no part in its lifecycle."""
+def application_of(*resources: Resource, jobs: JobService | None = None) -> Application:
+    """An application owning *resources*, whose composition facts play no part in its lifecycle.
+
+    Its jobs are *jobs*; without them they go to a recording transport, so waiting
+    until they are idle returns at once.
+    """
     unused = cast(Any, SimpleNamespace())
+    container = LoomContainer()
+    container.register_instance(
+        JobService, JobService(RecordingJobTransport()) if jobs is None else jobs
+    )
     return Application(
-        kernel=unused,
+        kernel=cast(Any, SimpleNamespace(container=container)),
         config=unused,
         environment=unused,
         code_path=unused,
@@ -168,7 +203,7 @@ def application_of(*resources: Resource) -> Application:
 
 
 class TaskAffine:
-    """Refuses, as ``AgentRuntime`` and an MCP client do, an exit from a task it was not entered in.
+    """Refuses, as ``AgentHost`` and an MCP client do, an exit from a task it was not entered in.
 
     Attributes:
         entered_in: The task that entered it.

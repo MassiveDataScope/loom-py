@@ -1,0 +1,39 @@
+"""The typed way to load the AWS island, and what the island publishes.
+
+Importing this module loads no SDK: :func:`aws_island` loads
+:mod:`loom.connections.aws.client` through
+:func:`~loom.core.plugins.optional.import_optional`.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+from loom.core.plugins.optional import import_optional
+
+if TYPE_CHECKING:
+    from loom.core.connections.aws.config import AwsClientConfig
+
+_ISLAND = "loom.connections.aws.client"
+
+
+class AwsIsland(Protocol):
+    """What :mod:`loom.connections.aws.client` publishes."""
+
+    def open_session(self, profile: str | None) -> Any: ...
+
+    def build_aws_client(self, session: Any, service: str, config: AwsClientConfig) -> Any: ...
+
+    def sdk_errors(self) -> tuple[type[Exception], ...]: ...
+
+
+def aws_island() -> AwsIsland:
+    """Load the AWS island.
+
+    Raises:
+        MissingExtraError: When boto3 is not installed.
+    """
+    return cast(AwsIsland, import_optional(_ISLAND, extra="aws"))
+
+
+__all__ = ["AwsIsland", "aws_island"]

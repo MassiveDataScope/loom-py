@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any, TypeGuard
 
 from loom.core.config import ConfigBinding, ConfigContext, ConfigError
+from loom.core.errors.summary import ErrorSummary
 from loom.streaming.compiler._errors import CompilationIssue, StreamingErrorCode
 from loom.streaming.graph._flow import Process, ProcessNode, StreamFlow
 from loom.streaming.nodes._boundary import IntoTopic
@@ -65,7 +66,9 @@ def _resolve_process_node(
             return node()
         except TypeError as exc:
             errors.append(
-                StreamingErrorCode.STEP_INSTANTIATION_FAILED.issue(component=node, exc=exc)
+                StreamingErrorCode.STEP_INSTANTIATION_FAILED.issue(
+                    component=node, exc=ErrorSummary.message_for(exc)
+                )
             )
             return node
     if isinstance(node, ConfigBinding):
@@ -100,7 +103,9 @@ def _resolve_binding(
     except (ConfigError, TypeError, ValueError) as exc:
         binding_name = binding.config_path or binding.target.__name__
         errors.append(
-            StreamingErrorCode.BINDING_RESOLUTION_FAILED.issue(component=binding_name, exc=exc)
+            StreamingErrorCode.BINDING_RESOLUTION_FAILED.issue(
+                component=binding_name, exc=ErrorSummary.message_for(exc)
+            )
         )
         return binding
 
@@ -112,7 +117,7 @@ def _resolve_with(
 ) -> With[Any, Any]:
     resolved_process = _resolve_process(node.process, ctx, errors)
     resolved_deps = _resolve_dependencies(node.sync_contexts, ctx, errors)
-    resolved_deps.update(_resolve_dependencies(node.context_factories, ctx, errors))
+    resolved_deps.update(_resolve_dependencies(node.context_suppliers, ctx, errors))
     resolved_deps.update(_resolve_dependencies(node.plain_deps, ctx, errors))
     return With(scope=node.scope, process=resolved_process, **resolved_deps)
 
@@ -124,7 +129,7 @@ def _resolve_with_async(
 ) -> WithAsync[Any, Any]:
     resolved_process = _resolve_process(node.process, ctx, errors)
     resolved_deps = _resolve_dependencies(node.async_contexts, ctx, errors)
-    resolved_deps.update(_resolve_dependencies(node.context_factories, ctx, errors))
+    resolved_deps.update(_resolve_dependencies(node.context_suppliers, ctx, errors))
     resolved_deps.update(_resolve_dependencies(node.plain_deps, ctx, errors))
     return WithAsync(
         scope=node.scope,

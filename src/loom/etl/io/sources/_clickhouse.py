@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import tempfile
 import threading
 import time
@@ -11,21 +12,25 @@ from typing import Any
 
 import polars as pl
 
+from loom.core.errors import InternalError, InvalidType, InvalidUse, InvalidValue
+from loom.core.log_names import LogField
+from loom.core.observability.span import elapsed_ms
+
 try:
     import pyarrow as _pa
 except ImportError:
     _pa = None  # type: ignore[assignment]
 
 from loom.core.connections import ClickHouseConnection
-from loom.core.logger import get_logger
-from loom.etl.backends.polars._dtype import loom_type_to_polars
 from loom.etl.declarative.expr._predicate_dialect import PredicateDialect, fold_predicate
 from loom.etl.declarative.source._specs import ClickHouseSourceSpec
+from loom.etl.engines.polars._dtype import frame_type_to_polars
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.io._clickhouse_connection import open_client, resolve_connection
-from loom.etl.runtime.contracts import ClientCommandExecutor, SourceReader
+from loom.etl.ports.contracts import ClientCommandExecutor, SourceReader
 from loom.etl.schema._schema import ColumnSchema
 
-_log = get_logger(__name__)
+_log = logging.getLogger(__name__)
 
 
 class _ClickHousePredicateDialect(PredicateDialect[str]):
@@ -86,8 +91,8 @@ _CLICKHOUSE_PREDICATE_DIALECT = _ClickHousePredicateDialect()
 class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
     """Read ClickHouse sources and execute client commands via clickhouse-connect.
 
-    Implements both :class:`~loom.etl.runtime.contracts.SourceReader` (DataFrame
-    reads) and :class:`~loom.etl.runtime.contracts.ClientCommandExecutor`
+    Implements both :class:`~loom.etl.ports.contracts.SourceReader` (DataFrame
+    reads) and :class:`~loom.etl.ports.contracts.ClientCommandExecutor`
     (side-effect commands), so one instance can serve as both ``reader`` and
     ``client_executor`` in :class:`~loom.etl.ETLRunner` — reusing a single
     connection for both roles.
@@ -102,7 +107,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
                     client is managed externally.
 
     Raises:
-        ValueError: When both *url* and *connection* are given.
+        InvalidValue: When both *url* and *connection* are given.
     """
 
     def __init__(
@@ -132,18 +137,18 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
         """
         client = self._client or self._get_client()
         query = self._build_query(spec, params_instance)
-        _log_query_start(spec, query, streaming=False)
-        started = time.monotonic()
+        _log_query_start(spec)
+        started = time.perf_counter()
         frame, rows = self._query_to_frame(client, query)
         _log.info(
-            "clickhouse read complete",
-            table=spec.table_ref.ref,
-            rows=rows,
-            duration_s=round(time.monotonic() - started, 3),
+            EtlEvent.SOURCE_READ_COMPLETED,
+            extra={
+                EtlKey.TABLE: spec.table_ref.ref,
+                EtlKey.ROWS: rows,
+                LogField.DURATION_MS: elapsed_ms(started),
+            },
         )
-        if spec.schema:
-            frame = self._apply_source_schema(frame, spec.schema)
-        return frame
+        return self._apply_source_schema(frame, spec.read_schema)
 
     def read_streaming(self, spec: Any, params_instance: Any, /) -> pl.LazyFrame:
         """Stream the ClickHouse query result through a temporary IPC file.
@@ -164,29 +169,29 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
             Lazy Polars frame backed by the spooled IPC file.
 
         Raises:
-            TypeError: When the underlying client does not expose
+            InvalidType: When the underlying client does not expose
                 ``query_arrow_stream()``.
         """
         client = self._client or self._get_client()
         query = self._build_query(spec, params_instance)
-        _log_query_start(spec, query, streaming=True)
-        started = time.monotonic()
+        _log_query_start(spec)
+        started = time.perf_counter()
         frame, rows, batches = self._stream_query_to_frame(client, query)
         _log.info(
-            "clickhouse stream spooled",
-            table=spec.table_ref.ref,
-            rows=rows,
-            batches=batches,
-            duration_s=round(time.monotonic() - started, 3),
+            EtlEvent.SOURCE_READ_COMPLETED,
+            extra={
+                EtlKey.TABLE: spec.table_ref.ref,
+                EtlKey.ROWS: rows,
+                EtlKey.BATCHES: batches,
+                LogField.DURATION_MS: elapsed_ms(started),
+            },
         )
-        if spec.schema:
-            frame = self._apply_source_schema(frame, spec.schema)
-        return frame
+        return self._apply_source_schema(frame, spec.read_schema)
 
     def command(self, fn: Callable[[Any], None]) -> None:
         """Obtain the ClickHouse client and invoke *fn* with it.
 
-        Implements :class:`~loom.etl.runtime.contracts.ClientCommandExecutor`
+        Implements :class:`~loom.etl.ports.contracts.ClientCommandExecutor`
         so the reader can be passed as ``client_executor`` to avoid opening
         a second connection when the runner already holds one.
 
@@ -194,7 +199,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
             fn: Callable that receives the raw ``clickhouse_connect`` client.
 
         Raises:
-            ValueError: If neither a connection nor a pre-built client was provided.
+            InvalidUse: If neither a connection nor a pre-built client was provided.
             ImportError: If ``clickhouse-connect`` is not installed.
         """
         fn(self._client or self._get_client())
@@ -204,7 +209,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
             if self._client is not None:
                 return self._client
             if self._connection is None:
-                raise ValueError(
+                raise InvalidUse(
                     "ClickHouseSourceReader requires storage.clickhouse to be configured "
                     "or an explicit client injected at construction time."
                 )
@@ -230,7 +235,7 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
     def _quote_identifier(name: str) -> str:
         parts = [part for part in name.split(".") if part]
         if not parts:
-            raise ValueError("ClickHouse identifiers must not be empty.")
+            raise InvalidValue("ClickHouse identifiers must not be empty.")
         return ".".join(f"`{part.replace('`', '``')}`" for part in parts)
 
     @staticmethod
@@ -238,19 +243,21 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
         if hasattr(client, "query_arrow"):
             result = pl.from_arrow(client.query_arrow(query))
             if not isinstance(result, pl.DataFrame):
-                raise TypeError("Expected a PyArrow Table from query_arrow(), not a scalar array.")
+                raise InternalError(
+                    "Expected a PyArrow Table from query_arrow(), not a scalar array."
+                )
             return result.lazy(), result.height
         if hasattr(client, "query_df"):
             df = pl.from_pandas(client.query_df(query))
             return df.lazy(), df.height
-        raise TypeError(
+        raise InvalidType(
             "ClickHouse client must expose query_arrow() or query_df() to read sources."
         )
 
     @staticmethod
     def _stream_query_to_frame(client: Any, query: str) -> tuple[pl.LazyFrame, int, int]:
         if not hasattr(client, "query_arrow_stream"):
-            raise TypeError(
+            raise InvalidType(
                 "ClickHouse client must expose query_arrow_stream() to read in streaming mode."
             )
         if _pa is None:
@@ -298,18 +305,18 @@ class ClickHouseSourceReader(SourceReader, ClientCommandExecutor):
     def _apply_source_schema(frame: pl.LazyFrame, schema: tuple[ColumnSchema, ...]) -> pl.LazyFrame:
         if not schema:
             return frame
-        exprs = [pl.col(col.name).cast(loom_type_to_polars(col.dtype)) for col in schema]
+        exprs = [pl.col(col.name).cast(frame_type_to_polars(col.dtype)) for col in schema]
         return frame.with_columns(exprs)
 
 
-def _log_query_start(spec: ClickHouseSourceSpec, query: str, *, streaming: bool) -> None:
-    _log.info(
-        "clickhouse query",
-        table=spec.table_ref.ref,
-        columns=list(spec.columns) if spec.columns else None,
-        predicates=len(spec.predicates),
-        sql=query,
-        streaming=streaming,
+def _log_query_start(spec: ClickHouseSourceSpec) -> None:
+    _log.debug(
+        EtlEvent.SOURCE_QUERY_STARTED,
+        extra={
+            EtlKey.TABLE: spec.table_ref.ref,
+            EtlKey.COLUMNS: list(spec.columns) if spec.columns else None,
+            EtlKey.PREDICATES: len(spec.predicates),
+        },
     )
 
 

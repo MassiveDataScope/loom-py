@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -105,26 +106,12 @@ class TestReadYaml:
         out = read_yaml(str(cfg))
         assert out["notifications"][0]["webhook_url"] == ""
 
-    def test_accepts_a_cloud_uri(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import io
-
-        import fsspec
-
+    def test_accepts_a_cloud_uri(self, memfs: Any) -> None:
         yaml_body = "etl: from-s3\ntags: [remote]\nparams: {a: 1}\n"
+        memfs.pipe("my-bucket/loom/etls/from_s3.yaml", yaml_body.encode())
 
-        class _FakeFile(io.StringIO):
-            def __enter__(self) -> _FakeFile:  # type: ignore[override]
-                return self
+        out = read_yaml("memory://my-bucket/loom/etls/from_s3.yaml")
 
-            def __exit__(self, *_: object) -> None:
-                return None
-
-        def _fake_open(uri: str, mode: str = "r", encoding: str = "utf-8") -> _FakeFile:
-            assert uri.startswith("s3://"), f"expected cloud URI, got {uri!r}"
-            return _FakeFile(yaml_body)
-
-        monkeypatch.setattr(fsspec, "open", _fake_open)
-        out = read_yaml("s3://my-bucket/loom/etls/from_s3.yaml")
         assert out["etl"] == "from-s3"
         assert out["tags"] == ["remote"]
         assert out["params"] == {"a": 1}
@@ -133,7 +120,7 @@ class TestReadYaml:
         self, write_yaml: Callable[[str, str], Path], tmp_path: Path
     ) -> None:
         cfg = write_yaml("list.yaml", "- item1\n- item2\n")
-        with pytest.raises(ValueError, match="mapping"):
+        with pytest.raises(ConfigError, match="mapping"):
             read_yaml(str(cfg))
 
     def test_duplicate_key_raises_config_error_naming_the_file(self, tmp_path: Path) -> None:

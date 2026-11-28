@@ -38,7 +38,7 @@ startup.
 
 `loom.core.environment` is the only module that names or reads loom's process
 variables: the selector, the `LOOM__*` overrides and every other `LOOM_*`
-variable (`LOOM_CONFIG`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG`,
+variable (`LOOM_CONFIG_DIR`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG`,
 `LOOM_SPOOL_DIR`, the Spark test ones), which the rest of loom reads through
 `loom_variable` and sets for a block through `scoped_loom_variable`.
 
@@ -50,11 +50,11 @@ variable (`LOOM_CONFIG`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG`,
   `parse_environment(raw, source=...)` applies the same rules to a value that
   names an environment without selecting the running one.
 - Every entry point resolves it once and passes it on: to the logger, to the
-  deploy checks, and into the container (`bootstrap_app` registers it at
+  deploy checks, and into the container (`create_kernel` registers it at
   `APPLICATION` scope with the configuration, before the modules run). The
   entry points are REST and Celery `create_app`, `bootstrap_worker`,
   `ETLRunner`, `StreamingRunner` and the Prefect flows. The public factories
-  (`create_kernel`, `bootstrap_app`, `ObservabilityRuntime.from_config`,
+  (`create_kernel`, `ObservabilityRuntime.from_config`,
   `configure_logging*`) take `environment=None` and resolve it the same way.
   No module holds it in a global.
 - Prefect: the flow parameter `env` and the keys of `environments` are
@@ -114,8 +114,8 @@ Within any file, its own values win over its `includes`.
   configuration and the migration locator take a file or a directory, which
   `config_source_paths` layers the same way.
 - Migrations: Alembic has no application entry point, so the locator still
-  needs `LOOM_CONFIG` or an explicit path; either may name the same config
-  directory, layered by `LOOM_ENV` like the application. `app.code_path` is
+  falls back to the default config directory (`LOOM_CONFIG_DIR`, else `./config`)
+  when given no path; an explicit path may name a file or a directory, layered by `LOOM_ENV` like the application. `app.code_path` is
   put on `sys.path` by one function, `loom.core.locator.add_code_path`, for
   `create_app`, the CLI and the locator alike: relative to the first file's
   directory, once, and only when the directory exists.
@@ -133,7 +133,7 @@ Within any file, its own values win over its `includes`.
   is letters, digits and underscores, and matches the declared key
   case-insensitively, walking the configuration as written so no placeholder
   is resolved; an undeclared level is added in lower case. The first level
-  must name a section the configuration declares or `ConfigKey` lists;
+  must name a section the configuration declares or `ConfigSection` lists;
   anything else is a startup error naming the variable. Two variables for the
   same key, or for a key and one of its parents, are refused naming both, and
   the merge follows the resolved keys. Deeper typos are refused by the section
@@ -175,8 +175,8 @@ Within any file, its own values win over its `includes`.
 
 | Key | Why it is safe to change per deploy |
 |---|---|
-| `observability.log.config.level` | Verbosity only; what is logged does not change, how much does. |
-| `observability.log.config.named_levels.*` | The same, per stdlib logger (a noisy library). |
+| `observability.log.level` | Verbosity only; what is logged does not change, how much does. |
+| `observability.log.named_levels.*` | The same, per stdlib logger (a noisy library). |
 | `celery.worker_concurrency` | Capacity of a worker; tasks and their routing do not change. |
 | `celery.worker_max_tasks_per_child` | Process recycling; a resource limit. |
 | `celery.worker_prefetch_multiplier` | Queue fairness against throughput; a capacity knob. |
@@ -208,7 +208,7 @@ application (discovery, interfaces, routes, `code_path`) and
 
 The allowlist guards against careless per-deploy overrides, not against an
 attacker. Whoever controls the process environment also controls `LOOM_ENV`,
-`LOOM_CONFIG`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG` and
+`LOOM_CONFIG_DIR`, `LOOM_STORAGE_CONFIG_PATH`, `LOOM_ETL_CONFIG` and
 `PYTHONPATH`, and so which files load and which code runs; the allowlist is
 no boundary against that access.
 
@@ -239,7 +239,7 @@ Example on ECS (one container definition of the task definition):
 {
   "environment": [
     {"name": "LOOM_ENV", "value": "production"},
-    {"name": "LOOM__OBSERVABILITY__LOG__CONFIG__LEVEL", "value": "INFO"},
+    {"name": "LOOM__OBSERVABILITY__LOG__LEVEL", "value": "INFO"},
     {"name": "LOOM__CELERY__WORKER_CONCURRENCY", "value": "8"}
   ],
   "secrets": [
@@ -274,21 +274,20 @@ falling back to defaults.
 - Ids are stable. loom's areas start with `loom.` (`loom.rest.E001`); an
   application registers under its own (`billing.gateway.E001`). A duplicate or
   malformed id is refused at registration.
-- `enforce_deploy_checks(config, environment, skip=...)` runs only when the
+- `enforce_deploy_checks(config, environment, scope=...)` runs only when the
   environment is deployed, on the final merged configuration; otherwise it
   logs one WARNING that the checks were skipped, naming the environment and
-  `LOOM_ENV`. `skip` takes ids
-  or areas a process knows not to apply: processes serving no HTTP (the
-  worker, the ETL and streaming runners, the maintenance flow) skip
-  `REST_CHECKS` (`loom.rest`). Runners run them before building any backend
-  or agent runner.
+  `LOOM_ENV`, and reads no entry point. `scope` is a `CheckScope(required,
+  excluded)` of configuration paths: processes serving no HTTP (the worker,
+  the ETL and streaming runners, the maintenance flow) exclude `app.rest`,
+  and the FastAPI recipe requires it. Runners run them before building any
+  backend or agent runner.
 - `checks.silenced: [ids]` silences by id, like Django's
   `SILENCED_SYSTEM_CHECKS`. The list is visible in the file of the environment
   that accepts the exception, and every deployed startup logs a warning naming
   the silenced ids.
 - The `loom.core.checks` logger, a stdlib logger, sets its own WARNING level,
-  and the handlers `configure_logging` attaches pass every record, so a
-  parent at `CRITICAL`
+  and a parent at `CRITICAL`
   (the top-level level or `named_levels.loom`) cannot hide a check's warning
   or the silenced ids, in any environment; a named level on
   `loom.core.checks` itself is the explicit way to quiet them. A level on the
@@ -301,10 +300,23 @@ falling back to defaults.
   `app.code_path` is importable; the worker and runners import from their own
   path, as for discovery. An unknown key under `checks` or a module failing
   at import is a `ConfigError`.
-- loom's own checks live in packages the entry points import anyway:
-  `loom.core.logger` and `loom.rest`.
+- Checks live in a `CheckSet`. Each entry point of the `loom.deploy_checks`
+  group targets a `CHECKS` set and is named by the dotted configuration path
+  its checks validate: `"observability.log"`, `stores`,
+  `"stores.settings.cursors"` and `"app.rest"` for loom's own. A set is
+  imported only when the process uses its path: the configuration declares
+  it or the scope requires it, and the scope does not exclude it. A
+  third-party module a used set needs that is missing is a `ConfigError`
+  naming the path, the module and the extras the distribution metadata
+  gives, never a finding, so `checks.silenced` cannot hide it; a missing
+  module of loom itself propagates. The report lists the paths it `checked`
+  and `skipped`, each skipped one with its reason (`not declared`, `left out
+  by the process`). One cached read of the entry-point metadata plus the
+  loom check modules is the whole production cost; non-deployed
+  environments read none.
 
-There is no plugin framework: no entry points, tags or dependency ordering.
+There is no plugin framework beyond that group: no tags and no dependency
+ordering. Backends carry no checks of their own.
 
 ### Initial checks
 
@@ -315,7 +327,8 @@ configuration name a mechanism supplied in code:
 |---|---|
 | `loom.rest.E001` | Neither a literal `app.rest.auth.jwt` mapping nor the literal `app.rest.auth.custom: true` is set: the API authenticates nobody. A placeholder `jwt` fails, since it may resolve to null. |
 | `loom.rest.W001` | `app.rest.docs_url`, `redoc_url` or `openapi_url` is not `null`: the schema is published. |
-| `loom.logger.W001` | `observability.log.config` asks for the `console` renderer. |
+| `loom.logger.E001` | `observability.log.format` is not `lambda`, `json` or `text`. |
+| `loom.logger.E002` | `observability.log.level` or `named_levels` values are not a log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`, in capitals); one finding names every one. |
 
 `app.rest.auth.custom: true` declares that `create_app` receives an
 `authenticator`. `create_app` refuses an `authenticator` without it, `custom:
@@ -327,24 +340,29 @@ not installed; a `celery` section that fails validation stops startup.
 
 The checks read keys as written (`ConfigContext.raw`) and resolve no
 placeholder, so they run in CI without the application's secrets; a value
-given by a placeholder is judged as written.
+given by a placeholder is judged as written. The section of a
+`ConfiguredInstaller` follows the same rule through `check_config`: decoded in
+full when it holds no placeholder, judged on its shape (existence, forbidden
+keys, required fields) when it does.
 
 ### CLI
 
-`loom check --deploy [--env X] [--skip AREA]... <config>` runs every check
-without starting the application, whatever the environment, prints each
+`loom check --deploy [--env X] [--skip PATH]... <config>` runs the checks of
+every path the configuration declares without starting the application, whatever the environment, prints each
 finding with its id and hint, lists the silenced ids, and exits `1` when an
 error remains. `<config>` is a directory (layered by `--env`, which defaults
 to `LOOM_ENV`) or explicit files; it loads with loom's default resolvers, and
 the `LOOM__*` variables of the shell apply (those of a deployed task do not,
 which is why security settings belong in the files). A configuration does
 not say which process it is for (a REST app may declare `celery`, a worker
-may share `app.rest`), so the CLI does not guess: `--skip loom.rest` checks a
+may share `app.rest`), so the CLI does not guess: `--skip app.rest` checks a
 worker, ETL or streaming configuration as those processes do at startup,
-and the command prints the areas it skipped.
+and the command prints a `checked:` and a `skipped:` line. `app.rest` is
+also required when `app.entry` is `fastapi`.
 `app.code_path` joins the import path as `create_app` adds it, so
-`checks.modules` import. It loads loom's own checks, the REST ones only when
-FastAPI is installed.
+`checks.modules` import. A used path whose check set needs a third-party
+module that is not installed (the REST checks without FastAPI) fails with a
+`ConfigError`, so run it with the same extras you deploy.
 
 ### Migration, no shims
 
@@ -360,7 +378,7 @@ loom has no external legacy, so the duplicates are removed outright:
 
 ## Coordination
 
-`hotfix/strict-signed-cursors` adds `persistence.cursors.signing` (`signed` by
+`hotfix/strict-signed-cursors` adds `stores.settings.cursors.signing` (`signed` by
 default, `ephemeral`, `unsigned`). Its check is not part of this decision.
 After this branch merges, that branch registers `loom.cursors.E001` with
 `@deploy_check` in a module its package already imports, and adds the package
@@ -368,7 +386,7 @@ to `_load_check_packages` in `loom.cli.check` so `loom check --deploy` sees
 it. `loom.cursors.E001` applies only when a repository backend is
 configured. The development fixture in `tests/unit/rest/test_deploy_checks.py`
 that builds a REST app from its own YAML already sets
-`persistence.cursors.signing: ephemeral`. The tests that will break are the
+`stores.settings.cursors.signing: ephemeral`. The tests that will break are the
 ones that start an application with a repository backend in a deployed
 environment and expect it to start:
 
@@ -391,28 +409,28 @@ The four need the cursor setting in their configurations, or the id under
 When #371 rebases on this branch it must also:
 
 - rename the cursor key example variables, which carry the `LOOM_` prefix
-  in `docs/rest/persistence-backends.md` and
-  `src/loom/core/repository/abc/cursor.py`, to `CURSOR_KEY_...`. `LOOM_`
+  in `docs/rest/stores.md` and
+  `src/loom/core/stores/repository/cursor.py`, to `CURSOR_KEY_...`. `LOOM_`
   names belong to `loom.core.environment`, and the containment test fails on
   a `LOOM_*` name loom does not own;
 - route the `os.environ` default of the cursor key sources (`environ=` in
   `abc/cursor.py`) through `loom.core.environment`, or add that file to the
   containment test's dynamic readers with its reason: the closed-world rule
   refuses a bare `os.environ` outside the environment module;
-- keep `persistence.cursors.*` off the override allowlist. In production and
-  staging `LOOM__PERSISTENCE__CURSORS__SIGNING=unsigned` then fails at
+- keep `stores.settings.cursors.*` off the override allowlist. In production and
+  staging `LOOM__STORES__SETTINGS__CURSORS__SIGNING=unsigned` then fails at
   startup as a key off the allowlist, before any deploy check runs;
 - make its cursor configuration struct forbid unknown fields if
-  `persistence.cursors` has a single reader, like the other single-reader
+  `stores.settings.cursors` has a single reader, like the other single-reader
   sections.
 
 **Resolved by ADR 0004 / #371.** The items above are done: `loom.cursors.E001`
-is registered in `loom.core.repository.abc.checks` and `loom check --deploy`
+is registered in `loom.core.stores.repository.checks` and `loom check --deploy`
 imports that package; the four tests sign their cursors with a configured
 key; the cursor key variables are `CURSOR_KEY_*` and are read through
 `loom.core.environment.configured_variable`, which the AI providers'
 `credentials_ref` now uses too, so the containment test lists one dynamic
-reader; `persistence.cursors` stays off the allowlist and is protected like
+reader; `stores.settings.cursors` stays off the allowlist and is protected like
 `config` and `checks` against `config.overridable`; `CursorConfig` forbids
 unknown fields.
 
@@ -433,10 +451,8 @@ unknown fields.
 - The SQL timeouts, `pool.size` and `executor_threads`, the Celery
   `runtime.shutdown_timeout_ms` and the streaming runtime's
   `epoch_interval_ms` and `force_shutdown_timeout_ms` must be above zero.
-- The handlers `configure_logging` attaches pass every record, so a named
-  level below the top-level level now takes effect for stdlib loggers;
-  structlog loggers, loom's own included, still drop events below the
-  top-level level.
+- A named level below the top-level level takes effect for every logger,
+  loom's own included: they are all stdlib loggers.
 - A consumer's test suite must set `LOOM_ENV=test`, or every application it
   builds starts as production and runs the deploy checks.
 - The migration locator resolves `LOOM_ENV`, applies the `LOOM__*` variables
@@ -444,3 +460,5 @@ unknown fields.
   application does.
 - A Prefect worker must run with `LOOM_ENV` set to the environment of its
   deployments; a run whose `env` differs fails.
+
+> Renamed in 12.0.0: ObservabilityRuntime → Observability.

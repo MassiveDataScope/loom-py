@@ -10,9 +10,9 @@ import pytest
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.model import BaseModel, Field, Integer, String
-from loom.core.persistence import PersistenceWiring
-from loom.core.repository.abc import Creatable, Deletable, Readable
-from loom.core.repository.dynamodb.backend import DynamoDBBackend
+from loom.core.stores import StoreWiring
+from loom.core.stores.repository import Creatable, Deletable, Readable
+from loom.stores.dynamodb.plugin import DynamoDBStorePlugin
 from tests.helpers.persistence import build_backend
 from tests.integration.aws.conftest import AwsClientFactory, ConfigWriter, unique
 
@@ -45,23 +45,23 @@ def table(dynamodb: Any) -> Iterator[str]:
 
 
 @pytest.fixture
-def wiring(write_config: ConfigWriter, table: str) -> PersistenceWiring:
+def wiring(write_config: ConfigWriter, table: str) -> StoreWiring:
     path = write_config(
         {
             "app": {"name": "loom-it-dynamodb"},
             "stores": {"default": {"backend": "dynamodb", "table": table}},
         }
     )
-    return build_backend(DynamoDBBackend(), ConfigContext.from_yaml(str(path)), (Gadget,))
+    return build_backend(DynamoDBStorePlugin(), ConfigContext.from_yaml(str(path)), (Gadget,))
 
 
 class TestDynamodbStore:
-    async def test_the_readiness_probe_finds_the_table(self, wiring: PersistenceWiring) -> None:
+    async def test_the_readiness_probe_finds_the_table(self, wiring: StoreWiring) -> None:
         assert wiring.readiness is not None
         assert await wiring.readiness() is True
 
     async def test_a_repository_round_trips_through_the_table(
-        self, wiring: PersistenceWiring, dynamodb: Any, table: str
+        self, wiring: StoreWiring, dynamodb: Any, table: str
     ) -> None:
         container = LoomContainer()
         wiring.repo_registration_module(container)
@@ -73,9 +73,7 @@ class TestDynamodbStore:
         item = dynamodb.get_item(TableName=table, Key={"id": {"N": "7"}})["Item"]
         assert item["name"] == {"S": "lamp"}
 
-    async def test_a_delete_reports_whether_the_item_existed(
-        self, wiring: PersistenceWiring
-    ) -> None:
+    async def test_a_delete_reports_whether_the_item_existed(self, wiring: StoreWiring) -> None:
         container = LoomContainer()
         wiring.repo_registration_module(container)
         await container.resolve(Creatable[Gadget]).create(Gadget(id=8, name="desk"))

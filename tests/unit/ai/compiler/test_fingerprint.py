@@ -24,7 +24,7 @@ from loom.ai.declarative import PolicySpec
 from loom.ai.inference import InferenceTarget
 from loom.ai.pricing import ModelPrice
 from loom.core.model.redaction import Dsn
-from loom.core.sql.config import SqlConnectionConfig
+from loom.core.stores.sql.config import SqlConnectionConfig
 from tests.helpers.pydantic_ai_engine import compiled_output, make_plan
 
 _TARGET = InferenceTarget(

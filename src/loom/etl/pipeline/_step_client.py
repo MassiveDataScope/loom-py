@@ -16,7 +16,7 @@ The concrete client type depends on the backend configured in the runner:
 * ClickHouse runner → ``clickhouse_connect.driver.Client`` (native HTTP client)
 
 To use ``ClientStep``, wire the runner with a
-:class:`~loom.etl.runtime.contracts.ClientCommandExecutor` implementation
+:class:`~loom.etl.ports.contracts.ClientCommandExecutor` implementation
 (e.g. :class:`~loom.etl.io.ClickHouseClientExecutor`)::
 
     from loom.etl import ETLRunner
@@ -45,6 +45,7 @@ from __future__ import annotations
 import typing
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
+from loom.core.errors import InvalidType
 from loom.etl.declarative.target import IntoFile, IntoHistory, IntoTable, IntoTemp
 from loom.etl.declarative.target._client import IntoClient
 from loom.etl.pipeline._step import ETLStep
@@ -67,7 +68,7 @@ class ClientStep(ETLStep[ParamsT], Generic[ParamsT]):
             :class:`~loom.etl.ETLProcess` / :class:`~loom.etl.ETLPipeline`.
 
     Raises:
-        TypeError: At class-definition time if a subclass overrides ``target``
+        InvalidType: At class-definition time if a subclass overrides ``target``
             with anything other than an :class:`~loom.etl.IntoClient` instance.
 
     Example::
@@ -90,7 +91,7 @@ class ClientStep(ETLStep[ParamsT], Generic[ParamsT]):
         if params_type is not None:
             cls._params_type = params_type
         if "target" in cls.__dict__ and not isinstance(cls.__dict__["target"], IntoClient):
-            raise TypeError(
+            raise InvalidType(
                 f"{cls.__qualname__}: 'target' must remain IntoClient() on ClientStep "
                 "subclasses — ClientStep produces no DataFrame output. "
                 "Remove the 'target' override or use ETLStep instead."

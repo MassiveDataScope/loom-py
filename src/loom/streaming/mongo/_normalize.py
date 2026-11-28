@@ -9,6 +9,7 @@ from typing import Any, Protocol, cast
 
 import msgspec
 
+from loom.core.errors import InternalError, InvalidType, InvalidValue
 from loom.streaming.core._message import Message, MessageMeta
 from loom.streaming.mongo._event import (
     MongoBsonTimestamp,
@@ -32,7 +33,7 @@ class _SupportsBytes(Protocol):
 def normalize_bson_value(value: object, _depth: int = 0) -> object:
     """Normalize one MongoDB/BSON runtime value into Loom-safe builtins."""
     if _depth > _MAX_BSON_DEPTH:
-        raise ValueError(f"BSON document exceeds maximum nesting depth of {_MAX_BSON_DEPTH}.")
+        raise InvalidValue(f"BSON document exceeds maximum nesting depth of {_MAX_BSON_DEPTH}.")
     if value is None or type(value) in _JSON_SCALARS:
         return value
     if isinstance(value, datetime):
@@ -59,7 +60,7 @@ def build_mongo_cdc_event(change: Mapping[str, object]) -> MongoCDCEvent:
     lag_ms = _event_lag_ms(wall_time_ms, cluster_time)
     raw_payload = normalize_bson_value(change)
     if not isinstance(raw_payload, dict):
-        raise TypeError("Normalized Mongo change event must be a mapping.")
+        raise InvalidType("Normalized Mongo change event must be a mapping.")
     full_document_raw = raw_payload.get("fullDocument")
     full_document = full_document_raw if isinstance(full_document_raw, dict) else None
     update_description_raw = raw_payload.get("updateDescription")
@@ -108,10 +109,10 @@ def build_mongo_cdc_message(change: Mapping[str, object]) -> Message[MongoCDCEve
 
 def _normalize_resume_token(value: object) -> dict[str, object]:
     if not isinstance(value, Mapping):
-        raise TypeError("Mongo change event '_id' must be a mapping resume token.")
+        raise InvalidType("Mongo change event '_id' must be a mapping resume token.")
     normalized = normalize_bson_value(value)
     if not isinstance(normalized, dict):
-        raise TypeError("Normalized Mongo resume token must remain a mapping.")
+        raise InternalError("Normalized Mongo resume token must remain a mapping.")
     return normalized
 
 
@@ -123,18 +124,20 @@ def _resume_token_event_id(resume_token: Mapping[str, object]) -> str:
 
 
 def _required_str(value: object, field: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise TypeError(f"Mongo change event field '{field}' must be a non-empty string.")
+    if not isinstance(value, str):
+        raise InvalidType(f"Mongo change event field '{field}' must be a string.")
+    if not value:
+        raise InvalidValue(f"Mongo change event field '{field}' must not be empty.")
     return value
 
 
 def _build_namespace(value: object) -> MongoCDCNamespace:
     if not isinstance(value, Mapping):
-        raise TypeError("Mongo change event field 'ns' must be a mapping.")
+        raise InvalidType("Mongo change event field 'ns' must be a mapping.")
     db = _required_str(value.get("db"), "ns.db")
     coll = value.get("coll")
     if coll is not None and not isinstance(coll, str):
-        raise TypeError("Mongo change event field 'ns.coll' must be a string when present.")
+        raise InvalidType("Mongo change event field 'ns.coll' must be a string when present.")
     return MongoCDCNamespace(db=db, coll=coll)
 
 
@@ -149,7 +152,7 @@ def _build_cluster_time(value: object) -> MongoBsonTimestamp | None:
             seconds=_required_int(normalized.get("seconds"), "clusterTime.seconds"),
             increment=_required_int(normalized.get("increment"), "clusterTime.increment"),
         )
-    raise TypeError("Mongo change event field 'clusterTime' must be a BSON Timestamp.")
+    raise InvalidType("Mongo change event field 'clusterTime' must be a BSON Timestamp.")
 
 
 def _build_wall_time_ms(
@@ -165,7 +168,7 @@ def _build_wall_time_ms(
     normalized = normalize_bson_value(value)
     if isinstance(normalized, int):
         return normalized
-    raise TypeError("Mongo change event field 'wallTime' must be a datetime when present.")
+    raise InvalidType("Mongo change event field 'wallTime' must be a datetime when present.")
 
 
 def _normalize_optional_mapping(value: object) -> dict[str, object] | None:
@@ -173,7 +176,7 @@ def _normalize_optional_mapping(value: object) -> dict[str, object] | None:
         return None
     normalized = normalize_bson_value(value)
     if not isinstance(normalized, dict):
-        raise TypeError("Normalized Mongo nested document must remain a mapping.")
+        raise InternalError("Normalized Mongo nested document must remain a mapping.")
     return normalized
 
 
@@ -181,7 +184,7 @@ def _document_id(value: object) -> MongoObjectId | str | None:
     if value is None:
         return None
     if not isinstance(value, Mapping):
-        raise TypeError("Mongo change event field 'documentKey' must be a mapping when present.")
+        raise InvalidType("Mongo change event field 'documentKey' must be a mapping when present.")
     raw = normalize_bson_value(value.get("_id"))
     return raw if isinstance(raw, (MongoObjectId, str)) else None
 
@@ -190,7 +193,7 @@ def _normalize_timestamp_mapping(value: object) -> dict[str, object]:
     seconds = getattr(value, "time", None)
     increment = getattr(value, "inc", None)
     if not isinstance(seconds, int) or not isinstance(increment, int):
-        raise TypeError("BSON Timestamp must expose integer 'time' and 'inc' attributes.")
+        raise InvalidType("BSON Timestamp must expose integer 'time' and 'inc' attributes.")
     return {"seconds": seconds, "increment": increment}
 
 
@@ -211,11 +214,11 @@ def _normalize_dbref(value: object) -> object:
     database = getattr(value, "database", None)
     identifier = getattr(value, "id", None)
     if not isinstance(collection, str):
-        raise TypeError("BSON DBRef must expose a string 'collection' attribute.")
+        raise InvalidType("BSON DBRef must expose a string 'collection' attribute.")
     if database is not None and not isinstance(database, str):
-        raise TypeError("BSON DBRef attribute 'database' must be a string when present.")
+        raise InvalidType("BSON DBRef attribute 'database' must be a string when present.")
     if identifier is None:
-        raise TypeError("BSON DBRef must have a non-None 'id' attribute.")
+        raise InvalidType("BSON DBRef must have a non-None 'id' attribute.")
     normalized_id = normalize_bson_value(identifier)
     id_str = normalized_id.id if isinstance(normalized_id, MongoObjectId) else str(normalized_id)
     return MongoDBRef(id=id_str, collection=collection, database=database)
@@ -223,7 +226,7 @@ def _normalize_dbref(value: object) -> object:
 
 def _required_int(value: object, field: str) -> int:
     if not isinstance(value, int):
-        raise TypeError(f"Mongo change event field '{field}' must be an integer.")
+        raise InvalidType(f"Mongo change event field '{field}' must be an integer.")
     return value
 
 

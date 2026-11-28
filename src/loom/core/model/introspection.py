@@ -1,47 +1,34 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
-from datetime import date, datetime, time
-from decimal import Decimal
-from enum import Enum
-from types import UnionType
-from typing import (
-    Annotated,
-    Any,
-    ClassVar,
-    Final,
-    Literal,
-    Union,
-    cast,
-    get_args,
-    get_origin,
-    get_type_hints,
-)
-from uuid import UUID
+from typing import Any, cast, get_args, get_origin, get_type_hints
 
 import msgspec
 
-from loom.core.model.field import ColumnFieldSpec, ColumnType, Field
+from loom.core.errors import InvalidType, InvalidValue
+from loom.core.model.class_store import stored_on_class
+from loom.core.model.enums import KeyFill
+from loom.core.model.field import ColumnFieldSpec, Field
+from loom.core.model.inference import (
+    AnnotatedClass,
+    Annotation,
+    FieldSource,
+    ResolvedField,
+)
+from loom.core.model.keys import (
+    BusinessKey,
+    DerivedKey,
+    KeyMismatch,
+    is_canonical_type,
+)
 from loom.core.model.partition import RangePartition
 from loom.core.model.privilege import Privilege
 from loom.core.model.projection import Projection
 from loom.core.model.relation import Relation
 from loom.core.model.scoped import ScopeColumn
-from loom.core.model.types import (
-    JSON,
-    Boolean,
-    Bytes,
-    Date,
-    DateTime,
-    Float,
-    Integer,
-    Numeric,
-    String,
-    Time,
-    Uuid,
-)
+from loom.core.model.types import ColumnKind, ColumnType
 from loom.core.schema_names import sql_identifier
 
 
@@ -58,17 +45,44 @@ class PartialUnique:
 class ColumnFieldInfo:
     """Resolved metadata for a single column field.
 
-    ``needs_declared_type`` marks a field whose column type was not declared
-    and is not inferred: ``column_type`` is then a placeholder, an unbounded
-    ``Numeric`` for a ``Decimal``, whose precision and scale must be declared,
-    and JSON for a plain enum or a ``Literal``.
+    ``resolved`` carries how the column type was settled; ``column_type`` is
+    ``None`` while the field is undeclared.
     """
 
     name: str
     python_type: type
-    column_type: ColumnType
+    resolved: ResolvedField
     field: Field
-    needs_declared_type: bool = False
+
+    @classmethod
+    def from_source(
+        cls, source: FieldSource, resolved: ResolvedField, declared: ColumnFieldSpec | None
+    ) -> ColumnFieldInfo:
+        """The column info of *source*, its ``Field`` completed from the annotation and default."""
+        field = source.declaration(declared).field
+        return cls(
+            name=source.name,
+            python_type=Annotation(source.annotation).origin_type,
+            resolved=resolved,
+            field=_with_nullable(_with_struct_default(field, source.default), resolved),
+        )
+
+    @property
+    def column_type(self) -> ColumnType | None:
+        """The column type, ``None`` when none could be settled."""
+        return self.resolved.column_type
+
+    @property
+    def is_json(self) -> bool:
+        """Whether the column holds a JSON document or a list of items."""
+        kind = self.kind
+        return kind is not None and kind.is_json
+
+    @property
+    def kind(self) -> ColumnKind | None:
+        """The kind of the column type, ``None`` when none could be settled."""
+        column_type = self.resolved.column_type
+        return None if column_type is None else column_type.kind
 
 
 def _collect_inherited_dict_metadata(cls: type, attr: str) -> dict[str, Any]:
@@ -82,84 +96,32 @@ def _collect_inherited_dict_metadata(cls: type, attr: str) -> dict[str, Any]:
 
 
 def get_column_fields(cls: type) -> dict[str, ColumnFieldInfo]:
-    """Extract column fields from a model class."""
-    declared_columns = _collect_inherited_dict_metadata(cls, "__loom_columns__")
-    hints = get_type_hints(cls, include_extras=True)
+    """Extract column fields from a model class, minus relations and projections."""
+    return dict(_column_fields(cls))
+
+
+@stored_on_class("__loom_column_fields__")
+def _column_fields(cls: type) -> Mapping[str, ColumnFieldInfo]:
+    declared = _collect_inherited_dict_metadata(cls, "__loom_columns__")
     non_columns = set(get_relations(cls)) | set(get_projections(cls))
-
-    result: dict[str, ColumnFieldInfo] = {}
-    for struct_field in msgspec.structs.fields(cls):
-        name = struct_field.name
-        annotation = hints.get(name, Any)
-        if name in non_columns or _is_classvar(annotation):
-            continue
-        result[name] = _resolve_column_field(
-            name,
-            annotation,
-            struct_default=struct_field.default,
-            declared=declared_columns.get(name),
+    resolved = {
+        field.name: field for field in AnnotatedClass(cls).resolve(declared, exclude=non_columns)
+    }
+    return {
+        source.name: ColumnFieldInfo.from_source(
+            source, resolved[source.name], declared.get(source.name)
         )
-    return result
+        for source in AnnotatedClass(cls).fields
+        if source.name in resolved
+    }
 
 
-def _resolve_column_field(
-    name: str,
-    annotation: Any,
-    *,
-    struct_default: Any,
-    declared: ColumnFieldSpec | None,
-) -> ColumnFieldInfo:
-    """Build the column metadata for one field, declared or inferred.
-
-    A ``ColumnField`` supplies the ``Field``; its column type, else the one in
-    ``Annotated``, else the inferred one is used.
-    """
-    annotated_type, field = _extract_annotated_column(annotation)
-    if declared is not None:
-        annotated_type, field = declared.column_type or annotated_type, declared.field
-    field = _with_nullable(_with_struct_default(field, struct_default), annotation)
-    column_type = annotated_type or _infer_column_type(annotation, field=field)
-    return ColumnFieldInfo(
-        name=name,
-        python_type=_extract_origin_type(annotation),
-        column_type=column_type or JSON,
-        field=field,
-        needs_declared_type=column_type is None or column_type is _UNDECLARED_DECIMAL,
-    )
-
-
-def _extract_annotated_column(annotation: Any) -> tuple[ColumnType | None, Field]:
-    """Read the ``ColumnType`` and ``Field`` carried by ``Annotated[T, ...]``, optional or not."""
-    column_type: ColumnType | None = None
-    field = Field()
-    _, metadata = _column_base(annotation)
-    for entry in metadata:
-        if isinstance(entry, ColumnType):
-            column_type = entry
-        elif isinstance(entry, Field):
-            field = entry
-    return column_type, field
-
-
-def _with_nullable(field: Field, annotation: Any) -> Field:
+def _with_nullable(field: Field, resolved: ResolvedField) -> Field:
     """Resolve an undeclared ``nullable`` from the annotation; primary keys stay NOT NULL."""
     if field.nullable is not None:
         return field
-    nullable = not field.primary_key and _admits_none(annotation)
+    nullable = not field.primary_key and resolved.nullable
     return cast(Field, replace(field, nullable=nullable))  # type: ignore[redundant-cast]
-
-
-def _admits_none(annotation: Any) -> bool:
-    """Whether ``annotation`` accepts ``None``, through ``Annotated``, ``Literal`` and unions."""
-    origin = get_origin(annotation)
-    if origin is Annotated:
-        return _admits_none(get_args(annotation)[0])
-    if origin is Literal:
-        return None in get_args(annotation)
-    members = _union_members(annotation)
-    if members is None:
-        return annotation is type(None)
-    return any(_admits_none(member) for member in members)
 
 
 def _with_struct_default(field: Field, struct_default: Any) -> Field:
@@ -184,11 +146,11 @@ def get_id_attributes(cls: type) -> tuple[str, ...]:
     """Return the names of the primary-key fields, in declaration order.
 
     Raises:
-        ValueError: If the model declares no primary-key field.
+        InvalidValue: If the model declares no primary-key field.
     """
     names = tuple(name for name, info in get_column_fields(cls).items() if info.field.primary_key)
     if not names:
-        raise ValueError(f"No primary key field found on {cls.__name__}")
+        raise InvalidValue(f"No primary key field found on {cls.__name__}")
     return names
 
 
@@ -201,7 +163,7 @@ def get_table_name(cls: type) -> str:
     """Return the ``__tablename__`` declared on the model."""
     table = getattr(cls, "__tablename__", None)
     if not isinstance(table, str):
-        raise ValueError(f"{cls.__name__} does not declare __tablename__")
+        raise InvalidType(f"{cls.__name__} does not declare __tablename__")
     return table
 
 
@@ -227,44 +189,13 @@ def resolve_type_hints(obj: Any, *, include_extras: bool = False) -> dict[str, A
         return {}
 
 
-def _union_members(hint: Any) -> tuple[Any, ...] | None:
-    """Return the members of a Union annotation, normalising ``X | Y`` and ``Union[X, Y]``.
-
-    Args:
-        hint: Any annotation object.
-
-    Returns:
-        The declared union members, or ``None`` when *hint* is not a Union.
-    """
-    if isinstance(hint, UnionType):
-        return hint.__args__
-    if getattr(hint, "__origin__", None) is Union:
-        return getattr(hint, "__args__", ())
-    return None
-
-
-def _union_inner_args(hint: Any) -> tuple[Any, ...] | None:
-    """Return the non-``None``, non-``UnsetType`` members of a Union annotation.
-
-    Args:
-        hint: Any annotation object.
-
-    Returns:
-        The meaningful union members, or ``None`` when *hint* is not a Union.
-    """
-    members = _union_members(hint)
-    if members is None:
-        return None
-    return tuple(a for a in members if a is not type(None) and a is not msgspec.UnsetType)
-
-
 def _first_union_match(
     members: tuple[Any, ...], resolve: Callable[[Any], type | None]
 ) -> type | None:
     """Return the first non-``None`` result of *resolve* over *members*.
 
     Args:
-        members: Union members, as returned by :func:`_union_inner_args`.
+        members: Union members, as returned by :attr:`Annotation.inner_args`.
         resolve: Walker applied to each member.
 
     Returns:
@@ -290,7 +221,7 @@ def extract_model_from_hint(hint: Any) -> type | None:
     Returns:
         The wrapped class, or ``None`` when the annotation wraps no class.
     """
-    union_args = _union_inner_args(hint)
+    union_args = Annotation(hint).inner_args
     if union_args is not None:
         return _first_union_match(union_args, extract_model_from_hint)
 
@@ -316,7 +247,7 @@ def list_element_type(annotation: Any) -> type | None:
     Returns:
         The list element class, or ``None`` when absent or not a class.
     """
-    union_args = _union_inner_args(annotation)
+    union_args = Annotation(annotation).inner_args
     if union_args is not None:
         return _first_union_match(union_args, list_element_type)
 
@@ -346,8 +277,13 @@ def generic_type_arg(annotation: Any, origin: Any) -> type | None:
     return args[0]
 
 
-_NON_SCALAR_COLUMN_TYPES = frozenset(
-    {"JSON", "Postgres.JSONB", "Postgres.ARRAY", "Postgres.TSVECTOR"}
+_NON_SCALAR_KINDS: frozenset[ColumnKind | None] = frozenset(
+    {
+        None,
+        ColumnKind.POSTGRES_TSVECTOR,
+        ColumnKind.POSTGRES_ARRAY,
+        *(kind for kind in ColumnKind if kind.is_json),
+    }
 )
 
 
@@ -371,7 +307,7 @@ def scalar_column_annotations(model: type) -> dict[str, Any]:
     structs are inferred as JSON. An enum mixed with a scalar type, such as a
     ``StrEnum`` or ``IntEnum``, takes that type's column and is scalar. No
     column type can be inferred for a plain ``Enum`` or a ``Literal`` declared
-    without one; its ``column_type`` is a JSON placeholder and it is not listed.
+    without one; it has no column type and it is not listed.
 
     Args:
         model: Model whose columns are read.
@@ -383,116 +319,8 @@ def scalar_column_annotations(model: type) -> dict[str, Any]:
     return {
         name: annotation
         for name, annotation in column_annotations(model).items()
-        if fields[name].column_type.type_name not in _NON_SCALAR_COLUMN_TYPES
+        if fields[name].kind not in _NON_SCALAR_KINDS
     }
-
-
-def _extract_origin_type(annotation: Any) -> type[Any]:
-    """Return the base type from ``Annotated[T, ...]``."""
-    origin = getattr(annotation, "__origin__", None)
-    if origin is not None:
-        args = getattr(annotation, "__args__", ())
-        if args:
-            value = args[0]
-            if isinstance(value, type):
-                return value
-            return object
-    raw = _unwrap_optional(annotation)
-    origin = get_origin(raw)
-    if origin is not None:
-        if isinstance(origin, type):
-            return origin
-        return object
-    if isinstance(raw, type):
-        return raw
-    return object
-
-
-def _unwrap_optional(annotation: Any) -> Any:
-    """Return the single type of a union once ``None`` and ``UnsetType`` are dropped.
-
-    ``UNSET`` means "not provided", not another type, so ``X | UnsetType``
-    and ``X | None | UnsetType`` unwrap to ``X``; whether ``None`` is admitted
-    is decided apart, by :func:`_admits_none`.
-    """
-    args = _union_inner_args(annotation)
-    if args is None:
-        return annotation
-    if len(args) == 1:
-        return args[0]
-    return annotation
-
-
-def _column_base(annotation: Any) -> tuple[Any, tuple[Any, ...]]:
-    """Strip ``Optional`` and ``Annotated`` layers, in either order.
-
-    Returns:
-        The inner annotation and the metadata of the ``Annotated`` layers.
-    """
-    metadata: tuple[Any, ...] = ()
-    while True:
-        unwrapped = _unwrap_optional(annotation)
-        if get_origin(unwrapped) is Annotated:
-            metadata += unwrapped.__metadata__
-            unwrapped = get_args(unwrapped)[0]
-        if unwrapped is annotation:
-            return annotation, metadata
-        annotation = unwrapped
-
-
-def _is_classvar(annotation: Any) -> bool:
-    return get_origin(annotation) is ClassVar
-
-
-_UNDECLARED_DECIMAL: Final = Numeric()
-
-_SCALAR_TYPE_MAP: dict[type, ColumnType] = {
-    int: Integer,
-    float: Float,
-    bool: Boolean,
-    bytes: Bytes,
-    datetime: DateTime(tz=True),
-    date: Date,
-    time: Time,
-    Decimal: _UNDECLARED_DECIMAL,
-    UUID: Uuid,
-}
-
-
-_COLUMN_RULE_TYPES = frozenset({str, *_SCALAR_TYPE_MAP})
-
-
-def _column_rule_type(annotation: Any) -> type:
-    """The class whose column rule the annotation follows.
-
-    An enum follows the first class of its MRO that has a rule, the scalar it is
-    mixed with; a plain enum has none and is returned as it is.
-    """
-    python_type = _extract_origin_type(annotation)
-    if not issubclass(python_type, Enum):
-        return python_type
-    return next((t for t in python_type.__mro__ if t in _COLUMN_RULE_TYPES), python_type)
-
-
-def _infer_column_type(annotation: Any, *, field: Field) -> ColumnType | None:
-    """Infer the column type from the annotation; an enum follows its scalar mixin.
-
-    Returns:
-        The column type, or ``None`` for a plain enum or a ``Literal``, which
-        have no scalar type to follow.
-    """
-    base, _ = _column_base(annotation)
-    origin = get_origin(base)
-    if origin is Literal:
-        return None
-    if origin in (list, tuple, set, dict):
-        return JSON
-    rule_type = _column_rule_type(base)
-    if rule_type is str:
-        return String(field.length)
-    if issubclass(rule_type, Enum):
-        return None
-    return _SCALAR_TYPE_MAP.get(rule_type, JSON)
 
 
 _SCOPE_NAME = re.compile(r"^[a-z_][a-z0-9_]*$")
@@ -530,8 +358,150 @@ def scope_columns(cls: type) -> tuple[ScopeColumn, ...]:
 
 
 def declared_unique(cls: type) -> tuple[tuple[str, ...], ...]:
-    """Composite UNIQUE constraints declared with ``__unique__``."""
-    return _declared_column_tuples(cls, "__unique__")
+    """UNIQUE constraints declared with ``__unique__``, and the one a business key stands for."""
+    declared = _declared_column_tuples(cls, "__unique__")
+    key = business_key_of(cls)
+    if key is None or any(set(columns) == set(key.fields) for columns in declared):
+        return declared
+    return (*declared, key.fields)
+
+
+@dataclass(frozen=True, slots=True)
+class ModelKeys:
+    """The columns that identify a duplicate row of a model, and which of them the store fills.
+
+    ``conflict`` is the business key, else the primary key; an undeclared key gives
+    the primary key, and a model without one gives ``()``. ``store_filled`` are the
+    conflict-key columns a frame cannot supply: a business key always comes from the
+    frame, so it gives ``{}``, while a primary key comes from the store when it is
+    autoincrement, derived from a business key, or filled by a server default.
+    """
+
+    conflict: tuple[str, ...]
+    store_filled: Mapping[str, KeyFill]
+
+    @property
+    def frame_supplied(self) -> tuple[str, ...]:
+        """The conflict key when a frame can supply it, else ``()``."""
+        return () if self.store_filled else self.conflict
+
+    @staticmethod
+    @stored_on_class("__loom_model_keys__")
+    def of(model: type) -> ModelKeys:
+        """The keys of *model*, derived once from its declared columns."""
+        key = business_key_of(model)
+        columns = get_column_fields(model)
+        if key is not None:
+            return ModelKeys(key.fields, {})
+        conflict = tuple(name for name, info in columns.items() if info.field.primary_key)
+        fills = ((name, columns[name].field.key_fill) for name in conflict)
+        return ModelKeys(conflict, {name: fill for name, fill in fills if fill is not None})
+
+
+@stored_on_class("__loom_business_key__")
+def business_key_of(cls: type) -> BusinessKey | None:
+    """The business key declared with ``__business_key__``, checked against the columns once.
+
+    Raises:
+        InvalidType: If the declaration is not a ``BusinessKey``.
+        InvalidValue: If it names an unknown or nullable field, or one whose
+            type has no canonical form.
+    """
+    key = getattr(cls, "__business_key__", None)
+    if key is None:
+        return None
+    prefix = f"{cls.__name__}: __business_key__"
+    if not isinstance(key, BusinessKey):
+        raise InvalidType(f"{prefix} must be a BusinessKey, got {key!r}")
+    known = get_column_fields(cls)
+    for name in key.fields:
+        info = known.get(name)
+        if info is None:
+            raise InvalidValue(f"{prefix} names unknown column {name!r}")
+        if info.field.nullable:
+            raise InvalidValue(f"{prefix} field {name!r} is nullable; a business key never is")
+        if not is_canonical_type(info.python_type):
+            raise InvalidValue(
+                f"{prefix} field {name!r} is {info.python_type.__name__}, "
+                "which has no canonical form"
+            )
+    return key
+
+
+@stored_on_class("__loom_derived_key__")
+def derived_key_of(cls: type) -> DerivedKey | None:
+    """The primary key a model derives from its business key, or ``None`` when it derives none.
+
+    Checks the declared business key too, as :func:`business_key_of` does, and
+    builds the key's readers once per model.
+
+    Raises:
+        InvalidType: If ``derived=`` is not on a ``str`` field.
+        InvalidValue: If ``derived=`` is not on the single primary-key
+            field, the model declares no ``__business_key__``, or the key
+            contains the derived field.
+        ConfigError: If a key field is set by the store after the insert.
+    """
+    derived = {name: info for name, info in get_column_fields(cls).items() if info.field.derived}
+    if not derived:
+        business_key_of(cls)
+        return None
+    declared = getattr(cls, "__business_key__", None)
+    if isinstance(declared, BusinessKey):
+        _refuse_server_set_fields(cls, declared)
+    key = business_key_of(cls)
+    prefix = f"{cls.__name__}: derived key"
+    if len(derived) > 1:
+        raise InvalidValue(f"{prefix} is declared on {', '.join(derived)}; only one field derives")
+    ((name, info),) = derived.items()
+    if get_id_attributes(cls) != (name,):
+        raise InvalidValue(f"{prefix} {name!r} must be the model's single primary-key field")
+    if info.python_type is not str:
+        raise InvalidType(f"{prefix} {name!r} must be annotated str")
+    if key is None:
+        raise InvalidValue(f"{prefix} {name!r} needs a __business_key__ to derive from")
+    if name in key.fields:
+        raise InvalidValue(f"{prefix} {name!r} cannot be part of its own business key")
+    return DerivedKey(cls.__name__, name, key, cast(Any, info.field.derived))
+
+
+def _refuse_server_set_fields(cls: type, key: BusinessKey) -> None:
+    """Refuse a business-key field the store sets after the insert, which cannot feed the key."""
+    from loom.core.config.errors import ConfigError
+
+    fields = get_column_fields(cls)
+    for name in key.fields:
+        info = fields.get(name)
+        if info is None:
+            continue
+        field = info.field
+        if (
+            field.server_default is None
+            and field.server_onupdate is None
+            and not field.autoincrement
+        ):
+            continue
+        raise ConfigError(
+            f"{cls.__name__}.{name} is in the business key of a derived id, but the store sets "
+            "it after the insert (server_default, server_onupdate or autoincrement), so it "
+            "cannot feed the key; use a business-time field the application sets, such as "
+            "observed_at, not created_at or updated_at"
+        )
+
+
+def verify_keys(model: type, rows: Iterable[Mapping[str, Any]]) -> tuple[KeyMismatch, ...]:
+    """Report the *rows* whose id is not the one the model's business key derives.
+
+    Used to check data that was written outside the repository, or before a
+    business key was redefined.
+
+    Raises:
+        InvalidType: If the model derives no key.
+    """
+    derived = derived_key_of(model)
+    if derived is None:
+        raise InvalidType(f"{model.__name__} derives no key")
+    return derived.verify(rows)
 
 
 def declared_indexes(cls: type) -> tuple[tuple[str, ...], ...]:
@@ -549,8 +519,10 @@ def declared_checks(cls: type) -> Mapping[str, str]:
     result: dict[str, str] = {}
     for rule, expression in raw.items():
         name = _rule_identifier(cls, "__checks__", rule)
-        if not isinstance(expression, str) or not expression.strip():
-            raise ValueError(
+        if not isinstance(expression, str):
+            raise InvalidType(f"{cls.__name__}: __checks__ rule {rule!r} expression must be a str")
+        if not expression.strip():
+            raise InvalidValue(
                 f"{cls.__name__}: __checks__ rule {rule!r} needs a non-empty SQL expression"
             )
         result[name] = expression
@@ -573,22 +545,28 @@ def _partial_unique(
 ) -> PartialUnique:
     name = _rule_identifier(cls, "__partial_unique__", rule)
     prefix = f"{cls.__name__}: __partial_unique__ rule {rule!r}"
-    if not isinstance(entry, tuple) or len(entry) != 2:
-        raise ValueError(f"{prefix} must be a (columns, where) pair")
+    if not isinstance(entry, tuple):
+        raise InvalidType(f"{prefix} must be a tuple")
+    if len(entry) != 2:
+        raise InvalidValue(f"{prefix} must be a (columns, where) pair")
     columns, where = entry
-    if not isinstance(columns, tuple) or not columns:
-        raise ValueError(f"{prefix} needs a non-empty tuple of columns")
-    if not isinstance(where, str) or not where.strip():
-        raise ValueError(f"{prefix} needs a non-empty SQL predicate")
+    if not isinstance(columns, tuple):
+        raise InvalidType(f"{prefix} columns must be a tuple")
+    if not columns:
+        raise InvalidValue(f"{prefix} needs a non-empty tuple of columns")
+    if not isinstance(where, str):
+        raise InvalidType(f"{prefix} predicate must be a str")
+    if not where.strip():
+        raise InvalidValue(f"{prefix} needs a non-empty SQL predicate")
     for column in columns:
         if column not in known:
-            raise ValueError(f"{prefix} names unknown column {column!r}")
+            raise InvalidValue(f"{prefix} names unknown column {column!r}")
     return PartialUnique(rule=name, columns=columns, where=where)
 
 
 _PARTITION_ATTR = "__partition_by__"
 _RANGE = "RANGE"
-_PARTITION_TYPES = frozenset({"DateTime"})
+_PARTITION_KINDS = frozenset({ColumnKind.DATETIME})
 
 
 def declared_partition(cls: type) -> RangePartition | None:
@@ -600,19 +578,24 @@ def declared_partition(cls: type) -> RangePartition | None:
     partition; LIST and HASH partitioning are not supported.
 
     Raises:
-        ValueError: Naming the model and what is wrong with the declaration.
+        InvalidType: Naming the model, when the declaration holds the wrong type.
+        InvalidValue: Naming the model and what else is wrong with the declaration.
     """
     raw = getattr(cls, _PARTITION_ATTR, None)
     if raw is None:
         return None
     prefix = f"{cls.__name__}: {_PARTITION_ATTR}"
     if not is_row_scoped(cls):
-        raise ValueError(f"{prefix} is only for row-scoped models")
-    if not (isinstance(raw, tuple) and len(raw) == 2 and all(isinstance(x, str) for x in raw)):
-        raise ValueError(f"{prefix} must be ('RANGE', <column>), got {raw!r}")
+        raise InvalidValue(f"{prefix} is only for row-scoped models")
+    if not isinstance(raw, tuple):
+        raise InvalidType(f"{prefix} must be a tuple ('RANGE', <column>), got {raw!r}")
+    if len(raw) != 2:
+        raise InvalidValue(f"{prefix} must be ('RANGE', <column>), got {raw!r}")
+    if not all(isinstance(x, str) for x in raw):
+        raise InvalidType(f"{prefix} entries must be strings, got {raw!r}")
     strategy, column = raw
     if strategy != _RANGE:
-        raise ValueError(
+        raise InvalidValue(
             f"{prefix} strategy {strategy!r} is not supported; only RANGE partitioning is"
         )
     fields = get_column_fields(cls)
@@ -626,12 +609,12 @@ def _check_partition_column(
 ) -> None:
     info = fields.get(column)
     if info is None:
-        raise ValueError(f"{prefix} names unknown column {column!r}")
+        raise InvalidValue(f"{prefix} names unknown column {column!r}")
     _rule_identifier(cls, _PARTITION_ATTR, column)
-    if info.column_type.type_name not in _PARTITION_TYPES:
-        raise ValueError(f"{prefix} column {column!r} must be a DateTime column")
+    if info.kind not in _PARTITION_KINDS:
+        raise InvalidValue(f"{prefix} column {column!r} must be a DateTime column")
     if not info.field.primary_key:
-        raise ValueError(f"{prefix} column {column!r} must be part of the primary key")
+        raise InvalidValue(f"{prefix} column {column!r} must be part of the primary key")
 
 
 def _check_unique_keys_hold_partition_column(
@@ -640,7 +623,7 @@ def _check_unique_keys_hold_partition_column(
     partials = [partial.columns for partial in declared_partial_unique(cls)]
     for key in [*_unique_keys(cls, fields), *partials]:
         if column not in key:
-            raise ValueError(
+            raise InvalidValue(
                 f"{prefix} unique key ({', '.join(key)}) lacks the partition column {column!r}"
             )
 
@@ -655,17 +638,17 @@ def _unique_keys(cls: type, fields: Mapping[str, ColumnFieldInfo]) -> list[tuple
 def _declared_mapping(cls: type, attr: str) -> Mapping[object, object]:
     raw: object = getattr(cls, attr, None) or {}
     if not isinstance(raw, Mapping):
-        raise ValueError(f"{cls.__name__}: {attr} must be a mapping of rule to declaration")
+        raise InvalidType(f"{cls.__name__}: {attr} must be a mapping of rule to declaration")
     return cast(Mapping[object, object], raw)
 
 
 def _rule_identifier(cls: type, attr: str, rule: object) -> str:
     if not isinstance(rule, str):
-        raise ValueError(f"{cls.__name__}: {attr} rule {rule!r} must be a string")
+        raise InvalidType(f"{cls.__name__}: {attr} rule {rule!r} must be a string")
     try:
         return sql_identifier(rule)
     except ValueError as exc:
-        raise ValueError(f"{cls.__name__}: {attr} rule {rule!r}: {exc}") from exc
+        raise InvalidValue(f"{cls.__name__}: {attr} rule {rule!r}: {exc}") from exc
 
 
 def declared_privileges(cls: type) -> Mapping[str, frozenset[Privilege]]:
@@ -674,11 +657,11 @@ def declared_privileges(cls: type) -> Mapping[str, frozenset[Privilege]]:
     if raw is None:
         return {}
     if is_row_scoped(cls):
-        raise ValueError(f"{cls.__name__}: __privileges__ is only for unscoped models")
+        raise InvalidValue(f"{cls.__name__}: __privileges__ is only for unscoped models")
     result: dict[str, frozenset[Privilege]] = {}
     for group, privileges in raw.items():
         if group not in _GROUPS:
-            raise ValueError(f"{cls.__name__}: unknown privilege group {group!r}")
+            raise InvalidValue(f"{cls.__name__}: unknown privilege group {group!r}")
         result[group] = frozenset(_as_privilege(cls, item) for item in privileges)
     return result
 
@@ -688,7 +671,7 @@ def _as_privilege(cls: type, item: object) -> Privilege:
         return item
     if isinstance(item, str) and item in Privilege.__members__:
         return Privilege[item]
-    raise ValueError(f"{cls.__name__}: {item!r} is not a row privilege")
+    raise InvalidValue(f"{cls.__name__}: {item!r} is not a row privilege")
 
 
 def _declared_column_tuples(cls: type, attr: str) -> tuple[tuple[str, ...], ...]:
@@ -697,7 +680,7 @@ def _declared_column_tuples(cls: type, attr: str) -> tuple[tuple[str, ...], ...]
     for entry in declared:
         for column in entry:
             if column not in known:
-                raise ValueError(f"{cls.__name__}: {attr} names unknown column {column!r}")
+                raise InvalidValue(f"{cls.__name__}: {attr} names unknown column {column!r}")
     return declared
 
 
@@ -705,9 +688,9 @@ def _check_c4(cls: type, fields: dict[str, ColumnFieldInfo], marked: bool) -> No
     for name, info in fields.items():
         field = info.field
         if field.scope is not None and not marked:
-            raise ValueError(f"C4: {cls.__name__}.{name} declares a scope on an unmarked model")
+            raise InvalidValue(f"C4: {cls.__name__}.{name} declares a scope on an unmarked model")
         if field.scope is None and (field.on != "both" or field.elevable):
-            raise ValueError(
+            raise InvalidValue(
                 f"C4: {cls.__name__}.{name} declares reach or elevable without a scope"
             )
 
@@ -716,24 +699,24 @@ def _check_c3(cls: type, scopes: tuple[ScopeColumn, ...]) -> None:
     seen: set[str] = set()
     for scope in scopes:
         if not _SCOPE_NAME.fullmatch(scope.scope):
-            raise ValueError(
+            raise InvalidValue(
                 f"C3: {cls.__name__}.{scope.column} scope {scope.scope!r} is not an identifier"
             )
         if scope.scope in seen:
-            raise ValueError(f"C3: {cls.__name__}.{scope.column} repeats scope {scope.scope!r}")
+            raise InvalidValue(f"C3: {cls.__name__}.{scope.column} repeats scope {scope.scope!r}")
         seen.add(scope.scope)
 
 
 def _check_c2(cls: type, scopes: tuple[ScopeColumn, ...]) -> None:
     for scope in scopes:
         if scope.elevable and scope.on != "write":
-            raise ValueError(f"C2: {cls.__name__}.{scope.column} is elevable but not write-only")
+            raise InvalidValue(f"C2: {cls.__name__}.{scope.column} is elevable but not write-only")
 
 
 def _check_c1(cls: type, scopes: tuple[ScopeColumn, ...]) -> ScopeColumn:
     boundaries = [scope for scope in scopes if scope.is_boundary]
     if len(boundaries) != 1:
-        raise ValueError(
+        raise InvalidValue(
             f"C1: {cls.__name__} must declare exactly one boundary scope, found {len(boundaries)}"
         )
     return boundaries[0]
@@ -741,7 +724,9 @@ def _check_c1(cls: type, scopes: tuple[ScopeColumn, ...]) -> ScopeColumn:
 
 def _check_c8(cls: type, fields: dict[str, ColumnFieldInfo], boundary: ScopeColumn) -> None:
     if fields[boundary.column].field.nullable:
-        raise ValueError(f"C8: {cls.__name__}.{boundary.column} boundary column cannot be nullable")
+        raise InvalidValue(
+            f"C8: {cls.__name__}.{boundary.column} boundary column cannot be nullable"
+        )
 
 
 def _check_c5(cls: type, fields: dict[str, ColumnFieldInfo], boundary: ScopeColumn) -> None:
@@ -749,13 +734,13 @@ def _check_c5(cls: type, fields: dict[str, ColumnFieldInfo], boundary: ScopeColu
     for key in [primary_key, *_unique_keys(cls, fields)]:
         if boundary.column not in key:
             columns = ", ".join(key)
-            raise ValueError(
+            raise InvalidValue(
                 f"C5: {cls.__name__} key {columns} lacks the boundary column {boundary.column}"
             )
     for partial in declared_partial_unique(cls):
         if boundary.column not in partial.columns:
             columns = ", ".join(partial.columns)
-            raise ValueError(
+            raise InvalidValue(
                 f"C5: {cls.__name__} partial unique {partial.rule} ({columns}) "
                 f"lacks the boundary column {boundary.column}"
             )

@@ -18,10 +18,10 @@ from loom.core.di import LoomContainer
 from loom.core.errors import Unauthenticated
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
-from loom.core.observability.event import EventKind, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.repository.registration import classify_key
-from loom.core.sql.service import SqlQueryService
+from loom.core.observability.event import Scope
+from loom.core.observability.observability import Observability
+from loom.core.stores.repository.registration import classify_key
+from loom.core.stores.sql.service import SqlQueryService
 from loom.core.use_case import Caller, UseCase
 from loom.core.use_case.factory import main_repository
 from tests.integration.ai.conftest import RecordingDepsFactory, RecordingObserver
@@ -71,7 +71,7 @@ _GRANTS = {"python": _python, "mcp": _mcp, "a2a": _a2a}
 
 @asynccontextmanager
 async def _alice_guard() -> AsyncIterator[None]:
-    """The guard the runtime hands over: the run's body is an execution acting as Alice."""
+    """The guard the host hands over: the run's body is an execution acting as Alice."""
     with ExecutionScope(ALICE):
         yield
 
@@ -82,7 +82,7 @@ def carrier(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> 
     calls: list[str] = []
     recorder = RecordingObserver()
     container = LoomContainer(classify_key=classify_key, implicit=main_repository)
-    container.register_instance(ObservabilityRuntime, ObservabilityRuntime([recorder]))
+    container.register_instance(Observability, Observability([recorder]))
     capability, tool = _GRANTS[request.param](calls, monkeypatch)
     model = ScriptedToolModel(calls=((tool, {"prompt": "p"} if tool == REMOTE_TOOL else {}),))
     engine: Any = build_engine(
@@ -97,14 +97,6 @@ def carrier(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> 
 
 def _drive(native: NativeAgent) -> Any:
     return native.agent.run("hello", deps=native.deps)
-
-
-def _tool_subjects(recorder: RecordingObserver) -> list[str]:
-    return [
-        event.meta["subject"]
-        for event in recorder.events
-        if event.scope is Scope.TOOL and event.kind is EventKind.START
-    ]
 
 
 def _leaf(error: BaseException) -> BaseException:
@@ -142,7 +134,7 @@ class TestARetainedCarrier:
             await _drive(native)
 
         assert len(calls) == 1
-        assert _tool_subjects(recorder) == [ALICE.subject]
+        assert recorder.acting_at_start(Scope.TOOL) == [ALICE.subject]
 
     @pytest.mark.parametrize("acting", [ALICE, BOB], ids=["its-caller", "another-caller"])
     async def test_runs_its_tools_as_the_identity_acting(
@@ -154,7 +146,7 @@ class TestARetainedCarrier:
             await _drive(native)
 
         assert len(calls) == 1
-        assert _tool_subjects(recorder) == [acting.subject]
+        assert recorder.acting_at_start(Scope.TOOL) == [acting.subject]
 
 
 @dataclass
@@ -194,7 +186,7 @@ class Governed:
     def built_for(self, identity: Identity) -> NativeAgent:
         """Build the carrier, its bundle built for *identity*."""
         container = LoomContainer(classify_key=classify_key, implicit=main_repository)
-        container.register_instance(ObservabilityRuntime, ObservabilityRuntime([self.recorder]))
+        container.register_instance(Observability, Observability([self.recorder]))
         container.register_instance(CallersSeen, self.seen)
         container.register_instance(SqlQueryService, self.sql)
         self.deps.registered_in(container)
@@ -241,7 +233,7 @@ class TestARetainedGovernedCarrier:
             await _drive(native)
 
         assert governed.reached == governed.reached_acting_as(ANALYST)
-        assert _tool_subjects(governed.recorder) == [ANALYST.subject]
+        assert governed.recorder.acting_at_start(Scope.TOOL) == [ANALYST.subject]
 
     async def test_a_query_acting_without_an_allowed_role_is_refused(self) -> None:
         governed = Governed("sql")

@@ -2,7 +2,7 @@
 
 One ``MCPToolset`` per connection serves the whole worker, held by
 :class:`SharedMcpToolsets`: :meth:`SharedMcpToolsets.open` is the
-:data:`~loom.ai.runtime.McpClientFactory` the runtime enters at start-up, and
+:data:`~loom.ai.execution.McpClientFactory` the host enters at start-up, and
 :meth:`SharedMcpToolsets.for_build` puts that same session behind the run's
 capability boundary (:class:`_SessionToolset`). :class:`_ToolsetSession` is a
 :class:`~loom.ai.abc.ConcurrentMcpSession`: grant views, ``python`` factories
@@ -29,9 +29,11 @@ from loom.ai.abc import ConcurrentMcpSession, McpSession, McpToolCallResult, Mcp
 from loom.ai.compiler import CompiledMcpCapability, mcp_connection
 from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted, Outcome
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.ai.event import AiEvent
 from loom.ai.registry import require_provider_sdk
 from loom.ai.remote_auth import headers_from_ref, shared_mcp_auth
 from loom.core.config.errors import ConfigError
+from loom.core.errors import InvalidUse
 from loom.core.model.redaction import Secret
 
 if TYPE_CHECKING:
@@ -91,7 +93,7 @@ class _OpenToolset:
     suspect: bool = False
 
     @classmethod
-    def of(cls, toolset: MCPToolset[Any], *, held: bool = True) -> _OpenToolset:
+    def from_toolset(cls, toolset: MCPToolset[Any], *, held: bool = True) -> _OpenToolset:
         """Hold *toolset* with the pool its builder put on its transport, if any.
 
         ``build_mcp_toolset`` gives an ``http`` toolset a
@@ -111,12 +113,12 @@ class _OpenToolset:
         try:
             try:
                 if self.in_flight:
-                    await self.toolset.client.close()  # type: ignore[no-untyped-call]
+                    await cast(Callable[[], Awaitable[None]], self.toolset.client.close)()
             finally:
                 if self.held:
                     await self.toolset.__aexit__(None, None, None)
         except Exception:
-            _logger.warning("an mcp session did not close cleanly", exc_info=True)
+            _logger.warning(AiEvent.MCP_SESSION_CLOSE_FAILED, exc_info=True)
         await self._release()
 
     @classmethod
@@ -132,7 +134,7 @@ class _OpenToolset:
         Raises:
             BaseException: Whatever entering raised, after the pool it made is released.
         """
-        held = cls.of(toolset)
+        held = cls.from_toolset(toolset)
         try:
             await toolset.__aenter__()
         except BaseException:
@@ -146,7 +148,7 @@ class _OpenToolset:
         try:
             await self.pool.release()
         except Exception:
-            _logger.warning("an mcp connection pool did not close cleanly", exc_info=True)
+            _logger.warning(AiEvent.MCP_POOL_CLOSE_FAILED, exc_info=True)
 
 
 class _ToolsetSession(ConcurrentMcpSession):
@@ -197,7 +199,7 @@ class _ToolsetSession(ConcurrentMcpSession):
             if not self._closed and self._current is held and self._rebuild is not None:
                 await self._renew(held, self._rebuild())
             if self._closed:
-                raise RuntimeError("the mcp session is closed")
+                raise InvalidUse("the mcp session is closed")
             return self._current
 
     async def _renew(self, held: _OpenToolset, toolset: MCPToolset[Any]) -> None:
@@ -214,7 +216,11 @@ class _ToolsetSession(ConcurrentMcpSession):
         if retired is not None:
             self._close(retired)
         await asyncio.shield(asyncio.gather(*self._closing))
-        fresh = await self._listed(toolset) if held.held else _OpenToolset.of(toolset, held=False)
+        fresh = (
+            await self._listed(toolset)
+            if held.held
+            else _OpenToolset.from_toolset(toolset, held=False)
+        )
         if self._closed:
             await asyncio.shield(self._close(fresh))
             return
@@ -223,7 +229,7 @@ class _ToolsetSession(ConcurrentMcpSession):
             self._retired = held
         else:
             await asyncio.shield(self._close(held))
-        _logger.warning("mcp session renewed after a failed call")
+        _logger.warning(AiEvent.MCP_SESSION_RENEWED)
 
     async def _listed(self, toolset: MCPToolset[Any]) -> _OpenToolset:
         """Enter *toolset* and list its tools; one that cannot is closed again."""
@@ -256,7 +262,7 @@ class _ToolsetSession(ConcurrentMcpSession):
 
         ``MCPToolset.list_tools`` caches its result (``cache_tools=True`` by
         default), so a second call from
-        :class:`~loom.ai.runtime._grants.McpGrantView` costs no extra round
+        :class:`~loom.ai.execution._grants.McpGrantView` costs no extra round
         trip beyond the one start-up already pays.
         """
         tools = await self.invoke(None, lambda toolset: toolset.list_tools())
@@ -315,7 +321,7 @@ class _ToolsetSession(ConcurrentMcpSession):
         try:
             return await self._send(held, operation)
         except Exception as exc:
-            outcome = Outcome.of(exc)
+            outcome = Outcome.from_exception(exc)
             if self._rebuild is None or outcome is not Outcome.SAFE:
                 _raise_failure(held, exc, name, outcome)
             held.suspect = True
@@ -323,7 +329,7 @@ class _ToolsetSession(ConcurrentMcpSession):
         try:
             return await self._send(held, operation)
         except Exception as exc:
-            _raise_failure(held, exc, name, Outcome.of(exc))
+            _raise_failure(held, exc, name, Outcome.from_exception(exc))
 
     async def tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
         """The live toolset's tools for an agent run; a listing never renews.
@@ -382,7 +388,7 @@ class _SessionToolset(AbstractToolset[Any]):
     same object for every run and every step.
 
     Args:
-        session: The connection's session, opened by the runtime.
+        session: The connection's session, opened by the host.
         named_after: The connection's first toolset, whose id and label this
             reports.
     """
@@ -624,13 +630,13 @@ def _stdio_transport(command: str, capability: CompiledMcpCapability) -> ClientT
 class SharedMcpToolsets:
     """The MCP toolsets of one worker: one per distinct connection.
 
-    The runtime opens each connection at start-up (:meth:`open`) as a
+    The host opens each connection at start-up (:meth:`open`) as a
     :class:`_ToolsetSession`; :meth:`for_build` hands an agent's ``mcp``
     grant that session and :meth:`session_for` hands it to a ``python``
     factory. A connection start-up did not open (tolerated as unreachable)
     gets a session created on first use that connects on each use.
     :meth:`for_build` refuses a connection :meth:`open` was never asked for.
-    One instance serves one runtime lifecycle; toolsets are never evicted.
+    One instance serves one host lifecycle; toolsets are never evicted.
     Each toolset waits :data:`DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS` for its
     connection and handshake unless :meth:`set_connect_timeout` replaces it.
 
@@ -654,7 +660,7 @@ class SharedMcpToolsets:
         Has no effect on a connection whose toolset :meth:`_toolset` already
         built: the deadline is read once, at build, not on every connect.
         Callers that need the deployment's real ``ai.startup_timeout_ms``
-        must call this before the runtime opens any client.
+        must call this before the host opens any client.
 
         Args:
             seconds: New handshake deadline, in seconds.
@@ -679,7 +685,7 @@ class SharedMcpToolsets:
             connected it.
 
         Raises:
-            AgentCompilationError: When the runtime never opened this
+            AgentCompilationError: When the host never opened this
                 connection through :meth:`open` -- the deployment wired some
                 other MCP client factory -- or when the toolset cannot be built.
         """
@@ -701,14 +707,16 @@ class SharedMcpToolsets:
         """Return the connection's session; one start-up could not open connects on use.
 
         That session holds nothing open: each use enters its toolset and leaves
-        it, so nothing outlives the runtime that never opened the connection.
+        it, so nothing outlives the host that never opened the connection.
         It starts from a toolset of its own, as the one start-up tried released
         its pool.
         """
         session = self._sessions.get(connection)
         if session is None:
             rebuild = self._builder(connection)
-            session = _ToolsetSession(_OpenToolset.of(rebuild(), held=False), rebuild=rebuild)
+            session = _ToolsetSession(
+                _OpenToolset.from_toolset(rebuild(), held=False), rebuild=rebuild
+            )
             self._sessions[connection] = session
         return session
 
@@ -743,8 +751,8 @@ class SharedMcpToolsets:
     async def open(self, capability: CompiledMcpCapability) -> AsyncIterator[_ToolsetSession]:
         """Open the worker's session for one grant, connected and ready to list.
 
-        Satisfies :data:`~loom.ai.runtime.McpClientFactory`: nothing happens
-        until the context is entered, so the runtime's start-up deadline bounds
+        Satisfies :data:`~loom.ai.execution.McpClientFactory`: nothing happens
+        until the context is entered, so the host's start-up deadline bounds
         the whole of it and a failure is reported as a coded start-up issue
         rather than as an exception escaping ``create_app``. Holding the
         context open is what keeps the shared connection alive for the runs.
@@ -792,7 +800,7 @@ async def create_mcp_client(
     """Open one throw-away session against an MCP server, outside any sharing.
 
     For a caller that needs a session of its own — a diagnostic, a probe,
-    a test. A composition root must **not** wire this as the runtime's
+    a test. A composition root must **not** wire this as the host's
     ``mcp_client_factory``: it builds a toolset the engine's run path does not
     know about, so the worker would hold that connection plus one per agent.
     Read ``mcp_client_factory`` off the engine provider instead, which is what

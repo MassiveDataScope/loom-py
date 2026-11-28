@@ -54,6 +54,9 @@ def entity_key(
 ) -> str:
     """Build the cache key for a single entity lookup.
 
+    The primary key appears as its SHA-256 digest, so a key written to a log
+    or to the backend never holds the id itself.
+
     Args:
         entity: Normalized entity name.
         entity_id: Primary key of the entity.
@@ -66,7 +69,7 @@ def entity_key(
         A composite cache key string.
     """
     return (
-        f"{entity}:{entity_id}:profile={profile}:deps={deps_fingerprint}"
+        f"{entity}:{full_hash(str(entity_id))}:profile={profile}:deps={deps_fingerprint}"
         f":scope={_scope_digest(scope)}"
     )
 

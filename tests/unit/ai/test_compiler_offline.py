@@ -16,7 +16,7 @@ import pytest
 from loom.ai.compiler import AgentCompiler
 from loom.ai.config import AiConfig
 from loom.ai.declarative import load_specs
-from loom.core.sql.config import SqlConfig
+from loom.core.stores.sql.config import SqlConfig
 from loom.core.use_case.registry import UseCaseRegistry
 from tests.unit.ai.phases.conftest import ALL_KINDS, admits_every_native_tool
 
@@ -28,9 +28,6 @@ CORPUS_DIR = Path(__file__).parent / "fixtures" / "corpus_v1"
 _PROVIDER_ENV_VARS: tuple[str, ...] = (
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
-    "AWS_SESSION_TOKEN",
-    "AWS_PROFILE",
-    "AWS_DEFAULT_REGION",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
 )

@@ -12,13 +12,13 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from loom.core.repository.sqlalchemy.rls import create_schema, ensure_range_partitions, verify
-from loom.core.repository.sqlalchemy.rls.audit import (
+from loom.stores.sqlalchemy.rls import create_schema, ensure_range_partitions, verify
+from loom.stores.sqlalchemy.rls.audit import (
     AUDIT_HORIZON_MONTHS,
     drop_expired_audit_partition,
     ensure_audit_partitions,
 )
-from loom.core.repository.sqlalchemy.rls.integrity import audit_months_covered
+from loom.stores.sqlalchemy.rls.integrity import audit_months_covered
 from tests.integration.agnosticism import bookkeeping, journal
 from tests.integration.rls.conftest import (
     BootstrapFactory,

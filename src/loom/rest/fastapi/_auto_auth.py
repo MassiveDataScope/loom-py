@@ -16,7 +16,7 @@ from loom.rest.checks import AUDIENCE_CHECK, ISSUER_CHECK
 if TYPE_CHECKING:
     from loom.core.config.context import ConfigContext
     from loom.core.environment import Environment
-    from loom.rest.fastapi.adapter import _RestAuthConfig
+    from loom.rest.fastapi.runtime import _RestAuthConfig
 
 
 @dataclass(frozen=True)

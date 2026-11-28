@@ -3,7 +3,7 @@
 A use case is feedable from a run when its compiled execution plan declares
 no primitive parameters, one ``Input()`` whose type builds from a payload,
 and every required, user-supplied Input name lies inside the set of names
-the runtime offers.  ``internal`` and ``calculated`` command fields are
+the host offers.  ``internal`` and ``calculated`` command fields are
 infrastructure-owned and never demanded; ``Caller()`` is injected by the
 executor and never demanded either.
 
@@ -44,7 +44,7 @@ def feedable_input(
 
     Args:
         use_case: Compiled use case whose Input the run must feed.
-        offered: Names the runtime offers to that Input.
+        offered: Names the host offers to that Input.
 
     Returns:
         The declared names and ``None``; an empty set and the reason otherwise.

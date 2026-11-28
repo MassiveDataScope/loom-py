@@ -4,15 +4,15 @@ import pytest
 from prometheus_client import CollectorRegistry, generate_latest
 
 from loom.core.observability.event import LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.prometheus import KafkaPrometheusMetrics
 
 pytestmark = pytest.mark.kafka
 
 
-def _make_obs(registry: CollectorRegistry) -> tuple[ObservabilityRuntime, KafkaPrometheusMetrics]:
+def _make_obs(registry: CollectorRegistry) -> tuple[Observability, KafkaPrometheusMetrics]:
     metrics = KafkaPrometheusMetrics(registry=registry)
-    return ObservabilityRuntime([metrics]), metrics
+    return Observability([metrics]), metrics
 
 
 class TestKafkaPrometheusMetrics:
@@ -46,20 +46,20 @@ class TestKafkaPrometheusMetrics:
         [
             pytest.param(
                 "kafka_produce",
-                "timeout",
+                RuntimeError("timeout"),
                 'streaming_kafka_produced_total{status="delivery_error",topic="orders"}',
                 id="produce_error_increments_produced_total_with_delivery_error",
             ),
             pytest.param(
                 "kafka_decode",
-                "bad bytes",
+                ValueError("bad bytes"),
                 'streaming_kafka_consumed_total{status="decode_error",topic="orders"}',
                 id="decode_error_increments_consumed_total_with_decode_error",
             ),
         ],
     )
     def test_error_increments_its_total_with_the_error_status(
-        self, name: str, error: str, expected: str, kafka_registry: CollectorRegistry
+        self, name: str, error: Exception, expected: str, kafka_registry: CollectorRegistry
     ) -> None:
         obs, _ = _make_obs(kafka_registry)
 

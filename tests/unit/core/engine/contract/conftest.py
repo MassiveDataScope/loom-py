@@ -5,7 +5,7 @@ SQLAlchemy unit of work over an in-memory sqlite ``SessionManager`` wrapped
 by a counting one, the Mongo unit of work over the in-memory fake client
 (transactional and no-op) and the DynamoDB no-op unit of work.  A scenario
 that needs a real commit or rollback skips by the adapter's declared
-``transactional`` ClassVar, read from a created unit of work.
+``is_transactional`` ClassVar, read from a created unit of work.
 """
 
 from __future__ import annotations
@@ -20,18 +20,18 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey
-from loom.core.repository.dynamodb.uow import DynamoUnitOfWorkFactory
-from loom.core.repository.mongo.uow import MongoUnitOfWorkFactory
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
-from loom.core.uow.abc import UnitOfWork, UnitOfWorkFactory
-from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import current_handle
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey
+from loom.core.stores.uow.abc import UnitOfWork, UnitOfWorkFactory
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.scope import current_handle
+from loom.stores.dynamodb.uow import DynamoDBUnitOfWorkFactory
+from loom.stores.mongo.uow import MongoUnitOfWorkFactory
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWorkFactory
 
 from ...repository.mongo._fake import FakeMongoClient
-from .._lifecycle_doubles import Broker, Log, Metrics, start_hanging
+from .._lifecycle_doubles import Broker, Log, RecordingExecutionObserver, start_hanging
 
 # ---------------------------------------------------------------------------
 # SQLAlchemy seams: a counting session manager over a real sqlite one
@@ -122,7 +122,7 @@ async def sqlite_session_manager() -> AsyncIterator[CountingSessionManager]:
     try:
         yield CountingSessionManager(manager)
     finally:
-        await manager.dispose()
+        await manager.close()
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +222,7 @@ _CONTEXT_MANAGER = frozenset({"enter", "exit"})
 class LifecycleProbe:
     """Wraps a real unit of work and records how the executor's coordinator drives it.
 
-    ``transactional`` and ``phased`` are the wrapped adapter's values,
+    ``is_transactional`` and ``is_phased`` are the wrapped adapter's values,
     forwarded by :func:`probe_class_for`, so the coordinator drives the probe
     exactly as it drives the adapter: phase by phase when the adapter is
     phased (ADR 0008, which supersedes FR-001 "the executor never calls
@@ -231,8 +231,8 @@ class LifecycleProbe:
     whether it committed or rolled back, whichever protocol it used.
     """
 
-    transactional: ClassVar[bool]
-    phased: ClassVar[bool]
+    is_transactional: ClassVar[bool]
+    is_phased: ClassVar[bool]
 
     def __init__(self, inner: UnitOfWork, log: Log) -> None:
         # ``Any``: a phased adapter's ``flush``/``close``/``owner`` are not on ``UnitOfWork``.
@@ -297,15 +297,15 @@ class LifecycleProbe:
     @property
     def off_protocol_calls(self) -> list[str]:
         """Calls outside the one protocol this adapter is driven through."""
-        allowed = _PHASES if self.phased else _CONTEXT_MANAGER
+        allowed = _PHASES if self.is_phased else _CONTEXT_MANAGER
         return [call for call in self.calls if call not in allowed]
 
 
 def probe_class_for(adapter: type[UnitOfWork]) -> type[LifecycleProbe]:
-    """Return a probe class declaring the same ``transactional`` and ``phased`` as ``adapter``."""
+    """Return a probe class declaring the ``is_transactional`` and ``is_phased`` of ``adapter``."""
     markers = {
-        "transactional": adapter.transactional,
-        "phased": getattr(adapter, "phased", False) is True,
+        "is_transactional": adapter.is_transactional,
+        "is_phased": getattr(adapter, "is_phased", False) is True,
     }
     return type(f"{adapter.__name__}Probe", (LifecycleProbe,), markers)
 
@@ -355,8 +355,8 @@ class LifecycleCase:
     Args:
         name: Adapter name, used in test ids and skip reasons.
         factory: Recording factory the executor is built with.
-        transactional: The ``transactional`` ClassVar of a created unit of work.
-        phased: Whether the coordinator drives it phase by phase.
+        transactional: The ``is_transactional`` ClassVar of a created unit of work.
+        is_phased: Whether the coordinator drives it phase by phase.
         probe: Observation of the adapter's session.
         failures: Failure injection; ``None`` when the adapter has no driver seam.
         sessions_expected: Driver sessions one execution opens on this adapter.
@@ -367,7 +367,7 @@ class LifecycleCase:
     name: str
     factory: RecordingFactory
     transactional: bool
-    phased: bool
+    is_phased: bool
     probe: SessionProbe
     failures: FailureSeams | None
     sessions_expected: int
@@ -384,8 +384,8 @@ def _transactional_case(
     return LifecycleCase(
         name=name,
         factory=RecordingFactory(factory, log),
-        transactional=type(factory.create()).transactional,
-        phased=True,
+        transactional=type(factory.create()).is_transactional,
+        is_phased=True,
         probe=seams,
         failures=seams,
         sessions_expected=1,
@@ -397,8 +397,8 @@ def _no_op_case(name: str, factory: UnitOfWorkFactory, log: Log) -> LifecycleCas
     return LifecycleCase(
         name=name,
         factory=RecordingFactory(factory, log),
-        transactional=type(factory.create()).transactional,
-        phased=False,
+        transactional=type(factory.create()).is_transactional,
+        is_phased=False,
         probe=NoSessionProbe(),
         failures=None,
         sessions_expected=0,
@@ -427,7 +427,7 @@ async def _mongo_noop_case(log: Log) -> AsyncIterator[LifecycleCase]:
 
 @asynccontextmanager
 async def _dynamodb_case(log: Log) -> AsyncIterator[LifecycleCase]:
-    yield _no_op_case("dynamodb", DynamoUnitOfWorkFactory(), log)
+    yield _no_op_case("dynamodb", DynamoDBUnitOfWorkFactory(), log)
 
 
 CaseBuilder = Callable[[Log], AbstractAsyncContextManager[LifecycleCase]]
@@ -442,7 +442,7 @@ CASE_IDS = ("sqlalchemy", "mongo-transactional", "mongo-noop", "dynamodb")
 
 
 def require_transactional(case: LifecycleCase) -> FailureSeams:
-    """Skip unless the adapter declares ``transactional``; return its failure seams."""
+    """Skip unless the adapter declares ``is_transactional``; return its failure seams."""
     if not case.transactional:
         pytest.skip(f"{case.name} declares transactional=False: nothing to commit or roll back")
     assert case.failures is not None, f"{case.name} declares transactional but has no seam"
@@ -450,7 +450,7 @@ def require_transactional(case: LifecycleCase) -> FailureSeams:
 
 
 async def cancel_twice_during_rollback(
-    executor: RuntimeExecutor, gate: asyncio.Event
+    executor: UseCaseExecutor, gate: asyncio.Event
 ) -> list[bool]:
     """Cancel a hanging execution, then again while its gated rollback is in flight.
 
@@ -492,8 +492,8 @@ async def case(request: pytest.FixtureRequest, log: Log) -> AsyncIterator[Lifecy
 
 
 @pytest.fixture
-def metrics(log: Log) -> Metrics:
-    return Metrics(log)
+def observer(log: Log) -> RecordingExecutionObserver:
+    return RecordingExecutionObserver(log)
 
 
 @pytest.fixture
@@ -502,9 +502,9 @@ def broker(log: Log) -> Broker:
 
 
 @pytest.fixture
-def executor(case: LifecycleCase, metrics: Metrics) -> RuntimeExecutor:
-    return RuntimeExecutor(
+def executor(case: LifecycleCase, observer: RecordingExecutionObserver) -> UseCaseExecutor:
+    return UseCaseExecutor(
         UseCaseCompiler(),
         coordinator=OrderedCommits({DEFAULT_STORE: case.factory}),
-        metrics=metrics,
+        execution_observer=observer,
     )

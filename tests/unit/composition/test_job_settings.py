@@ -9,17 +9,18 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
-from celery import Celery
 
-from loom.composition import Application, compose_application
+from loom.composition import Application
 from loom.core.config import ConfigError
 from loom.core.job.context import flush_pending_dispatches
+from loom.core.job.event import JobEvent, JobKey
 from loom.core.job.job import Job
 from loom.core.job.service import JobService
-from tests.helpers.jobs import BROKER, JobsAdapter, job_source
+from tests.helpers.celery import CeleryBroker
+from tests.helpers.jobs import BROKER, JobsAdapter, job_project
+from tests.helpers.loggers import CapturedLog
 
 _CONFIGURED = {"queue": "reports", "countdown": 5, "priority": 3, "timeout": 60}
 _DECLARED = {"queue": "default", "countdown": 0, "priority": 0, "soft_time_limit": None}
@@ -43,20 +44,21 @@ def _compose(
         config["jobs"] = jobs
     directory = tmp_path / name
     directory.mkdir()
-    source = job_source(directory, config, job_service)
-    return compose_application(source, JobsAdapter(_ReportJob))
+    project = job_project(directory, config, job_service)
+    return project.compose(JobsAdapter(_ReportJob))
 
 
 async def _sent(application: Application) -> dict[str, Any] | None:
-    """The routing ``send_task`` got when *application* dispatched the job; ``None`` if not sent."""
+    """The routing the broker got when *application* dispatched the job; ``None`` if not sent."""
+    broker = CeleryBroker(["default", "reports"])
     service = application.kernel.container.resolve(JobService)
-    with patch.object(Celery, "send_task", autospec=True) as send_task:
-        service.dispatch(_ReportJob)
-        await flush_pending_dispatches()
-    if send_task.call_args is None:
+    service.dispatch_after_commit(_ReportJob)
+    await flush_pending_dispatches()
+    sent = broker.sent()
+    if not sent:
         return None
-    kwargs = send_task.call_args.kwargs
-    return {key: kwargs[key] for key in _DECLARED}
+    (message,) = sent
+    return {key: getattr(message, key) for key in _DECLARED}
 
 
 def _in_order(configured_first: bool) -> list[tuple[str, dict[str, Any] | None]]:
@@ -115,8 +117,52 @@ class TestJobSettings:
         assert sent["configured"]["queue"] == "reports"
 
     def test_a_malformed_jobs_section_fails_the_composition(self, tmp_path: Path) -> None:
-        source = job_source(tmp_path, {"jobs": {"_ReportJob": {"timeout": "60s"}}}, "inline")
+        project = job_project(tmp_path, {"jobs": {"_ReportJob": {"timeout": "60s"}}}, "inline")
         adapter = JobsAdapter(_ReportJob)
 
         with pytest.raises(ConfigError, match="_ReportJob"):
-            compose_application(source, adapter)
+            project.compose(adapter)
+
+    def test_start_up_logs_one_line_with_each_jobs_effective_retry_policy(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        project = job_project(
+            tmp_path, {"jobs": {"_ReportJob": {"retry": {"max_attempts": 5}}}}, "inline"
+        )
+
+        with caplog.at_level("INFO"):
+            project.compose(JobsAdapter(_ReportJob))
+
+        [fields] = CapturedLog(caplog).named(JobEvent.RETRY_POLICIES_DESCRIBED)
+        described = str(fields[JobKey.RETRY_POLICIES])
+        assert "_ReportJob" in described
+        assert "jobs.<Job>.retry" in described
+        assert "max_attempts=5 (jobs.<Job>.retry)" in described
+
+    def test_a_retry_that_breaks_the_backoff_fails_the_composition(self, tmp_path: Path) -> None:
+        project = job_project(
+            tmp_path, {"jobs": {"_ReportJob": {"retry": {"max_s": 1000}}}}, "inline"
+        )
+
+        with pytest.raises(ConfigError, match=r"_ReportJob\.retry"):
+            project.compose(JobsAdapter(_ReportJob))
+
+
+class TestCountdownBoundAtCompose:
+    def test_a_declared_countdown_outside_the_bound_fails_compose(self, tmp_path: Path) -> None:
+        class LateJob(Job[None]):
+            __countdown__ = 901
+
+            def execute(self) -> None:
+                return None
+
+        project = job_project(tmp_path, {}, "inline")
+
+        with pytest.raises(ConfigError, match="LateJob"):
+            project.compose(JobsAdapter(LateJob))
+
+    def test_a_configured_countdown_outside_the_bound_fails_compose(self, tmp_path: Path) -> None:
+        project = job_project(tmp_path, {"jobs": {"_ReportJob": {"countdown": 901}}}, "inline")
+
+        with pytest.raises(ConfigError, match="_ReportJob"):
+            project.compose(JobsAdapter(_ReportJob))

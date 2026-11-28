@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeAlias, TypeVar
@@ -9,18 +10,19 @@ from typing import Any, Protocol, TypeAlias, TypeVar
 from bytewax.operators import branch, flat_map
 
 from loom.core.errors import DomainError
-from loom.core.logger import get_logger
+from loom.core.errors.summary import ErrorSummary
 from loom.core.observability.event import TerminalReason
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.streaming.core._errors import ErrorEnvelope, ErrorKind, snapshot_message
 from loom.streaming.core._message import Message
 from loom.streaming.core._tracing import open_terminal_span
 from loom.streaming.core._typing import StreamPayload
+from loom.streaming.event import StreamingEvent, StreamingKey
 
 Stream: TypeAlias = Any
 NodeResult: TypeAlias = Message[StreamPayload] | ErrorEnvelope[StreamPayload]
 ResultT = TypeVar("ResultT")
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class _ErrorSplitContext(Protocol):
@@ -52,7 +54,7 @@ class ErrorBoundary:
         flow: Name of the enclosing flow, stamped on that span.
     """
 
-    observer: ObservabilityRuntime
+    observer: Observability
     flow: str
 
 
@@ -97,7 +99,7 @@ def _execute_in_boundary(
     except Exception as exc:
         kind = classify(exc)
         _log_boundary_error(kind, exc, original)
-        return _build_error_envelope(kind, str(exc), original, boundary)
+        return _build_error_envelope(kind, ErrorSummary.message_for(exc), original, boundary)
 
 
 def _execute_batch_in_boundary(
@@ -113,7 +115,8 @@ def _execute_batch_in_boundary(
         kind = classify(exc)
         if originals:
             _log_boundary_error(kind, exc, originals[0], batch_size=len(originals))
-        return [_build_error_envelope(kind, str(exc), message, boundary) for message in originals]
+        reason = ErrorSummary.message_for(exc)
+        return [_build_error_envelope(kind, reason, message, boundary) for message in originals]
 
 
 def _split_node_result(
@@ -167,16 +170,19 @@ def _log_boundary_error(
     batch_size: int = 1,
 ) -> None:
     payload_type = original.payload.__class__.loom_message_type()
-    context = {
-        "kind": kind.value,
-        "payload_type": payload_type,
-        "message_id": original.meta.message_id,
-        "topic": original.meta.topic,
-        "partition": original.meta.partition,
-        "offset": original.meta.offset,
-        "batch_size": batch_size,
+    context: dict[str, Any] = {
+        StreamingKey.KIND: kind.value,
+        StreamingKey.MESSAGE_TYPE: payload_type,
+        StreamingKey.TOPIC: original.meta.topic,
+        StreamingKey.PARTITION: original.meta.partition,
+        StreamingKey.OFFSET: original.meta.offset,
+        StreamingKey.RECORDS: batch_size,
     }
     if isinstance(exc, DomainError):
-        logger.warning("managed_boundary_error", **context, reason=str(exc))
+        logger.warning(
+            StreamingEvent.BOUNDARY_ERROR_MANAGED,
+            extra=context,
+            exc_info=exc,
+        )
         return
-    logger.exception("unhandled_boundary_error", **context, reason=str(exc))
+    logger.exception(StreamingEvent.BOUNDARY_ERROR_UNHANDLED, extra=context)

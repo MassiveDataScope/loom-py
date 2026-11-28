@@ -9,7 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from loom.core.model import LoomFrozenStruct
 from loom.streaming import (
-    ContextFactory,
+    ContextSupplier,
     Fork,
     FromTopic,
     IntoTopic,
@@ -46,7 +46,7 @@ class _DeclaredStep(RecordStep[Order, Result]):
         return Result(value=message.payload.order_id)
 
 
-class _TokenFactory(ContextFactory):
+class _TokenFactory(ContextSupplier):
     """Configured context factory resolved from YAML bindings."""
 
     __slots__ = ("token",)
@@ -73,7 +73,7 @@ class _HttpxConfig(LoomFrozenStruct, frozen=True):
     limits: _HttpxLimitsConfig
 
 
-class _StructuredFactory(ContextFactory):
+class _StructuredFactory(ContextSupplier):
     """Factory resolved from a structured config plus a plain kwarg."""
 
     __slots__ = ("config", "label")
@@ -111,7 +111,7 @@ class TestConfigBindings:
         node = plan.nodes[0].node
         assert isinstance(node, _DeclaredStep)
 
-    def test_compile_flow_resolves_step_and_context_factory_bindings(
+    def test_compile_flow_resolves_step_and_context_supplier_bindings(
         self,
         streaming_kafka_config: DictConfig,
     ) -> None:
@@ -164,7 +164,7 @@ class TestConfigBindings:
         assert step.prefix == "override-prefix"
         assert step.suffix == "cfg-suffix"
 
-        factory = scoped.context_factories["token_factory"]
+        factory = scoped.context_suppliers["token_factory"]
         assert isinstance(factory, _TokenFactory)
         assert factory.token == "cfg-token"
 
@@ -283,7 +283,7 @@ class TestConfigBindings:
         scoped = plan.nodes[0].node
         assert isinstance(scoped, With)
 
-        factory = scoped.context_factories["structured_factory"]
+        factory = scoped.context_suppliers["structured_factory"]
         assert isinstance(factory, _StructuredFactory)
         assert factory.label == "override-label"
         assert factory.config.timeout_s == pytest.approx(5.0)

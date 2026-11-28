@@ -3,7 +3,7 @@
 A *kind* names one family of execution dependencies (an agent handle, the
 caller, ...). Packages above this one declare which parameter defaults or
 annotation origins belong to a kind, refuse the ones that must never reach a
-constructor, and bind one resolver per kind. :class:`ExecutionKinds` holds that
+constructor, and register one resolver per kind. :class:`ExecutionKinds` holds that
 data and names no concrete kind, so the container and the executor share it
 without importing the packages that declare kinds.
 """
@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar, get_origin, runtime_checkable
 
+from loom.core.errors import InvalidType, InvalidUse, InvalidValue
 from loom.core.errors.container import ContainerSealed
 
 _K = TypeVar("_K")
@@ -98,7 +99,7 @@ class ExecutionKinds:
 
         kinds = ExecutionKinds()
         kinds.declare_type(AcmeMarker, ACME)
-        kinds.bind(ACME, AcmeResolver())
+        kinds.register(ACME, AcmeResolver())
         kind = kinds.kind_for(AcmeMarker(), AcmeHandle)
         handle = kinds.resolve(kind, AcmeMarker(), AcmeHandle)
     """
@@ -148,23 +149,23 @@ class ExecutionKinds:
         """Return why a parameter with this default is refused, or ``None``."""
         return self._refused.get(type(default))
 
-    def bind(self, kind: Kind, resolver: ExecutionResolver) -> None:
-        """Bind the resolver of ``kind``.
+    def register(self, kind: Kind, resolver: ExecutionResolver) -> None:
+        """Register the resolver of ``kind``.
 
         Raises:
-            TypeError: When ``resolver`` has no ``resolve(declaration, annotation)``,
+            InvalidType: When ``resolver`` has no ``resolve(declaration, annotation)``,
                 such as a positional ``(name, identity)`` callable.
-            RuntimeError: When ``kind`` already has one.
+            InvalidUse: When ``kind`` already has one.
         """
         self._check_frozen()
         if not isinstance(resolver, ExecutionResolver):
-            raise TypeError(
+            raise InvalidType(
                 f"The {kind.name!r} resolver must be an ExecutionResolver with "
                 "resolve(declaration, annotation); positional callables such as "
                 "(name, identity) are no longer accepted"
             )
         if kind in self._resolvers:
-            raise RuntimeError(f"A resolver is already bound for the {kind.name!r} kind")
+            raise InvalidUse(f"A resolver is already bound for the {kind.name!r} kind")
         self._resolvers[kind] = resolver
 
     def is_bound(self, kind: Kind) -> bool:
@@ -187,4 +188,4 @@ class ExecutionKinds:
         self._check_frozen()
         current = table.setdefault(key, value)
         if current != value:
-            raise ValueError(f"{key!r} is already declared as {current!r}, not {value!r}")
+            raise InvalidValue("a key is already declared with a different value")

@@ -5,7 +5,9 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import msgspec
 from msgspec import UNSET, UnsetType
 
+from loom.core.errors import InvalidType
 from loom.core.model.field import ColumnFieldSpec
+from loom.core.model.introspection import derived_key_of, get_projections, get_relations
 from loom.core.model.projection import Projection
 from loom.core.model.relation import Relation
 from loom.core.model.struct import LoomStruct
@@ -19,6 +21,39 @@ if TYPE_CHECKING:
         pass
 else:
     _StructMeta = type(msgspec.Struct)
+
+
+_KEY_FOR = "key_for"
+_COLUMN_NAMES = "__loom_column_names__"
+_COLUMN_NAMESPACE = "c"
+_DERIVES_KEY = "__derives_key__"
+
+
+def _set_derived_id(model: Any) -> None:
+    """Normalise the business-key text of *model*, then fill its derived id when it is unset."""
+    derived = derived_key_of(type(model))
+    if derived is None:
+        return
+    derived.normalize_text(model)
+    if getattr(model, derived.field) is not UNSET:
+        return
+    if derived.has_every_field(model):
+        msgspec.structs.force_setattr(model, derived.field, derived.id_for(model))
+
+
+def _deriving_post_init(application_post_init: Any) -> Any:
+    """Build the ``__post_init__`` that derives the id, then runs the application's own."""
+
+    def __post_init__(self: Any) -> None:
+        _set_derived_id(self)
+        if application_post_init is not None:
+            application_post_init(self)
+
+    return __post_init__
+
+
+def _inherited_post_init(bases: tuple[type, ...]) -> Any:
+    return next((base.__post_init__ for base in bases if hasattr(base, "__post_init__")), None)
 
 
 def _resolve_annotation(annotation: Any, namespace: dict[str, Any]) -> Any:
@@ -77,6 +112,46 @@ def _mark_optional_unset(
     annotations[attr_name] = resolved | UnsetType
 
 
+class ColumnNames:
+    """The column names of one model, read as attributes: ``Order.c.total == "total"``.
+
+    Immutable. Reading a name the model does not declare raises
+    ``AttributeError`` naming the model and the field.
+    """
+
+    __slots__ = ("_model", "_names")
+
+    def __init__(self, model: Any) -> None:
+        """Build the namespace of *model*: its fields, without relations or projections.
+
+        Raises:
+            InvalidType: If the model declares a field named ``c``.
+        """
+        if _COLUMN_NAMESPACE in model.__struct_fields__:
+            raise InvalidType(
+                f"{model.__name__}.{_COLUMN_NAMESPACE} cannot be a field: "
+                "it is the namespace of column names"
+            )
+        loaded_on_demand = get_relations(model).keys() | get_projections(model).keys()
+        object.__setattr__(self, "_model", model.__name__)
+        object.__setattr__(
+            self,
+            "_names",
+            tuple(field for field in model.__struct_fields__ if field not in loaded_on_demand),
+        )
+
+    def __getattr__(self, name: str) -> str:
+        if name in self._names:
+            return name
+        raise AttributeError(f"{self._model} has no column {name!r}; columns: {self._names}")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError(f"{self._model}.c is read-only")
+
+    def __dir__(self) -> list[str]:
+        return list(self._names)
+
+
 class LoomStructMeta(_StructMeta):
     """Metaclass that intercepts ``Relation`` and ``Projection`` assignments
     before ``StructMeta`` processes the class body.
@@ -102,6 +177,10 @@ class LoomStructMeta(_StructMeta):
         relations: dict[str, Relation] = {}
         projections: dict[str, Projection] = {}
         annotations = _take_class_body_annotations(namespace)
+        if _KEY_FOR in annotations:
+            raise InvalidType(
+                f"{name}.{_KEY_FOR} cannot be a field: it is the method that derives the key"
+            )
 
         eval_ns = _build_eval_namespace(namespace)
 
@@ -122,13 +201,29 @@ class LoomStructMeta(_StructMeta):
             defaults[attr_name] = UNSET
             _mark_optional_unset(attr_name, annotations, eval_ns)
 
+        derives_here = any(spec.field.derived is not None for spec in columns.values())
+        derives_inherited = any(getattr(base, _DERIVES_KEY, False) for base in bases)
+        own_post_init = namespace.get("__post_init__")
+        if derives_here or (derives_inherited and own_post_init is not None):
+            namespace["__post_init__"] = _deriving_post_init(
+                own_post_init or _inherited_post_init(bases)
+            )
+
         namespace.update(defaults)
         namespace["__annotations__"] = annotations
         struct_cls: Any = super().__new__(cls, name, bases, namespace, **kwargs)
         struct_cls.__loom_columns__ = columns
         struct_cls.__loom_relations__ = relations
         struct_cls.__loom_projections__ = projections
+        setattr(struct_cls, _DERIVES_KEY, derives_here or derives_inherited)
+        struct_cls.__loom_column_names__ = ColumnNames(struct_cls)
         return struct_cls
+
+    @property
+    def c(cls) -> ColumnNames:
+        """The column names of this model, one attribute per column field."""
+        names: ColumnNames = getattr(cls, _COLUMN_NAMES)
+        return names
 
 
 class BaseModel(LoomStruct, metaclass=LoomStructMeta):  # type: ignore[metaclass]
@@ -137,8 +232,27 @@ class BaseModel(LoomStruct, metaclass=LoomStructMeta):  # type: ignore[metaclass
     Subclasses must declare ``__tablename__`` and provide typed attributes.
     Column metadata is optional via ``ColumnField(...)``. ``__store__`` names
     the store holding the model, ``default`` when left out
-    (:func:`loom.core.persistence.stores.store_of`).
+    (:func:`loom.core.stores.catalog.store_of`).
     """
 
     __tablename__: ClassVar[str]
     __store__: ClassVar[str]
+
+    @classmethod
+    def key_for(cls, row: object) -> str:
+        """Return the id the model derives from the business key of *row*.
+
+        *row* is a model instance, any object with the business-key fields as
+        attributes (a command, a ``Struct``) or a mapping (an ETL row); the
+        model reads only its business-key fields, in the declared order, and
+        ignores the rest.
+
+        Raises:
+            InvalidType: If the model derives no key.
+            BoundaryValidationError: If a business-key field is missing, has
+                no value or has no canonical form.
+        """
+        derived = derived_key_of(cls)
+        if derived is None:
+            raise InvalidType(f"{cls.__name__} derives no key")
+        return derived.id_for(row)

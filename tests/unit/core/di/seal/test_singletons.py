@@ -8,10 +8,11 @@ from loom.core.di.container import LoomContainer
 from loom.core.di.graph import ClassNode, DependencyGraph, DependencyGraphError
 from loom.core.di.introspection import RepoDependency, SignatureReader
 from loom.core.di.scope import Scope
+from loom.core.errors import InvalidUse
 from loom.core.execution import ExecutionScope, current_execution
 from loom.core.identity import ANONYMOUS
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.registration import classify_key
+from loom.core.stores.repository.registration import classify_key
 from loom.core.use_case import UseCase
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from tests.unit.core.di.graph import acme
@@ -140,5 +141,5 @@ class TestSealRefusesAnUncompilableBinding:
     def test_a_factory_over_a_container_reading_another_way_is_refused(self) -> None:
         container = LoomContainer(classify_key=lambda annotation: None)
 
-        with pytest.raises(ValueError, match="already reads constructors"):
+        with pytest.raises(InvalidUse, match="already reads constructors"):
             UseCaseFactory(container)

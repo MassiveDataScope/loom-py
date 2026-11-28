@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from loom.core.logger import get_logger
+from loom.core.config import ConfigError
 
 if TYPE_CHECKING:
     from loom.etl.maintenance._protocol import DeltaTableMaintainer, OptimizeResult, VacuumResult
@@ -15,20 +16,13 @@ if TYPE_CHECKING:
     from loom.etl.storage._locator import TableLocation, TableLocator
 
 from loom.etl.declarative.expr._refs import TableRef
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.maintenance._builder import _expand_for_schemas
+from loom.etl.maintenance._errors import MaintenanceError
 from loom.etl.maintenance._ops import CompactSpec, MaintenanceSpec, VacuumSpec, ZOrderSpec
 from loom.etl.maintenance._protocol import TableMaintenanceResult
 
-_log = get_logger(__name__)
-
-
-class MaintenanceError(Exception):
-    """Raised by :meth:`MaintenanceReport.raise_if_errors` when any table failed."""
-
-    def __init__(self, failed: list[TableMaintenanceResult]) -> None:
-        self.failed = failed
-        refs = [r.table_ref for r in failed]
-        super().__init__(f"Maintenance failed for {len(failed)} table(s): {refs}")
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -106,7 +100,7 @@ class MaintenanceRunner:
         the Polars ETL backend — no private helpers crossed.
 
         Raises:
-            ValueError: If *config* has no path routes configured
+            ConfigError: If *config* has no path routes configured
                 (only catalog/UC refs, which delta-rs cannot resolve directly).
         """
         from loom.etl.maintenance.backends._delta_rs import DeltaRsMaintainer  # noqa: PLC0415
@@ -152,7 +146,7 @@ class MaintenanceRunner:
         """
         mc = self._config.maintenance
         if not mc.schemas and not mc.vacuum and not mc.compact and not mc.z_order_by:
-            _log.debug("run_from_config: no maintenance config — skipping")
+            _log.debug(EtlEvent.MAINTENANCE_NOT_CONFIGURED)
             return MaintenanceReport()
 
         vacuum_spec = (
@@ -170,7 +164,7 @@ class MaintenanceRunner:
         )
 
         if compact_spec is not None and z_order_spec is not None:
-            raise ValueError(
+            raise ConfigError(
                 "StorageConfig.maintenance: compact and z_order_by are mutually exclusive"
             )
 
@@ -197,7 +191,11 @@ class MaintenanceRunner:
             return self._locator.locate(TableRef(table_ref))
         except Exception as exc:
             if self._missing_table_policy == "skip":
-                _log.warning("maintenance skip", table=table_ref, reason=repr(exc))
+                _log.warning(
+                    EtlEvent.MAINTENANCE_TABLE_SKIPPED,
+                    extra={EtlKey.TABLE: table_ref},
+                    exc_info=exc,
+                )
                 return None
             raise
 
@@ -216,7 +214,7 @@ class MaintenanceRunner:
                 op_results[op.name] = op.execute(self._maintainer, location.uri, location)
         except Exception as exc:
             error = exc
-            _log.exception("maintenance failed", table=spec.table_ref)
+            _log.exception(EtlEvent.MAINTENANCE_FAILED, extra={EtlKey.TABLE: spec.table_ref})
 
         return TableMaintenanceResult(
             table_ref=spec.table_ref,

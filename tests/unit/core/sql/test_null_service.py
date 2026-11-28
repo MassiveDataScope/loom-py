@@ -7,7 +7,7 @@ import pytest
 from loom.core.config.errors import ConfigError
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.sql.service import NullSqlQueryService, SqlQueryService
+from loom.core.stores.sql.service import NullSqlQueryService, SqlQueryService
 
 
 class TestNullSqlService:

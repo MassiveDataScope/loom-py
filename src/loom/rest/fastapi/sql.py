@@ -32,18 +32,21 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from loom.core.config.errors import ConfigError
-from loom.core.errors import BODY_FIELD, LoomError, RuleViolation
+from loom.core.errors import BODY_FIELD, CodedError, RuleViolationError
 from loom.core.identity import current_identity
+from loom.core.log_names import LogField
 from loom.core.model import LoomFrozenStruct
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql.config import SqlConfig, SqlConnectionConfig, roles_need_identity_binding
-from loom.core.sql.roles import resolve_query_roles
-from loom.core.sql.service import SqlQueryService
+from loom.core.observability.observability import Observability
+from loom.core.stores.event import StoresKey
+from loom.core.stores.sql.config import SqlConfig, SqlConnectionConfig, roles_need_identity_binding
+from loom.core.stores.sql.roles import resolve_query_roles
+from loom.core.stores.sql.service import SqlQueryService
 from loom.core.tracing import get_trace_id
 from loom.rest._body import MALFORMED_BODY_ERRORS, payload_too_large_detail
 from loom.rest.auth.abc import Authenticator
 from loom.rest.errors import HttpErrorMapper
+from loom.rest.event import RestEvent, RestKey
 from loom.rest.fastapi._errors import internal_error_response, malformed_body_error
 from loom.rest.fastapi.response import MsgspecJSONResponse
 
@@ -135,7 +138,7 @@ class _SqlJSONResponse(MsgspecJSONResponse):
 
 def _invalid_request(field: str, message: str) -> HTTPException:
     """Build a 422 with the framework standard error body."""
-    return _error_mapper.to_http(RuleViolation(field, message))
+    return _error_mapper.to_http(RuleViolationError(field, message))
 
 
 def _payload_too_large(max_bytes: int) -> HTTPException:
@@ -213,7 +216,7 @@ def _make_sql_handler(
     *,
     path: str,
     roles_bound: bool,
-    observability_runtime: ObservabilityRuntime,
+    observability: Observability,
 ) -> Callable[[Request], Coroutine[Any, Any, Response]]:
     """Build the async handler serving SQL queries for one connection."""
     handler_name = f"execute_sql_{name}"
@@ -232,7 +235,7 @@ def _make_sql_handler(
                 allowed_roles=allowed_roles,
                 requested_roles=query.roles,
             )
-            with observability_runtime.span(
+            with observability.span(
                 Scope.USE_CASE,
                 handler_name,
                 trace_id=get_trace_id(),
@@ -241,7 +244,6 @@ def _make_sql_handler(
                 status_code=int(HTTPStatus.OK),
                 read_only=connection.readonly,
                 roles=_effective_roles_label(roles, connection),
-                subject=identity.subject,
                 mechanism=identity.mechanism,
             ):
                 result = await service.execute(
@@ -255,19 +257,17 @@ def _make_sql_handler(
             return _SqlJSONResponse(content=result)
         except HTTPException:
             raise
-        except LoomError as exc:
+        except CodedError as exc:
             http_error = _error_mapper.to_http(exc)
             if http_error.status_code >= HTTPStatus.INTERNAL_SERVER_ERROR:
                 _logger.error(
-                    "SQL endpoint failed for connection %r (code=%s trace_id=%s)",
-                    name,
-                    exc.code,
-                    get_trace_id(),
+                    RestEvent.SQL_ENDPOINT_FAILED,
+                    extra={StoresKey.CONNECTION: name},
                     exc_info=exc,
                 )
             raise http_error from exc
         except Exception:
-            _logger.exception("Unhandled error in SQL endpoint for connection %r", name)
+            _logger.exception(RestEvent.SQL_ENDPOINT_UNHANDLED, extra={StoresKey.CONNECTION: name})
             return internal_error_response()
 
     _handler.__name__ = handler_name
@@ -305,7 +305,7 @@ def _mount_endpoint(
     name: str,
     connection: SqlConnectionConfig,
     mechanism: str | None,
-    observability_runtime: ObservabilityRuntime,
+    observability: Observability,
 ) -> None:
     """Register the POST route for *name* and emit the startup WARNING.
 
@@ -325,21 +325,18 @@ def _mount_endpoint(
             connection,
             path=path,
             roles_bound=bound_mechanism is not None,
-            observability_runtime=observability_runtime,
+            observability=observability,
         ),
         methods=["POST"],
         include_in_schema=endpoint.include_in_schema,
     )
     _logger.warning(
-        "SQL endpoint mounted: path=%s connection=%s readonly=%s auth=%s allowed_roles=%d. "
-        "'auth' only authenticates the caller; the roles it may use come from the "
-        "identity binding: %s",
-        path,
-        name,
-        connection.readonly,
-        endpoint.auth,
-        len(connection.allowed_roles),
-        _role_exposure_notice(bound_mechanism, len(connection.allowed_roles)),
+        RestEvent.SQL_ENDPOINT_MOUNTED,
+        extra={
+            LogField.HTTP_ROUTE: path,
+            StoresKey.CONNECTION: name,
+            RestKey.ROLES_BOUND: bound_mechanism is not None,
+        },
     )
 
 
@@ -352,13 +349,13 @@ def mounted_sql_endpoints(config: SqlConfig) -> tuple[str, ...]:
     )
 
 
-def bind_sql_endpoints(
+def mount_sql_endpoints(
     app: FastAPI,
     *,
     service: SqlQueryService,
     config: SqlConfig,
     authenticator: Authenticator | None = None,
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
 ) -> None:
     """Mount one generic SQL endpoint per opted-in connection.
 
@@ -376,18 +373,16 @@ def bind_sql_endpoints(
             Its ``provides_roles`` flag decides whether roles are bound to the
             identity; ``None`` (or a mechanism binding no role) means no
             binding, and the endpoint is then single-role by config.
-        observability_runtime: Runtime emitting one span per request, with the
+        observability: Runtime emitting one span per request, with the
             same labels the router runtime uses. ``None`` falls back to a
             no-op runtime.
 
     Example::
 
         service = SqlQueryService(executors=executors, config=sql_config)
-        bind_sql_endpoints(app, service=service, config=sql_config)
+        mount_sql_endpoints(app, service=service, config=sql_config)
     """
-    runtime = (
-        observability_runtime if observability_runtime is not None else ObservabilityRuntime.noop()
-    )
+    runtime = observability if observability is not None else Observability.noop()
     mechanism = _roles_mechanism(authenticator)
     for name in mounted_sql_endpoints(config):
         _mount_endpoint(
@@ -396,5 +391,5 @@ def bind_sql_endpoints(
             name=name,
             connection=config.connections[name],
             mechanism=mechanism,
-            observability_runtime=runtime,
+            observability=runtime,
         )

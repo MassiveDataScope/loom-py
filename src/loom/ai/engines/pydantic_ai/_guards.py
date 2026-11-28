@@ -36,10 +36,10 @@ from loom.ai.errors import (
     AgentRunErrorCode,
     require_authenticated,
 )
+from loom.ai.event import AiEvent, AiKey
 from loom.core.di import LoomContainer
-from loom.core.identity import Identity
 from loom.core.observability.event import Scope
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 
 _logger = logging.getLogger(__name__)
 
@@ -79,13 +79,15 @@ class BuildContext:
 
     agent: str
     container: LoomContainer
-    observability: ObservabilityRuntime | None
+    observability: Observability | None
     timeout_s: float
     mcp: SharedMcpToolsets
     mcp_grants: tuple[CompiledMcpCapability, ...]
 
     @classmethod
-    def of(cls, plan: AgentPlan, container: LoomContainer, mcp: SharedMcpToolsets) -> BuildContext:
+    def from_plan(
+        cls, plan: AgentPlan, container: LoomContainer, mcp: SharedMcpToolsets
+    ) -> BuildContext:
         """Derive the build context of one compiled plan.
 
         Args:
@@ -99,7 +101,7 @@ class BuildContext:
         return cls(
             agent=plan.name,
             container=container,
-            observability=container.resolve_or_none(ObservabilityRuntime),
+            observability=container.resolve_or_none(Observability),
             timeout_s=plan.policies.tool_timeout_ms / _MS_PER_SECOND,
             mcp=mcp,
             mcp_grants=tuple(
@@ -129,9 +131,7 @@ def bundle_container(run: RunContext[Any]) -> LoomContainer:
     return container
 
 
-def _span(
-    context: BuildContext, kind: str, tool: str, identity: Identity
-) -> AbstractContextManager[None]:
+def _span(context: BuildContext, kind: str, tool: str) -> AbstractContextManager[None]:
     """Open the ``Scope.TOOL`` span of one capability call, or a no-op."""
     if context.observability is None:
         return nullcontext()
@@ -140,16 +140,13 @@ def _span(
         tool,
         agent=context.agent,
         capability=kind,
-        subject=identity.subject,
     )
 
 
 @asynccontextmanager
-async def capability_call(
-    context: BuildContext, kind: str, tool: str, identity: Identity
-) -> AsyncIterator[None]:
+async def capability_call(context: BuildContext, kind: str, tool: str) -> AsyncIterator[None]:
     """Bound one capability call by the plan's tool timeout, inside its span."""
-    with _span(context, kind, tool, identity):
+    with _span(context, kind, tool):
         try:
             async with asyncio.timeout(context.timeout_s):
                 yield
@@ -191,7 +188,7 @@ async def guarded(
             AgentRunErrorCode.UNAUTHORIZED, f"tool '{tool}': {DENIED_MESSAGE}"
         ) from exc
     except Exception:
-        _logger.exception("capability tool '%s' failed", tool)
+        _logger.exception(AiEvent.TOOL_FAILED, extra={AiKey.TOOL: tool})
         return refusal(f"tool '{tool}' could not complete: {_FAILED_MESSAGE}")
 
 
@@ -219,8 +216,8 @@ class _GuardedToolset(WrapperToolset[Any]):
         tool: ToolsetTool[Any],
     ) -> Any:
         """Guard, then bound, one call to a tool of the wrapped toolset, through :func:`guarded`."""
-        identity = require_authenticated(f"tool '{name}'")
-        async with capability_call(self.context, self.kind, name, identity):
+        require_authenticated(f"tool '{name}'")
+        async with capability_call(self.context, self.kind, name):
             return await guarded(
                 name,
                 lambda: self.wrapped.call_tool(name, tool_args, ctx, tool),

@@ -20,7 +20,8 @@ from loom.ai.compiler import CompiledMcpCapability
 from loom.ai.engines.pydantic_ai._failures import McpCallInterrupted
 from loom.ai.engines.pydantic_ai._mcp import _entered, _OpenToolset, _ToolsetSession
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime._grants import McpGrantView
+from loom.ai.event import AiEvent
+from loom.ai.execution._grants import McpGrantView
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
 from tests.unit.ai.engines.doubles import AcmeToolsetFactory
@@ -194,7 +195,7 @@ async def _drained(session: _ToolsetSession) -> None:
 async def _open(first: _ScriptedSessionToolset, factory: AcmeToolsetFactory) -> _ToolsetSession:
     """A session as ``SharedMcpToolsets.open`` makes one: over an entered first toolset."""
     await first.__aenter__()
-    return _ToolsetSession(_OpenToolset.of(first), rebuild=factory)  # type: ignore[arg-type]
+    return _ToolsetSession(_OpenToolset.from_toolset(first), rebuild=factory)  # type: ignore[arg-type]
 
 
 _TESTER = Identity(subject="tester")
@@ -581,7 +582,7 @@ class TestBoundedSessions:
         await session.aclose()
 
         assert (first.closes, first.pool.released) == (1, 1)
-        assert "did not close cleanly" in caplog.text
+        assert AiEvent.MCP_POOL_CLOSE_FAILED in caplog.text
 
     @_bounded
     async def test_a_healthy_session_once_closed_sends_nothing(self) -> None:
@@ -606,7 +607,7 @@ class TestBoundedSessions:
         await session.aclose()
 
         assert (first.closes, first.pool.released) == (1, 1)
-        assert "did not close cleanly" in caplog.text
+        assert AiEvent.MCP_SESSION_CLOSE_FAILED in caplog.text
 
     @_bounded
     async def test_a_force_close_that_raises_still_releases_the_entry(
@@ -625,7 +626,7 @@ class TestBoundedSessions:
             await slow
         assert (first.closes, first.over_exits, first.pool.released) == (1, 0, 1)
         assert not any(toolset.is_open for toolset in ledger.toolsets)
-        assert "did not close cleanly" in caplog.text
+        assert AiEvent.MCP_SESSION_CLOSE_FAILED in caplog.text
 
     @_bounded
     async def test_a_renewal_waits_for_an_earlier_close_still_running(self) -> None:
@@ -757,7 +758,7 @@ class TestASessionThatHoldsNothing:
             _ScriptedSessionToolset("second", ledger),
         )
         session = _ToolsetSession(
-            _OpenToolset.of(first, held=False), rebuild=AcmeToolsetFactory(second)
+            _OpenToolset.from_toolset(first, held=False), rebuild=AcmeToolsetFactory(second)
         )  # type: ignore[arg-type]
 
         result = await session.call_tool("write_orders", {})
@@ -768,7 +769,7 @@ class TestASessionThatHoldsNothing:
     @_bounded
     async def test_closes_without_leaving_what_it_never_entered(self) -> None:
         first = _ScriptedSessionToolset("first", _Ledger())
-        session = _ToolsetSession(_OpenToolset.of(first, held=False))  # type: ignore[arg-type]
+        session = _ToolsetSession(_OpenToolset.from_toolset(first, held=False))  # type: ignore[arg-type]
         await session.call_tool("write_orders", {})
 
         await session.aclose()

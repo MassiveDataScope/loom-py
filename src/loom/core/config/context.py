@@ -10,9 +10,10 @@ import msgspec
 from loom.core.config.binder import StructBinder
 from loom.core.config.configurable import ConfigBinding
 from loom.core.config.errors import ConfigError
-from loom.core.config.keys import ConfigKey
+from loom.core.config.keys import ConfigSection
 from loom.core.config.loader import load_config
 from loom.core.config.loader import section as _section
+from loom.core.errors import InvalidType
 from loom.core.model.types import PositiveSeconds
 
 if TYPE_CHECKING:
@@ -46,7 +47,7 @@ class ConfigContext:
 
         ctx = ConfigContext.from_yaml("config.yaml")
         cache = ctx.section("cache", CacheConfig)
-        step  = ctx.bind(ReadOrdersStep, path="pipeline.steps.orders")
+        step  = ctx.convert(ReadOrdersStep, path="pipeline.steps.orders")
         dep   = ctx.resolve(MyDep.from_config("services.dep", label="prod"))
     """
 
@@ -107,16 +108,16 @@ class ConfigContext:
             A ready-to-use :class:`ConfigContext`.
 
         Raises:
-            TypeError: If *raw* does not produce a DictConfig.
+            InvalidType: If *raw* does not produce a DictConfig.
         """
         from omegaconf import DictConfig, OmegaConf
 
         cfg = OmegaConf.create(dict(raw))
         if not isinstance(cfg, DictConfig):
-            raise TypeError(f"Config must be a mapping, got {type(cfg).__name__}")
+            raise InvalidType(f"Config must be a mapping, got {type(cfg).__name__}")
         return cls(cfg, binder=binder)
 
-    def has(self, key: str | ConfigKey) -> bool:
+    def has(self, key: str | ConfigSection) -> bool:
         """Return ``True`` if the dot-separated *key* exists in the config.
 
         Args:
@@ -129,7 +130,7 @@ class ConfigContext:
 
         return OmegaConf.select(self._config, _key_str(key), default=None) is not None
 
-    def raw(self, key: str | ConfigKey, default: Any = None) -> Any:
+    def raw(self, key: str | ConfigSection, default: Any = None) -> Any:
         """Return the value at the dot-separated *key* as written, resolving nothing.
 
         Interpolations stay as their ``${...}`` text and sections come back
@@ -155,7 +156,7 @@ class ConfigContext:
 
         return cast("dict[str, Any]", OmegaConf.to_container(self._config, resolve=False))
 
-    def section_optional(self, key: str | ConfigKey, target: type[T]) -> T | None:
+    def section_optional(self, key: str | ConfigSection, target: type[T]) -> T | None:
         """Extract *key* as *target* when present, otherwise return ``None``.
 
         Args:
@@ -173,7 +174,7 @@ class ConfigContext:
 
     def section_or_default(
         self,
-        key: str | ConfigKey,
+        key: str | ConfigSection,
         target: type[T],
         default: T,
     ) -> T:
@@ -209,7 +210,7 @@ class ConfigContext:
         except msgspec.ValidationError as error:
             raise ConfigError(f"{key} must be a finite number above zero, got {seconds}") from error
 
-    def section(self, key: str | ConfigKey, target: type[T]) -> T:
+    def section(self, key: str | ConfigSection, target: type[T]) -> T:
         """Extract and validate a typed config section by dot-path.
 
         A key naming a scalar leaf (``"api.token"``) converts that value.
@@ -227,11 +228,11 @@ class ConfigContext:
         """
         return _section(self._config, _key_str(key), target)
 
-    def bind(
+    def convert(
         self,
         target: type[T],
         *,
-        path: str | ConfigKey = "",
+        path: str | ConfigSection = "",
         **overrides: object,
     ) -> T:
         """Instantiate *target* from a config section merged with *overrides*.
@@ -251,14 +252,14 @@ class ConfigContext:
             ConfigError: If a required field is missing or type conversion fails.
         """
         raw: dict[str, object] = _section(self._config, _key_str(path), dict) if path else {}
-        return self._binder.bind(target, {**raw, **overrides})
+        return self._binder.convert(target, {**raw, **overrides})
 
     def resolve(self, binding: ConfigBinding) -> object:
         """Materialize a :class:`~loom.core.config.ConfigBinding` into a live object.
 
-        Delegates to :meth:`bind` using the binding's declared path and overrides.
+        Delegates to :meth:`convert` using the binding's declared path and overrides.
         Compilers and bootstrap code that operate on pre-declared bindings use
-        this method rather than calling :meth:`bind` with unpacked fields.
+        this method rather than calling :meth:`convert` with unpacked fields.
 
         Args:
             binding: Deferred binding declaration (from
@@ -271,10 +272,10 @@ class ConfigContext:
         Raises:
             ConfigError: If resolution or type conversion fails.
         """
-        return self.bind(binding.target, path=binding.config_path, **binding.overrides)
+        return self.convert(binding.target, path=binding.config_path, **binding.overrides)
 
 
-def _key_str(key: str | ConfigKey) -> str:
+def _key_str(key: str | ConfigSection) -> str:
     """Return the canonical dotted path string for a config key."""
     return str(key)
 

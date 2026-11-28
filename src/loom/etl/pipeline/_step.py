@@ -4,8 +4,8 @@
 one target, and a pure ``execute()`` transformation method.
 
 The backend (Polars, Spark) is determined by the configured
-:class:`~loom.etl.runtime.contracts.SourceReader` and
-:class:`~loom.etl.runtime.contracts.TargetWriter` injected at runner build time —
+:class:`~loom.etl.ports.contracts.SourceReader` and
+:class:`~loom.etl.ports.contracts.TargetWriter` injected at runner build time —
 no declaration is needed on the step itself.
 
 Definition-time validation (via ``__init_subclass__``) catches the most
@@ -18,7 +18,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, ClassVar, Generic, TypeVar
 
-from loom.core.logger import get_logger
+from loom.core.errors import InvalidType, InvalidValue
 from loom.etl.declarative._with_agent import WithAgent
 from loom.etl.declarative.source import (
     FromConfig,
@@ -112,13 +112,11 @@ class ETLStep(Generic[ParamsT]):
     _inline_sources: ClassVar[dict[str, FromTable | FromFile | FromTemp]]
     _config_values: ClassVar[dict[str, FromConfig]]
     _agents: ClassVar[dict[str, WithAgent]]
-    _log: ClassVar[Any]
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         cls._params_type = _extract_generic_arg(cls, ETLStep)
         cls._inline_sources = {}
-        cls._log = get_logger(f"{cls.__module__}.{cls.__qualname__}")
         _validate_streaming_flag(cls)
         _validate_and_classify_sources(cls)
         cls._config_values = _collect_declared(cls, FromConfig)
@@ -154,7 +152,7 @@ def _validate_and_classify_sources(cls: type[Any]) -> None:
     has_grouped = isinstance(cls.__dict__.get("sources"), (Sources, SourceSet))
 
     if inline and has_grouped:
-        raise TypeError(
+        raise InvalidValue(
             f"{cls.__qualname__}: cannot mix inline source attributes with "
             f"sources=Sources(...) or sources=SourceSet — use one form only."
         )
@@ -181,6 +179,6 @@ def _validate_streaming_flag(cls: type[Any]) -> None:
     """Enforce that ``streaming`` is explicitly boolean at class definition time."""
     streaming = getattr(cls, "streaming", False)
     if not isinstance(streaming, bool):
-        raise TypeError(
+        raise InvalidType(
             f"{cls.__qualname__}: 'streaming' must be bool, got {type(streaming).__name__}"
         )

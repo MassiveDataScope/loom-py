@@ -9,10 +9,10 @@ from typing import Any
 import pytest
 from clickhouse_connect.driver.exceptions import DatabaseError, OperationalError
 
-from loom.core.errors import RuleViolation
+from loom.core.errors import RuleViolationError
 from loom.core.errors import SystemError as LoomSystemError
-from loom.core.sql.abc import SqlColumn, SqlExecutionError, SqlExecutionOptions
-from loom.core.sql.clickhouse import ClickHouseConnectionRegistry, ClickHouseSqlExecutor
+from loom.core.stores.sql.abc import SqlColumn, SqlExecutionError, SqlExecutionOptions
+from loom.stores.clickhouse import ClickHouseConnectionRegistry, ClickHouseSqlExecutor
 from tests.helpers.extras import CLICKHOUSE_ISLAND
 from tests.unit.core.sql._fakes import (
     FakeClickHouseClient,
@@ -53,10 +53,10 @@ class TestClickHouseExecutor:
         """Without the extra, loading the SQL backend fails naming 'loom-kernel[clickhouse]'."""
         _hide_modules(monkeypatch, "clickhouse_connect")
         for name in list(sys.modules):
-            if name.startswith(("loom.core.sql.clickhouse", CLICKHOUSE_ISLAND)):
+            if name.startswith(("loom.stores.clickhouse", CLICKHOUSE_ISLAND)):
                 monkeypatch.delitem(sys.modules, name)
         with pytest.raises(ImportError, match=r"loom-kernel\[clickhouse\]"):
-            importlib.import_module("loom.core.sql.clickhouse")
+            importlib.import_module("loom.stores.clickhouse")
 
     async def test_parameters_travel_server_side_without_interpolation(self) -> None:
         """The SQL reaches the driver untouched and parameters travel apart (native binding)."""
@@ -195,7 +195,7 @@ class TestClickHouseExecutor:
         )
 
     async def test_backend_error_is_sanitized_into_sql_execution_error(self) -> None:
-        """A DatabaseError becomes SqlExecutionError with the CH code and no stacktrace."""
+        """A DatabaseError becomes SqlExecutionError naming only the CH code."""
         client = FakeClickHouseClient(
             error=DatabaseError(
                 "Code: 62. DB::Exception: Syntax error: failed at position 8\n"
@@ -206,10 +206,7 @@ class TestClickHouseExecutor:
         options = _options()
         with pytest.raises(SqlExecutionError) as exc_info:
             await executor.execute("SELEC 1", options=options)
-        assert ("62" in str(exc_info.value), "Stack trace" not in str(exc_info.value)) == (
-            True,
-            True,
-        )
+        assert str(exc_info.value) == "sql: ClickHouse error 62"
 
     async def test_unreachable_backend_does_not_leak_the_url_in_the_error(self) -> None:
         """A network failure becomes a generic system error without host or DSN."""
@@ -225,5 +222,5 @@ class TestClickHouseExecutor:
         assert "secret-host" not in str(exc_info.value)
 
     def test_sql_execution_error_inherits_from_rule_violation(self) -> None:
-        """SqlExecutionError reuses RuleViolation to map to 422 without touching the API."""
-        assert issubclass(SqlExecutionError, RuleViolation)
+        """SqlExecutionError reuses RuleViolationError to map to 422 without touching the API."""
+        assert issubclass(SqlExecutionError, RuleViolationError)

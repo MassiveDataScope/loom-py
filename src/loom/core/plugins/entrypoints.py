@@ -1,8 +1,8 @@
 """Shared entry-point loader for Loom plugin groups.
 
-This module is a stdlib-only leaf: it must never import from ``loom`` or from
-any third-party package, so that ETL-only deployments can rely on it without
-pulling optional dependencies into the process.
+This module is a stdlib-only leaf: it imports only ``loom.core.log_names``
+(itself stdlib-only) from ``loom`` and nothing from any third-party package, so that
+ETL-only deployments can rely on it without pulling optional dependencies into the process.
 
 It centralises the plugin resolution policy used across pillars: duplicate
 handling, missing-plugin reporting and the optional API-version handshake.
@@ -12,13 +12,37 @@ from __future__ import annotations
 
 import functools
 import logging
+import re
 from dataclasses import dataclass
 from importlib.metadata import EntryPoint, entry_points
 from typing import Literal
 
+from loom.core.log_names import LogEvent, LogKey, ValueKind
+
 _log = logging.getLogger(__name__)
 
+
+class PluginsEvent(LogEvent):
+    """What the entry-point loader logs while it resolves a plugin.
+
+    ``ENTRY_POINT_DUPLICATED`` lists the distributions in registration order; the
+    first one listed is the one used.
+    """
+
+    ENTRY_POINT_DUPLICATED = "loom.plugins.entry_point_duplicated"
+
+
+class PluginsKey(LogKey):
+    """The fields of an entry-point record."""
+
+    GROUP = "loom.plugins.group"
+    ENTRY_POINT = "loom.plugins.entry_point"
+    DISTRIBUTIONS = "loom.plugins.distributions", ValueKind.ARRAY
+
+
 _UNKNOWN_DISTRIBUTION = "<unknown distribution>"
+_REQUIREMENT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_EXTRA_MARKER = re.compile(r"""extra\s*==\s*["']([^"']+)["']""")
 
 DuplicatePolicy = Literal["error", "warn_first"]
 """Policy applied when several distributions register the same plugin name."""
@@ -98,6 +122,67 @@ class ApiVersionRequirement:
 
     attribute: str
     supported: frozenset[int]
+
+
+@dataclass(frozen=True, slots=True)
+class MissingDependency:
+    """A third-party module an entry point needs and the environment lacks.
+
+    Args:
+        module: Top-level module that could not be imported.
+        entry: The entry point whose import needed it.
+    """
+
+    module: str
+    entry: EntryPoint
+
+    @classmethod
+    def from_import_error(
+        cls, error: ModuleNotFoundError, entry: EntryPoint
+    ) -> MissingDependency | None:
+        """Describe the dependency *error* reports missing while *entry* loaded.
+
+        Args:
+            error: The import failure.
+            entry: The entry point being loaded.
+
+        Returns:
+            The missing dependency; ``None`` when the module is loom's own or
+            unnamed, which is a bug of the installation, not a missing extra.
+        """
+        name = error.name
+        if name is None or name.partition(".")[0] == "loom":
+            return None
+        return cls(module=name.partition(".")[0], entry=entry)
+
+    @staticmethod
+    def _normalise(name: str) -> str:
+        return re.sub(r"[-_.]+", "-", name).lower()
+
+    @property
+    def extras(self) -> tuple[str, ...]:
+        """Extras of the entry point's distribution that require the module, in metadata order."""
+        dist = self.entry.dist
+        if dist is None:
+            return ()
+        wanted = self._normalise(self.module)
+        found: list[str] = []
+        for requirement in dist.requires or ():
+            name = _REQUIREMENT_NAME.match(requirement)
+            extra = _EXTRA_MARKER.search(requirement)
+            if name and extra and self._normalise(name.group()) == wanted and extra[1] not in found:
+                found.append(extra[1])
+        return tuple(found)
+
+    def describe(self) -> str:
+        """Say what is missing and, when the metadata names them, which extras install it."""
+        message = f"needs {self.module!r}, which is not installed"
+        dist = self.entry.dist
+        extras = self.extras
+        if dist is None or not extras:
+            return message
+        installs = " or ".join(f"{dist.name}[{extra}]" for extra in extras)
+        return f"{message}: install {installs}"
 
 
 def check_api_version(obj: object, requirement: ApiVersionRequirement) -> None:
@@ -220,12 +305,12 @@ def _resolve_conflict(
         raise DuplicateEntryPointError(group, name, distributions)
     first = matches[0]
     _log.warning(
-        "Entry point %r in group %r is registered by several distributions: %s. "
-        "Using the first one, from %s.",
-        name,
-        group,
-        distributions,
-        _distribution_name(first),
+        PluginsEvent.ENTRY_POINT_DUPLICATED,
+        extra={
+            PluginsKey.GROUP: group,
+            PluginsKey.ENTRY_POINT: name,
+            PluginsKey.DISTRIBUTIONS: list(distributions),
+        },
     )
     return first
 
@@ -248,7 +333,10 @@ __all__ = [
     "DuplicateEntryPointError",
     "DuplicatePolicy",
     "EntryPointError",
+    "PluginsEvent",
+    "PluginsKey",
     "EntryPointNotFoundError",
+    "MissingDependency",
     "check_api_version",
     "list_entry_points",
     "load_entry_point",

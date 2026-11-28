@@ -1,7 +1,7 @@
 """State reaches the dependency bundle through the pydantic-ai engine (T303).
 
 ``PydanticAIEngine.run``/``run_stream`` receive ``state`` already resolved
-by :class:`~loom.ai.runtime.AgentRuntime` and forward it to
+by :class:`~loom.ai.execution.AgentHost` and forward it to
 :class:`~loom.ai.abc.DepsFactory` unchanged (FR-009). This is the last hop
 before it reaches the composition root's ``AgentDeps.state``
 (``loom/composition/_ai.py``), which T301 already covers untouched.

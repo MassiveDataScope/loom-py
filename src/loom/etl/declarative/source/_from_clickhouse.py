@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from loom.core.errors import InvalidValue
 from loom.core.routing import LogicalRef
 from loom.etl.declarative.expr._refs import TableRef
 from loom.etl.declarative.source._specs import ClickHouseSourceSpec
-from loom.etl.schema._contract import SchemaContract, resolve_schema
+from loom.etl.schema._model import SchemaContract, resolve_schema
 from loom.etl.schema._schema import ColumnSchema
 
 
@@ -61,7 +62,7 @@ class FromClickHouse:
     def columns(self, *cols: str) -> FromClickHouse:
         """Return a new source projecting only the listed columns."""
         if not cols:
-            raise ValueError("FromClickHouse.columns() requires at least one column name.")
+            raise InvalidValue("FromClickHouse.columns() requires at least one column name.")
         return self._clone(_columns=cols)
 
     def distinct(self) -> FromClickHouse:
@@ -75,7 +76,7 @@ class FromClickHouse:
     def _to_spec(self, alias: str) -> ClickHouseSourceSpec:
         """Compile the declarative builder into a frozen source spec."""
         if not self._predicates and not self._allow_full_scan:
-            raise ValueError(
+            raise InvalidValue(
                 f"FromClickHouse({self._ref.ref!r}) has no predicates. "
                 "Use .where() to filter rows or .unbounded() for an explicit full scan."
             )

@@ -1,0 +1,61 @@
+"""Deploy check of pagination cursors: tokens a deployed application cannot trust.
+
+``loom.cursors.E001``: a configuration that turns cursor paging on, with a
+``stores.settings.cursors`` section, does not sign its cursors with a
+configured key. ``signing: unsigned`` lets any client forge a position, and
+``signing: ephemeral`` signs with a key no other instance or restart shares. A
+``signed`` section without a ``current_key_id`` naming one of its ``keys``
+fails at startup anyway; the check reports it in ``loom check --deploy`` too.
+Without the section no cursor is issued and nothing is checked.
+
+The check reads the keys as written and resolves no placeholder, so it runs
+in CI without the keys themselves: ``signing`` must be absent or the literal
+``signed``, and ``current_key_id`` a literal entry of ``keys``.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Final
+
+from loom.core.checks import CheckSet, Finding
+from loom.core.stores.repository.cursor import CURSOR_SIGNING_CHECK, CURSORS_SECTION, CursorConfig
+
+if TYPE_CHECKING:
+    from loom.core.config.context import ConfigContext
+
+CHECKS: Final = CheckSet()
+"""Checks of ``stores.settings.cursors``, run when the process uses that path."""
+
+_SECTION = CURSORS_SECTION
+_SIGNED = CursorConfig().signing
+_HINT = (
+    f"drop {_SECTION}.signing from the deployed configuration (signed is the default) "
+    f"and set {_SECTION}.current_key_id and {_SECTION}.keys, each key read from a "
+    "mounted file (path) or an injected secret variable (env)."
+)
+
+
+@CHECKS.register(CURSOR_SIGNING_CHECK)
+def _cursors_signed(config: ConfigContext) -> Finding | None:
+    written = config.raw(_SECTION)
+    if written is None:
+        return None
+    cursors = written if isinstance(written, dict) else {}
+    signing = cursors.get("signing", _SIGNED)
+    if signing != _SIGNED:
+        return Finding(
+            message=f"{_SECTION}.signing is {signing!r}: cursor tokens are not signed "
+            "with a key every instance shares.",
+            hint=_HINT,
+        )
+    keys = cursors.get("keys")
+    current = cursors.get("current_key_id")
+    if isinstance(keys, dict) and isinstance(current, str) and current in keys:
+        return None
+    return Finding(
+        message=f"{_SECTION} names no signing key: current_key_id must name an entry of keys.",
+        hint=_HINT,
+    )
+
+
+__all__ = ["CHECKS"]

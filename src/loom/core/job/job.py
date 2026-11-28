@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar
 
+from loom.core.job.policy import Backoff
 from loom.core.use_case.compute import ComputeFn
 from loom.core.use_case.rule import RuleFn
 
@@ -28,7 +29,7 @@ class Job(ABC, Generic[ResultT]):
 
     Class attributes ``computes`` and ``rules`` declare the pre-execution
     pipeline, identical in semantics to ``UseCase``.  Routing ClassVars
-    (``__queue__``, ``__retries__``, etc.) control how Celery dispatches
+    (``__queue__``, ``__retry__``, etc.) control how Celery dispatches
     and executes the task.  They can be overridden per subclass or at
     runtime via ``JobConfig`` without affecting sibling ``Job`` classes.
 
@@ -37,7 +38,9 @@ class Job(ABC, Generic[ResultT]):
         computes: Compute transformations applied before rule checks.
         rules: Rule validations applied after computes.
         __queue__: Celery queue name for this job. Defaults to ``"default"``.
-        __retries__: Maximum number of automatic retries on failure.
+        __retry__: The job's backoff between attempts; ``None`` takes the loom
+            default. The attempt limit is never declared here: it comes from
+            ``jobs.<Job>.retry.max_attempts`` or ``jobs.defaults.retry.max_attempts``.
         __countdown__: Delay in seconds before the task is first executed.
         __timeout__: Soft time limit in seconds; ``None`` means no limit.
         __priority__: Celery task priority (0 = lowest, 9 = highest for most
@@ -51,7 +54,7 @@ class Job(ABC, Generic[ResultT]):
 
         class SendWelcomeEmailJob(Job[None]):
             __queue__ = "email"
-            __retries__ = 3
+            __retry__ = Backoff(first_s=10, factor=3, max_s=600)
 
             def __init__(self, mailer: MailerPort) -> None:
                 self._mailer = mailer
@@ -65,7 +68,7 @@ class Job(ABC, Generic[ResultT]):
     rules: ClassVar[Sequence[RuleFn]] = ()
 
     __queue__: ClassVar[str] = "default"
-    __retries__: ClassVar[int] = 0
+    __retry__: ClassVar[Backoff | None] = None
     __countdown__: ClassVar[int] = 0
     __timeout__: ClassVar[int | None] = None
     __priority__: ClassVar[int] = 0

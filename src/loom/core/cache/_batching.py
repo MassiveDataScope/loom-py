@@ -12,6 +12,8 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from typing import TypeVar
 
+from loom.core.errors import InvalidValue
+
 T = TypeVar("T")
 
 COUNTER_BATCH_SIZE = 500
@@ -40,9 +42,9 @@ def batched(values: Sequence[T], size: int) -> Iterator[Sequence[T]]:
         Slices of ``values`` in order.
 
     Raises:
-        ValueError: If *size* is not positive.
+        InvalidValue: If *size* is not positive.
     """
     if size <= 0:
-        raise ValueError("size must be >= 1")
+        raise InvalidValue("size must be >= 1")
     for start in range(0, len(values), size):
         yield values[start : start + size]

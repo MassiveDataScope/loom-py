@@ -1,7 +1,7 @@
 """H5: what an adapter declares and cannot be satisfied fails at startup, naming its path.
 
 The server and agent names are checked when the AI phase composes, before
-seal; the tool filter when the runtime lists the server at startup. A host
+seal; the tool filter when the host lists the server at startup. A host
 without agents refuses an adapter's declaration as it refuses one in
 ``execute()``.
 """
@@ -93,11 +93,11 @@ class TestUnknownNameThroughAnAdapter:
 
 class TestUnknownToolThroughAnAdapter:
     async def test_fails_when_the_runtime_starts_naming_the_path(self, compose: Compose) -> None:
-        runtime = compose(quotes=AcmeNarrowQuotes, advice=AcmeFakeAdvice()).ai.runtime
-        assert runtime is not None
+        host = compose(quotes=AcmeNarrowQuotes, advice=AcmeFakeAdvice()).ai.agent_host
+        assert host is not None
 
         with pytest.raises(AgentCompilationError) as raised:
-            async with runtime:
+            async with host:
                 pass
 
         codes = {issue.code for issue in raised.value.issues}

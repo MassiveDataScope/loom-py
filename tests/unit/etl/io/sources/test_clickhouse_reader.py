@@ -9,10 +9,12 @@ import polars as pl
 import pyarrow as pa
 import pytest
 
+from loom.core.errors import InvalidUse
 from loom.etl.declarative.expr import col
 from loom.etl.declarative.source import FromClickHouse
 from loom.etl.io.sources._clickhouse import ClickHouseSourceReader
 from loom.etl.schema._schema import ColumnSchema, LoomDtype
+from tests.helpers.loggers import CapturedLog
 
 _ARROW_SUFFIX = ".arrow"
 _TEMP_MARKER = "loom-clickhouse-"
@@ -70,6 +72,25 @@ class TestClickHouseReaderArrowPath:
         assert result["id"].to_list() == [1]
         assert result["amount"].to_list() == [1.0]
 
+    def test_casts_only_the_selected_columns_of_a_wider_schema(self) -> None:
+        client = _FakeArrowClient(pa.table({"id": ["1"]}))
+        spec = (
+            FromClickHouse("analytics.cdc_events")
+            .columns("id")
+            .with_schema(
+                (
+                    ColumnSchema("id", LoomDtype.INT64),
+                    ColumnSchema("amount", LoomDtype.FLOAT64),
+                )
+            )
+            .unbounded()
+            ._to_spec("events")
+        )
+
+        result = ClickHouseSourceReader(client=client).read(spec, object()).collect()
+
+        assert result.schema == {"id": pl.Int64}
+
     def test_quotes_datetime_predicates_in_query(self) -> None:
         table = pa.table({"id": ["1"]})
         client = _FakeArrowClient(table)
@@ -91,6 +112,16 @@ class TestClickHouseReaderArrowPath:
             "SELECT * FROM `analytics`.`cdc_events`"
             " WHERE (source_time >= toDateTime64('2026-05-25 00:00:00', 3, 'UTC'))"
         ]
+
+    def test_the_query_record_carries_no_predicate_value(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        reader = ClickHouseSourceReader(client=_FakeArrowClient(pa.table({"id": ["1"]})))
+        spec = FromClickHouse("analytics.events").where(col("tenant") == "acme-42").unbounded()
+
+        reader.read(spec._to_spec("events"), object()).collect()
+
+        assert "acme-42" not in CapturedLog(caplog).rendered_text
 
     def test_select_star_when_no_columns(self) -> None:
         table = pa.table({"x": [1], "y": [2]})
@@ -118,7 +149,7 @@ class TestClickHouseReaderClientInit:
         reader = ClickHouseSourceReader()
         spec = FromClickHouse("t").unbounded()._to_spec("t")
 
-        with pytest.raises(ValueError, match="storage.clickhouse"):
+        with pytest.raises(InvalidUse, match="storage.clickhouse"):
             reader.read(spec, None)
 
     def test_unknown_client_interface_raises(self) -> None:

@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from loom.core.config import ConfigError
 from loom.etl.runner import ETLRunner
 from loom.etl.storage._config import StorageConfig
-from tests.helpers.extras import with_boto3, without_boto3
+from tests.helpers.aws_island import FakeAwsIsland
 from tests.unit._resolver_stubs import MappingResolver
 
 pytestmark = pytest.mark.usefixtures("clear_builtin_resolvers")
@@ -39,10 +39,6 @@ def _lake_uri(config: StorageConfig) -> str:
     return config.defaults.table_path.uri
 
 
-def _without_boto3(monkeypatch: pytest.MonkeyPatch) -> None:
-    without_boto3(monkeypatch)
-
-
 class TestStorageResolvers:
     def test_user_resolver_reaches_the_storage_config(self, tmp_path: Path) -> None:
         config_path = _write_etl_yaml(tmp_path, "${stub:lake}")
@@ -53,30 +49,26 @@ class TestStorageResolvers:
         assert _lake_uri(config) == "s3://lake/resolved"
 
     def test_secrets_placeholder_without_boto3_names_the_extra(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, absent_boto3: None
     ) -> None:
-        _without_boto3(monkeypatch)
         config_path = _write_etl_yaml(tmp_path, "${secrets:/etl/lake}")
 
-        with pytest.raises(ConfigError, match=r"loom-kernel\[config-ssm\]"):
+        with pytest.raises(ConfigError, match=r"loom-kernel\[aws\]"):
             ETLRunner.from_yaml(config_path)
 
     def test_no_aws_client_without_placeholders(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, island: FakeAwsIsland
     ) -> None:
-        boto3 = MagicMock()
-        with_boto3(monkeypatch, boto3)
         config_path = _write_etl_yaml(tmp_path, "/lake")
 
         config = _captured_config(lambda: ETLRunner.from_yaml(config_path))
 
         assert _lake_uri(config) == "/lake"
-        boto3.client.assert_not_called()
+        assert island.sessions == []
 
     def test_user_secrets_resolver_wins_over_the_default(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, absent_boto3: None
     ) -> None:
-        _without_boto3(monkeypatch)
         config_path = _write_etl_yaml(tmp_path, "${secrets:/etl/lake}")
         vault = MappingResolver("secrets", {"/etl/lake": "s3://lake/vault"})
 

@@ -6,7 +6,9 @@ from collections.abc import Callable
 
 import pytest
 
-from loom.etl.backends._merge import (
+from loom.etl.declarative.expr._refs import TableRef
+from loom.etl.declarative.target._table import UpsertSpec
+from loom.etl.engines._merge import (
     SOURCE_ALIAS,
     TARGET_ALIAS,
     _build_insert_values,
@@ -18,9 +20,7 @@ from loom.etl.backends._merge import (
     _build_upsert_update_cols,
     _MergePlan,
 )
-from loom.etl.backends._predicate import sql_literal
-from loom.etl.declarative.expr._refs import TableRef
-from loom.etl.declarative.target._table import UpsertSpec
+from loom.etl.engines._predicate import sql_literal
 
 
 def _upsert_spec(
@@ -31,7 +31,7 @@ def _upsert_spec(
 ) -> UpsertSpec:
     return UpsertSpec(
         table_ref=TableRef("test.table"),
-        upsert_keys=keys,
+        declared_keys=keys,
         partition_cols=partition_cols,
         upsert_exclude=exclude,
         upsert_include=include,
@@ -243,7 +243,7 @@ class TestMergePlanDeleteFlag:
         """A delete flag stays out of the column maps and gates every MERGE action."""
         spec = UpsertSpec(
             table_ref=TableRef("test.table"),
-            upsert_keys=("id",),
+            declared_keys=("id",),
             delete_flag="_deleted",
         )
         plan = _build_merge_plan(

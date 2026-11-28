@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import deque
 from collections.abc import Sequence
 from time import monotonic
@@ -11,13 +12,17 @@ from uuid import uuid4
 from sqlalchemy import insert as _sa_insert
 
 from loom.core.async_bridge import AsyncBridge
-from loom.core.backend.sqlalchemy import sa_table_for
-from loom.core.repository.sqlalchemy.values import to_column_row
+from loom.core.log_names import LogField
+from loom.stores.sqlalchemy.schema import sa_table_for
+from loom.stores.sqlalchemy.values import to_column_row
+from loom.streaming.event import StreamingEvent, StreamingKey
 from loom.streaming.nodes._table.common import (
     SqlAlchemySinkConfig,
     _row_size_bytes,
     _SessionManagerLike,
 )
+
+_log = logging.getLogger(__name__)
 
 
 class _SQLAlchemyTablePartition:
@@ -46,11 +51,9 @@ class _SQLAlchemyTablePartition:
         payload_type: type[Any],
         bridge: AsyncBridge,
         session_manager: _SessionManagerLike,
-        logger: Any = None,
     ) -> None:
         self._bridge = bridge
         self._session_manager = session_manager
-        self._logger = logger
         self._table = sa_table_for(payload_type, settings.table)
         self._chunk_size = settings.chunk_size
         self._buffer_policy = settings.buffer_policy
@@ -119,9 +122,10 @@ class _SQLAlchemyTablePartition:
         statement = _sa_insert(self._table)
         trace_id = uuid4().hex
         correlation_id = uuid4().hex
+        batch = self._buffer_records
+        n = 0
         async with self._session_manager.session() as session:
             try:
-                n = 0
                 t0 = monotonic()
                 while self._buffer:
                     rows: list[dict[str, Any]] = []
@@ -134,18 +138,22 @@ class _SQLAlchemyTablePartition:
                         await session.execute(statement, same_columns)
                     n += len(rows)
                 await session.commit()
-                if self._logger is not None:
-                    self._logger.info(
-                        "sink_flush",
-                        trace_id=trace_id,
-                        correlation_id=correlation_id,
-                        backend="sqlalchemy",
-                        table=self._table.name,
-                        records=n,
-                        duration_ms=round((monotonic() - t0) * 1000, 1),
-                    )
+                _log.info(
+                    StreamingEvent.SINK_FLUSHED,
+                    extra={
+                        LogField.TRACE_ID: trace_id,
+                        LogField.CORRELATION_ID: correlation_id,
+                        StreamingKey.TARGET: self._table.name,
+                        StreamingKey.RECORDS: n,
+                        LogField.DURATION_MS: round((monotonic() - t0) * 1000, 1),
+                    },
+                )
             except Exception:
                 await session.rollback()
+                _log.error(
+                    StreamingEvent.SINK_FLUSH_FAILED,
+                    extra={StreamingKey.TARGET: self._table.name, StreamingKey.RECORDS: batch},
+                )
                 raise
         self._buffer_started_at = None
         return n

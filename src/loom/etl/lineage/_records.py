@@ -43,11 +43,8 @@ class RecordField(StrEnum):
     STARTED_AT = "started_at"
     STATUS = "status"
     DURATION_MS = "duration_ms"
-    ERROR = "error"
     ERROR_TYPE = "error_type"
-    ERROR_MESSAGE = "error_message"
-    FAILED_STEP_RUN_ID = "failed_step_run_id"
-    FAILED_STEP = "failed_step"
+    ERROR_CODE = "error_code"
     PIPELINE = "pipeline"
     PROCESS_RUN_ID = "process_run_id"
     PROCESS = "process"
@@ -117,11 +114,8 @@ class PipelineRunRecord:
     started_at: datetime
     status: RunStatus
     duration_ms: int
-    error: str | None
     error_type: str | None = None
-    error_message: str | None = None
-    failed_step_run_id: str | None = None
-    failed_step: str | None = None
+    error_code: str | None = None
 
     def to_row(self) -> dict[str, Any]:
         """Convert record into a storage row mapping."""
@@ -141,11 +135,8 @@ class ProcessRunRecord:
     started_at: datetime
     status: RunStatus
     duration_ms: int
-    error: str | None
     error_type: str | None = None
-    error_message: str | None = None
-    failed_step_run_id: str | None = None
-    failed_step: str | None = None
+    error_code: str | None = None
 
     def to_row(self) -> dict[str, Any]:
         """Convert record into a storage row mapping."""
@@ -165,10 +156,9 @@ class StepRunRecord:
     started_at: datetime
     status: RunStatus
     duration_ms: int
-    error: str | None
     process_run_id: str | None = None
     error_type: str | None = None
-    error_message: str | None = None
+    error_code: str | None = None
 
     def to_row(self) -> dict[str, Any]:
         """Convert record into a storage row mapping."""
@@ -193,11 +183,8 @@ _PIPELINE_RECORD_SCHEMA: tuple[ColumnSchema, ...] = (
     ColumnSchema("started_at", DatetimeType("us", "UTC"), nullable=False),
     ColumnSchema("status", LoomDtype.UTF8, nullable=False),
     ColumnSchema("duration_ms", LoomDtype.INT64, nullable=False),
-    ColumnSchema("error", LoomDtype.UTF8, nullable=True),
     ColumnSchema("error_type", LoomDtype.UTF8, nullable=True),
-    ColumnSchema("error_message", LoomDtype.UTF8, nullable=True),
-    ColumnSchema("failed_step_run_id", LoomDtype.UTF8, nullable=True),
-    ColumnSchema("failed_step", LoomDtype.UTF8, nullable=True),
+    ColumnSchema("error_code", LoomDtype.UTF8, nullable=True),
 )
 
 _PROCESS_RECORD_SCHEMA: tuple[ColumnSchema, ...] = (
@@ -209,11 +196,8 @@ _PROCESS_RECORD_SCHEMA: tuple[ColumnSchema, ...] = (
     ColumnSchema("started_at", DatetimeType("us", "UTC"), nullable=False),
     ColumnSchema("status", LoomDtype.UTF8, nullable=False),
     ColumnSchema("duration_ms", LoomDtype.INT64, nullable=False),
-    ColumnSchema("error", LoomDtype.UTF8, nullable=True),
     ColumnSchema("error_type", LoomDtype.UTF8, nullable=True),
-    ColumnSchema("error_message", LoomDtype.UTF8, nullable=True),
-    ColumnSchema("failed_step_run_id", LoomDtype.UTF8, nullable=True),
-    ColumnSchema("failed_step", LoomDtype.UTF8, nullable=True),
+    ColumnSchema("error_code", LoomDtype.UTF8, nullable=True),
 )
 
 _STEP_RECORD_SCHEMA: tuple[ColumnSchema, ...] = (
@@ -225,10 +209,9 @@ _STEP_RECORD_SCHEMA: tuple[ColumnSchema, ...] = (
     ColumnSchema("started_at", DatetimeType("us", "UTC"), nullable=False),
     ColumnSchema("status", LoomDtype.UTF8, nullable=False),
     ColumnSchema("duration_ms", LoomDtype.INT64, nullable=False),
-    ColumnSchema("error", LoomDtype.UTF8, nullable=True),
     ColumnSchema("process_run_id", LoomDtype.UTF8, nullable=True),
     ColumnSchema("error_type", LoomDtype.UTF8, nullable=True),
-    ColumnSchema("error_message", LoomDtype.UTF8, nullable=True),
+    ColumnSchema("error_code", LoomDtype.UTF8, nullable=True),
 )
 
 _RECORD_SCHEMA_MAP: Final[dict[type[LineageRecord], tuple[ColumnSchema, ...]]] = {

@@ -17,7 +17,7 @@ import pytest
 from loom.ai.config import AiConfig
 from loom.ai.declarative import NATIVE_TOOLS, AgentSpecV1, JsonSchemaOutput
 from loom.ai.errors import AgentCompilationIssue
-from loom.core.sql.config import SqlConfig
+from loom.core.stores.sql.config import SqlConfig
 from loom.core.use_case.registry import UseCaseRegistry
 
 SOURCE_PATH = "ai/agents/subject-agent/agent.yaml"

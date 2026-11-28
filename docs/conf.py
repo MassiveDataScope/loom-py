@@ -73,9 +73,9 @@ napoleon_numpy_docstring = False
 myst_heading_anchors = 3
 
 
-# loom.core.sql re-exports: canonical docs live in loom.core.sql.abc
-# and loom.core.sql.config, both listed in reference/api/core.rst.
-_SQL_PACKAGE = "loom.core.sql"
+# loom.core.stores.sql re-exports: canonical docs live in loom.core.stores.sql.abc
+# and loom.core.stores.sql.config, both listed in reference/api/core.rst.
+_SQL_PACKAGE = "loom.core.stores.sql"
 _SQL_REEXPORTED_NAMES = (
     "RoleNotAllowedError",
     "RoleRequiredError",
@@ -93,9 +93,9 @@ _SQL_REEXPORTED_NAMES = (
 
 # loom.ai re-exports: canonical docs live in the modules that DEFINE each
 # symbol (loom.ai.abc, loom.ai.config, loom.ai.errors, loom.ai.inference,
-# loom.ai.runtime), listed in reference/api/ai.rst. The 'loom.ai' facade and
+# loom.ai.execution), listed in reference/api/ai.rst. The 'loom.ai' facade and
 # 'loom.ai.compiler' re-export them for import convenience; documenting them
-# twice makes every cross-reference ambiguous. Same treatment as loom.core.sql.
+# twice makes every cross-reference ambiguous. Same treatment as loom.core.stores.sql.
 _AI_PACKAGE = "loom.ai"
 
 
@@ -123,6 +123,13 @@ def _reexported_names(package: str) -> tuple[str, ...]:
 
 _AI_REEXPORTED_NAMES = _reexported_names(_AI_PACKAGE)
 
+_STORE_FACADES = (
+    "loom.core.stores",
+    "loom.core.stores.repository",
+    "loom.core.stores.sql",
+    "loom.stores.sqlalchemy",
+)
+
 
 _AI_COMPILER_PACKAGE = "loom.ai.compiler"
 _AI_COMPILER_REEXPORTED_NAMES = (
@@ -140,6 +147,7 @@ _DUPLICATED_REEXPORTS = {
     ("loom.core.identity", "IdentityFixed"),
     *((_SQL_PACKAGE, symbol) for symbol in _SQL_REEXPORTED_NAMES),
     *((_AI_PACKAGE, symbol) for symbol in _AI_REEXPORTED_NAMES),
+    *((package, symbol) for package in _STORE_FACADES for symbol in _reexported_names(package)),
     *((_AI_COMPILER_PACKAGE, symbol) for symbol in _AI_COMPILER_REEXPORTED_NAMES),
 }
 

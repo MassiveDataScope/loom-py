@@ -4,7 +4,7 @@ The route is registered ahead of every interface router so a catch-all route
 can never capture it, and it belongs to the default authentication exclusions
 so an orchestrator needs no credentials to ask.
 
-Internal module: consumed by :meth:`loom.rest.fastapi.adapter.FastAPIAdapter.bind`.
+Internal module: consumed by :meth:`loom.rest.fastapi.runtime.FastAPIRuntime.mount`.
 """
 
 from __future__ import annotations

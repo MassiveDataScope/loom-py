@@ -1,6 +1,6 @@
 """No entry point builds outside an execution: a static scan of ``src/loom``.
 
-Use cases and jobs are built by ``RuntimeExecutor.run``, which receives the
+Use cases and jobs are built by ``UseCaseExecutor.run``, which receives the
 factory's ``build`` and calls it inside the execution it opens; no adapter
 calls ``factory.build(...)`` itself. The one other builder is a job callback,
 built inside ``with ExecutionScope(...)``. Any other ``.build(`` call on a

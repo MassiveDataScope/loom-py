@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -35,13 +34,12 @@ def _build_flow(tmp_path: Path) -> object:
 
 
 class TestMaintenanceFlow:
-    def test_bridges_logs_to_the_current_flow_run(
+    def test_runs_the_step_inside_the_maintenance_span(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
         events: list[str] = []
-        flow_run_id = uuid.uuid4()
         storage_config = MagicMock()
         observability_config = MagicMock()
         runner = MagicMock()
@@ -51,32 +49,25 @@ class TestMaintenanceFlow:
         configure = MagicMock(
             side_effect=lambda config, **_kw: events.append("configure") or runtime
         )
-        install = MagicMock(side_effect=lambda flow_id: events.append("install"))
-        uninstall = MagicMock(side_effect=lambda: events.append("uninstall"))
 
-        monkeypatch.setattr(_maintenance, "prefect_flow_run_id", lambda: flow_run_id)
-        monkeypatch.setattr(_maintenance, "install_log_bridge", install)
-        monkeypatch.setattr(_maintenance, "uninstall_log_bridge", uninstall)
         monkeypatch.setattr(
             _maintenance, "_load_context", lambda path, **_kw: events.append("load")
         )
         monkeypatch.setattr(
             _maintenance, "_parse_sections", lambda context: (storage_config, observability_config)
         )
-        monkeypatch.setattr(_maintenance.ObservabilityRuntime, "from_config", configure)
+        monkeypatch.setattr(_maintenance.Observability, "from_config", configure)
         monkeypatch.setattr(_maintenance.MaintenanceRunner, "from_config", lambda config: runner)
 
         flow = _build_flow(tmp_path)
         flow.fn(dry_run=True)  # type: ignore[attr-defined]
 
-        assert events == ["install", "load", "configure", "span", "run", "uninstall"]
+        assert events == ["load", "configure", "span", "run"]
         configure.assert_called_once_with(observability_config, environment=Environment.TEST)
-        install.assert_called_once_with(flow_run_id)
-        uninstall.assert_called_once_with()
         runtime.span.assert_called_once_with(Scope.MAINTENANCE, "AcmeMaintenance")
         runner.run.assert_called_once()
 
-    def test_uninstalls_the_log_bridge_after_failure(
+    def test_a_failed_report_ends_the_span_with_the_error(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -98,17 +89,12 @@ class TestMaintenanceFlow:
                 raise
 
         runtime.span.side_effect = record_span
-        uninstall = MagicMock()
-
-        monkeypatch.setattr(_maintenance, "prefect_flow_run_id", uuid.uuid4)
-        monkeypatch.setattr(_maintenance, "install_log_bridge", MagicMock())
-        monkeypatch.setattr(_maintenance, "uninstall_log_bridge", uninstall)
         monkeypatch.setattr(_maintenance, "_load_context", lambda path, **_kw: MagicMock())
         monkeypatch.setattr(
             _maintenance, "_parse_sections", lambda context: (MagicMock(), MagicMock())
         )
         monkeypatch.setattr(
-            _maintenance.ObservabilityRuntime,
+            _maintenance.Observability,
             "from_config",
             MagicMock(return_value=runtime),
         )
@@ -119,4 +105,3 @@ class TestMaintenanceFlow:
             flow.fn(dry_run=False)  # type: ignore[attr-defined]
 
         assert span_events == ["error"]
-        uninstall.assert_called_once_with()

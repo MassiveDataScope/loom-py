@@ -9,22 +9,22 @@ import pytest
 from omegaconf import DictConfig, OmegaConf
 
 from loom.core.config import ConfigContext
-from loom.streaming import Backend, FromTopic, IntoTable, Process, StreamFlow
+from loom.streaming import FromTopic, IntoTable, Process, StreamFlow, TableEngine
 from loom.streaming.compiler import CompilationError, StreamingErrorCode, compile_flow
 
 from .cases import Order, Result
 
 _SINK = "results_sink"
 
-_SECTIONS: dict[Backend, dict[str, object]] = {
-    Backend.DELTA: {"uri": "s3://lake/results"},
-    Backend.SQLALCHEMY: {"url": "sqlite+aiosqlite:///:memory:"},
-    Backend.CLICKHOUSE: {"store": "clickhouse"},
+_SECTIONS: dict[TableEngine, dict[str, object]] = {
+    TableEngine.DELTA: {"uri": "s3://lake/results"},
+    TableEngine.SQLALCHEMY: {"url": "sqlite+aiosqlite:///:memory:"},
+    TableEngine.CLICKHOUSE: {"store": "clickhouse"},
 }
 
 
-def _flow(backend: Backend) -> StreamFlow[Order, Result]:
-    sink = IntoTable(payload=Result, table="results", backend=backend, name=_SINK)
+def _flow(backend: TableEngine) -> StreamFlow[Order, Result]:
+    sink = IntoTable(payload=Result, table="results", engine=backend, name=_SINK)
     return StreamFlow(
         name="sink_flow",
         source=FromTopic("in", payload=Order),
@@ -54,7 +54,7 @@ def _config(base: DictConfig, section: dict[str, object]) -> ConfigContext:
 class TestSinkSectionKeys:
     @pytest.mark.parametrize("backend", list(_SECTIONS))
     def test_a_known_section_compiles(
-        self, streaming_kafka_config: DictConfig, backend: Backend
+        self, streaming_kafka_config: DictConfig, backend: TableEngine
     ) -> None:
         plan = compile_flow(
             _flow(backend), config=_config(streaming_kafka_config, _SECTIONS[backend])
@@ -64,7 +64,7 @@ class TestSinkSectionKeys:
 
     @pytest.mark.parametrize("backend", list(_SECTIONS))
     def test_an_unknown_key_is_a_sink_config_issue_naming_the_key(
-        self, streaming_kafka_config: DictConfig, backend: Backend
+        self, streaming_kafka_config: DictConfig, backend: TableEngine
     ) -> None:
         section = {**_SECTIONS[backend], "chunk_sise": 10}
         flow = _flow(backend)
@@ -85,13 +85,13 @@ class TestSinkSectionKeys:
         ("backend", "key", "database", "remedy"),
         [
             (
-                Backend.SQLALCHEMY,
+                TableEngine.SQLALCHEMY,
                 "store",
                 "warehouse",
                 "set 'store' for a stores.<name> section or 'url' inline, not both",
             ),
             (
-                Backend.CLICKHOUSE,
+                TableEngine.CLICKHOUSE,
                 "store",
                 "clickhouse",
                 "the url comes from stores.<name>, so set 'store' only",
@@ -101,7 +101,7 @@ class TestSinkSectionKeys:
     def test_a_section_with_both_url_and_database_is_refused(
         self,
         streaming_kafka_config: DictConfig,
-        backend: Backend,
+        backend: TableEngine,
         key: str,
         database: str,
         remedy: str,
@@ -121,3 +121,22 @@ class TestSinkSectionKeys:
         assert len(issues) == 1
         assert f"both 'url' and '{key}'" in issues[0].message
         assert remedy in issues[0].message
+
+    @pytest.mark.parametrize("key", ["staging", "writer_properties"])
+    def test_a_delta_key_that_is_not_a_mapping_is_a_sink_config_issue(
+        self, streaming_kafka_config: DictConfig, key: str
+    ) -> None:
+        section = {**_SECTIONS[TableEngine.DELTA], key: "zstd"}
+        flow = _flow(TableEngine.DELTA)
+        context = _config(streaming_kafka_config, section)
+
+        with pytest.raises(CompilationError) as failure:
+            compile_flow(flow, config=context)
+
+        issues = [
+            issue
+            for issue in failure.value.issues
+            if issue.code is StreamingErrorCode.SINK_CONFIG_INVALID
+        ]
+        assert len(issues) == 1
+        assert f"'{key}' must be a mapping" in issues[0].message

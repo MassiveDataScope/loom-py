@@ -7,7 +7,7 @@ network.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -15,20 +15,17 @@ import pytest
 import yaml
 
 from loom.ai import registry
-from loom.composition import (
-    AppConfig,
-    Application,
-    CompositionSource,
-    Recipe,
-    compose_application,
-)
+from loom.composition import AppConfig, Application, Project, Recipe
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.discovery.base import DiscoveryResult
-from loom.core.persistence import SERVER_PROFILE
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.core.job.callback import JobCallback
+from loom.core.stores import SERVER_PROFILE
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from tests.helpers.ai import CountingEngineProvider
-from tests.helpers.composition import composition_source
+from tests.helpers.aws_island import FakeAwsIsland
+from tests.helpers.composition import WithOverrides, composition_project
+from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.integration.ai.adapters.doubles import (
     AGENT,
     SERVER,
@@ -70,17 +67,22 @@ def _agent_spec(name: str) -> dict[str, Any]:
 class AgentlessHost:
     """A host that runs the given use cases and callbacks and hosts no agents, as a worker does."""
 
-    def __init__(self, use_cases: tuple[type, ...], callbacks: tuple[type, ...] = ()) -> None:
+    def __init__(
+        self, use_cases: tuple[type, ...], callbacks: tuple[type[JobCallback], ...] = ()
+    ) -> None:
         self.use_cases, self.callbacks = use_cases, callbacks
 
-    def recipe(self, source: CompositionSource) -> Recipe:
-        del source
-        discovered = DiscoveryResult(models=(), use_cases=self.use_cases, interfaces=(), jobs=())
-        return Recipe(
-            profile=SERVER_PROFILE, discovered=discovered, agents=False, callbacks=self.callbacks
+    def recipe(self, project: Project) -> Recipe:
+        del project
+        discovered = DiscoveryResult(
+            models=(),
+            use_cases=self.use_cases,
+            jobs=(),
+            callbacks=self.callbacks,
         )
+        return Recipe(profile=SERVER_PROFILE, discovered=discovered, agents=False)
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
@@ -105,13 +107,16 @@ def engines(
     """The engine provider ``ai.engine`` resolves to; ``calls`` names each agent built."""
     provider = CountingEngineProvider()
     provider.mcp_client_factory = sessions  # type: ignore[assignment]
-    monkeypatch.setattr(registry, "resolve_engine_provider", lambda _: provider)
+    monkeypatch.setattr(registry, "resolve_engine_plugin", lambda _: provider)
     return provider
 
 
 @pytest.fixture
-def source(tmp_path: Path) -> CompositionSource:
-    """A Lambda jobs function ``worker`` with ``pricing`` configured and two agent artefacts."""
+def project(tmp_path: Path, island: FakeAwsIsland) -> Iterator[Project]:
+    """A Lambda jobs function ``worker`` with ``pricing`` configured and two agent artefacts.
+
+    Its SQS client is a stand-in for the test's duration.
+    """
     agents = tmp_path / "agents"
     agents.mkdir()
     for name in (AGENT, UNUSED_AGENT):
@@ -126,9 +131,10 @@ def source(tmp_path: Path) -> CompositionSource:
             "startup_timeout_ms": 2000,
             "health_cache_ttl_ms": 5,
         },
-        "lambda": {"functions": {WORKER: {"trigger": {"source": "jobs"}}}},
+        **jobs_queue(),
+        "lambda": {"functions": {WORKER: {"trigger": jobs_trigger()}}},
     }
-    return composition_source(
+    yield composition_project(
         ConfigContext.from_dict(document),
         app=AppConfig(name="acme-adapters", entry=WORKER, job_service="inline"),
         code_path=tmp_path,
@@ -144,7 +150,7 @@ def binding(port: type, adapter: object) -> Callable[[LoomContainer], None]:
 
 
 @pytest.fixture
-def compose(source: CompositionSource, engines: CountingEngineProvider) -> Compose:
+def compose(project: Project, engines: CountingEngineProvider) -> Compose:
     """Compose the Lambda function ``worker`` (or *host*) over *use_cases* with the ports bound.
 
     ``quotes`` and ``advice`` default to the adapters declaring ``Mcp('pricing')``
@@ -159,10 +165,12 @@ def compose(source: CompositionSource, engines: CountingEngineProvider) -> Compo
         host: object | None = None,
     ) -> Application:
         cases = use_cases or (AcmeMarket,)
-        return compose_application(
-            source,
-            host or LambdaAdapter(use_cases=cases),  # type: ignore[arg-type]
-            modules=(binding(AcmeQuotes, quotes), binding(AcmeAdvice, advice)),
+        return project.compose(
+            WithOverrides(
+                host or LambdaRuntime(use_cases=cases),
+                binding(AcmeQuotes, quotes),
+                binding(AcmeAdvice, advice),
+            )
         )
 
     return build

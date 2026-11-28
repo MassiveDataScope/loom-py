@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from sqlalchemy import MetaData
 
-from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry, scoped_tables
 from loom.core.model import BaseModel, ColumnField, RowScoped, ScopedField
 from loom.core.model.types import Integer, String
+from loom.stores.sqlalchemy.schema import (
+    compile_all,
+    get_metadata,
+    reset_registry,
+    scoped_tables,
+)
 
 
 class First(BaseModel, RowScoped):

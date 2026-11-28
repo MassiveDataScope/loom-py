@@ -11,11 +11,11 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import INET
 from sqlalchemy.schema import CreateTable
 
-from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.model import BaseModel, Bytes, ColumnField, Postgres, get_column_fields
 from loom.core.model.types import Integer
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
+from loom.core.stores.repository import CursorCodec
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
 
 
 class Device(BaseModel):
@@ -60,7 +60,7 @@ class TestBinaryValueRoundTrip:
     @pytest.mark.usefixtures("shared_registry")
     def test_bytes_reach_the_column_as_bytes_not_base64(self) -> None:
         compile_all(Device)
-        repository: RepositorySQLAlchemy[Device, int] = RepositorySQLAlchemy(
+        repository: SQLAlchemyRepository[Device, int] = SQLAlchemyRepository(
             session_manager=cast(Any, SimpleNamespace(metadata=get_metadata())),
             model=Device,
             cursor_codec=CursorCodec(signing="ephemeral"),

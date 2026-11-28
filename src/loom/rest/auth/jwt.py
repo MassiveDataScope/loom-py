@@ -16,11 +16,13 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
+from loom.core.errors.summary import ErrorSummary
 from loom.core.identity import RESERVED_ATTRIBUTE_PREFIX, Identity
 from loom.rest.auth.abc import RequestCredentials
 from loom.rest.auth.config import ATTRIBUTE_CLAIM_PREFIX, RESERVED_CLAIMS, JwtAuthConfig
 from loom.rest.auth.issuer import JwtIssuer as JwtIssuer
 from loom.rest.auth.keys import FixedKey, Key, load_pyjwt
+from loom.rest.event import RestEvent
 
 _logger = logging.getLogger(__name__)
 
@@ -113,11 +115,8 @@ class JwtAuthenticator:
                 leeway=self._config.leeway_seconds,
                 options=self._decode_options,
             )
-        except self._jwt.PyJWTError as exc:
-            _logger.debug("JWT verification failed: %s: %s", type(exc).__name__, exc)
-            return None
         except Exception as exc:  # noqa: BLE001
-            _logger.debug("JWT verification failed: %s", type(exc).__name__)
+            _logger.debug(RestEvent.TOKEN_INVALID, extra=ErrorSummary.of(exc).fields())
             return None
         return claims
 
@@ -137,11 +136,11 @@ class JwtAuthenticator:
         if header is None:
             return None
         if self._accepted_types and not self._typed(header):
-            _logger.debug("JWT verification failed: the typ header is not an accepted type")
+            _logger.debug(RestEvent.TOKEN_TYPE_REFUSED)
             return None
         key = self._keys.pick(header.get("kid"))
         if key is None:
-            _logger.debug("JWT verification failed: no configured key applies to this token")
+            _logger.debug(RestEvent.TOKEN_KEY_UNKNOWN)
         return key
 
     def _header(self, token: str) -> Mapping[str, Any] | None:
@@ -149,7 +148,7 @@ class JwtAuthenticator:
         try:
             header: Mapping[str, Any] = self._jwt.get_unverified_header(token)
         except self._jwt.PyJWTError as exc:
-            _logger.debug("JWT header unreadable: %s", type(exc).__name__)
+            _logger.debug(RestEvent.TOKEN_INVALID, extra=ErrorSummary.of(exc).fields())
             return None
         return header
 
@@ -174,7 +173,7 @@ class JwtAuthenticator:
         if self._roles_claim is None:
             return ()
         if self._roles_claim not in claims:
-            _logger.debug("JWT carries no %r claim: the caller gets no role", self._roles_claim)
+            _logger.debug(RestEvent.TOKEN_ROLES_CLAIM_MISSING)
             return ()
         return _roles_from_claim(claims[self._roles_claim])
 

@@ -1,7 +1,7 @@
 """Inbound A2A transport: one JSON-RPC endpoint and one card per published agent.
 
 Serves the A2A protocol on top of
-:class:`~loom.ai.runtime.AgentRuntime`, reusing the pure projections of
+:class:`~loom.ai.execution.AgentHost`, reusing the pure projections of
 :mod:`loom.ai.a2a.card` and :mod:`loom.ai.a2a.events`. Nothing here re-derives
 the card or the event mapping: this module is transport only, and the rules
 every agent transport shares — the body cap, the caller check, the span that
@@ -10,7 +10,7 @@ survives a disconnect and the heartbeat race — come from
 
 ``fasta2a.schema`` supplies the wire contract and the error taxonomy; the
 ready-made ``fasta2a`` application is not mounted. Every run goes through
-:class:`~loom.ai.runtime.AgentRuntime`, under the caller's ``Identity``,
+:class:`~loom.ai.execution.AgentHost`, under the caller's ``Identity``,
 ``max_concurrent_runs``, ``run_timeout_ms``, the run span and the outward
 redaction.
 
@@ -60,10 +60,11 @@ from loom.ai.a2a._rpc import (
 from loom.ai.a2a.card import DEFAULT_A2A_PREFIX, card_path
 from loom.ai.compiler import AgentPlan
 from loom.ai.config import AiConfig
+from loom.ai.event import AiEvent, AiKey
+from loom.ai.execution import AgentHost
 from loom.ai.fastapi.response import error_response as flat_error_response
-from loom.ai.runtime import AgentRuntime
 from loom.core.identity import Identity
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.rest.auth.abc import Authenticator
 
 _logger = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ def _make_rpc_handler(
         except RpcFault as exc:
             return error_response(request_id, exc.error)
         except Exception:
-            _logger.exception("Unhandled error in the a2a endpoint of agent %r", agent.name)
+            _logger.exception(AiEvent.ENDPOINT_FAILED, extra={AiKey.AGENT: agent.name})
             return error_response(request_id, unexpected_error())
 
     async def serve_rpc(request: Request) -> Response:
@@ -123,15 +124,15 @@ def _make_card_handler(card: bytes) -> Callable[[], Response]:
     return serve_card
 
 
-def bind_a2a_endpoints(
+def mount_a2a_endpoints(
     app: FastAPI,
     *,
-    runtime: AgentRuntime,
+    host: AgentHost,
     config: AiConfig,
     plans: Sequence[AgentPlan],
     authenticator: Authenticator | None = None,
     exclude_paths: Sequence[str] = (),
-    observability_runtime: ObservabilityRuntime | None = None,
+    observability: Observability | None = None,
     prefix: str = DEFAULT_A2A_PREFIX,
     agents_prefix: str = DEFAULT_AGENTS_PREFIX,
 ) -> None:
@@ -144,18 +145,18 @@ def bind_a2a_endpoints(
 
     Args:
         app: FastAPI application to mount the routes on.
-        runtime: Entered runtime serving the agents.
+        host: Entered host serving the agents.
         config: Parsed ``ai:`` section.
-        plans: Compiled plans the runtime was built from; the card is projected
+        plans: Compiled plans the host was built from; the card is projected
             from them, which is why they are passed explicitly instead of read
-            back out of the runtime.
+            back out of the host.
         authenticator: Mechanism authenticating callers; its name selects the
             security scheme the card advertises.
         exclude_paths: Extra authentication exclusions to validate against the
             invocation surface. The exclusions mounted on the
             application's :class:`AuthenticationMiddleware` are read directly
             and always validated; this argument only adds to them.
-        observability_runtime: Runtime emitting one span per run.
+        observability: Runtime emitting one span per run.
         prefix: Path prefix the A2A surface is mounted under.
         agents_prefix: Path prefix the HTTP agent surface is mounted under,
             guarded by the same exclusion check.
@@ -169,7 +170,7 @@ def bind_a2a_endpoints(
 
     Example::
 
-        bind_a2a_endpoints(app, runtime=runtime, config=ai_config, plans=plans,
+        mount_a2a_endpoints(app, host=host, config=ai_config, plans=plans,
                            authenticator=authenticator, exclude_paths=("/health",))
     """
     if config.a2a is None:
@@ -178,7 +179,7 @@ def bind_a2a_endpoints(
     agents = published_agents(
         config=config,
         plans={plan.name: plan for plan in plans},
-        runtime=runtime,
+        host=host,
         mechanism=mechanism,
         prefix=prefix,
     )
@@ -196,10 +197,10 @@ def bind_a2a_endpoints(
     if authenticator is not None:
         register_card_exclusions(app, cards)
     handlers = make_handlers(
-        runtime,
+        host,
         config,
         prefix=prefix,
-        observability_runtime=observability_runtime or ObservabilityRuntime.noop(),
+        observability=observability or Observability.noop(),
     )
     for agent, path in zip(agents, cards, strict=True):
         app.add_api_route(path, _make_card_handler(agent.card), methods=["GET"])
@@ -208,9 +209,4 @@ def bind_a2a_endpoints(
             _make_rpc_handler(agent, handlers, max_prompt_bytes=config.max_prompt_bytes),
             methods=["POST"],
         )
-        announce_publication(
-            agent,
-            base_url=str(config.a2a.base_url),
-            mechanism=mechanism,
-            prefix=prefix,
-        )
+        announce_publication(agent, prefix=prefix)

@@ -9,14 +9,19 @@ compiler and executor; they are never constructed directly in user code.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from loom.core.errors import InvalidValue
+from loom.etl.declarative._declared_table import ModelBoundSpec
 from loom.etl.declarative._format import Format
 from loom.etl.declarative._read_options import ReadOptions
+from loom.etl.declarative.expr._predicate_dialect import columns_in
 from loom.etl.declarative.expr._refs import TableRef
-from loom.etl.schema._schema import ColumnSchema, LoomType
+from loom.etl.schema._json_fit import JsonMismatch
+from loom.etl.schema._schema import ColumnSchema, FrameType
 
 if TYPE_CHECKING:
     from loom.core.expr.nodes import ExprNode
@@ -35,10 +40,10 @@ class ExtraFieldsMode(StrEnum):
         """Refuse a value that names no mode.
 
         Raises:
-            ValueError: Always, listing the valid modes.
+            InvalidValue: Always, listing the valid modes.
         """
-        raise ValueError(
-            f"on_extra_fields mode {value!r} is not valid. "
+        raise InvalidValue(
+            "on_extra_fields mode is not valid. "
             f"Choose one of: {sorted(mode.value for mode in cls)}"
         )
 
@@ -64,15 +69,17 @@ class JsonColumnSpec:
 
     Args:
         column:    Name of the string column that holds the JSON payload.
-        loom_type: Target :data:`~loom.etl._schema.LoomType` to decode into.
+        frame_type: Target :data:`~loom.etl.schema.FrameType` to decode into.
+        on_mismatch: Whether a document that does not match fails or becomes null.
     """
 
     column: str
-    loom_type: LoomType
+    frame_type: FrameType
+    on_mismatch: JsonMismatch = JsonMismatch.FAIL
 
 
 @dataclass(frozen=True)
-class TableSourceSpec:
+class TableSourceSpec(ModelBoundSpec):
     """Normalized internal representation of a Delta table ETL source.
 
     Produced by :meth:`~loom.etl.declarative.source.FromTable._to_spec`.
@@ -89,17 +96,38 @@ class TableSourceSpec:
                       Parquet row-group scanner, reducing I/O.
         schema:       Optional user-declared schema applied at read time via
                       ``with_columns(cast(...))``; casts each declared column to
-                      its :class:`~loom.etl._schema.LoomDtype`.  Extra columns
+                      its :class:`~loom.etl.schema.LoomDtype`.  Extra columns
                       in the source pass through untouched.
         json_columns: JSON decode specs applied at read time.
+        model:        The model the source was declared with, ``None`` otherwise.
+                      It gives the read schema; the compiler translates it and
+                      checks the columns the source names against it.
     """
 
     alias: str
-    table_ref: TableRef
     predicates: tuple[Any, ...] = field(default_factory=tuple)
     columns: tuple[str, ...] = field(default_factory=tuple)
     schema: tuple[ColumnSchema, ...] = field(default_factory=tuple)
     json_columns: tuple[JsonColumnSpec, ...] = field(default_factory=tuple)
+
+    @property
+    def read_schema(self) -> tuple[ColumnSchema, ...]:
+        """The schema applied at read time: the model's lake schema, else the declared one.
+
+        Only the columns left after the ``columns`` projection are cast.
+        """
+        table = self.model_table
+        schema = self.schema if table is None else table.schema
+        return _projected(schema, self.columns)
+
+    @property
+    def declared_columns(self) -> Mapping[str, tuple[str, ...]]:
+        """The model columns this source names, by the call that names them."""
+        return {
+            "columns": self.columns,
+            "where": columns_in(*self.predicates),
+            "parse_json": tuple(spec.column for spec in self.json_columns),
+        }
 
     @property
     def kind(self) -> SourceKind:
@@ -110,6 +138,14 @@ class TableSourceSpec:
     def format(self) -> Format:
         """I/O format — always :attr:`Format.DELTA` for table sources."""
         return Format.DELTA
+
+
+def _projected(
+    schema: tuple[ColumnSchema, ...], columns: tuple[str, ...]
+) -> tuple[ColumnSchema, ...]:
+    if not columns:
+        return schema
+    return tuple(column for column in schema if column.name in columns)
 
 
 @dataclass(frozen=True)
@@ -143,6 +179,11 @@ class FileSourceSpec:
     columns: tuple[str, ...] = field(default_factory=tuple)
     schema: tuple[ColumnSchema, ...] = field(default_factory=tuple)
     json_columns: tuple[JsonColumnSpec, ...] = field(default_factory=tuple)
+
+    @property
+    def read_schema(self) -> tuple[ColumnSchema, ...]:
+        """The schema applied at read time: the declared one, limited to the projected columns."""
+        return _projected(self.schema, self.columns)
 
     @property
     def kind(self) -> SourceKind:
@@ -189,6 +230,11 @@ class ClickHouseSourceSpec:
     allow_full_scan: bool = False
 
     @property
+    def read_schema(self) -> tuple[ColumnSchema, ...]:
+        """The schema applied at read time: the declared one, limited to the projected columns."""
+        return _projected(self.schema, self.columns)
+
+    @property
     def kind(self) -> SourceKind:
         """Physical kind — always :attr:`SourceKind.CLICKHOUSE`."""
         return SourceKind.CLICKHOUSE
@@ -233,9 +279,7 @@ class MongoSourceSpec:
 
     def __post_init__(self) -> None:
         if not 1 <= self.batch_size <= 50_000:
-            raise ValueError(
-                f"MongoSourceSpec.batch_size must be between 1 and 50000, got {self.batch_size}"
-            )
+            raise InvalidValue("MongoSourceSpec.batch_size must be between 1 and 50000")
 
     @property
     def kind(self) -> SourceKind:
@@ -244,12 +288,12 @@ class MongoSourceSpec:
 
 
 @dataclass(frozen=True)
-class DynamoDbSourceSpec:
+class DynamoDBSourceSpec:
     """Normalized internal representation of a DynamoDB ETL source.
 
-    Produced by :meth:`~loom.etl.declarative.source.FromDynamoDb._to_spec`.
+    Produced by :meth:`~loom.etl.declarative.source.FromDynamoDB._to_spec`.
     Consumed by the executor and
-    :class:`~loom.etl.io.sources.DynamoDbSourceReader`.
+    :class:`~loom.etl.io.sources.DynamoDBSourceReader`.
 
     Args:
         alias:             Name matching the ``execute()`` parameter.
@@ -275,7 +319,7 @@ class DynamoDbSourceSpec:
                            ``TotalSegments`` (one worker thread per segment).
 
     Raises:
-        ValueError: When ``batch_size`` is outside 1..10 000 or
+        InvalidValue: When ``batch_size`` is outside 1..10 000 or
             ``total_segments`` is set outside 2..64.
     """
 
@@ -292,16 +336,11 @@ class DynamoDbSourceSpec:
 
     def __post_init__(self) -> None:
         if not 1 <= self.batch_size <= 10_000:
-            raise ValueError(
-                f"DynamoDbSourceSpec.batch_size must be between 1 and 10000, got {self.batch_size}"
-            )
+            raise InvalidValue("DynamoDBSourceSpec.batch_size must be between 1 and 10000")
         if self.total_segments is not None and not 2 <= self.total_segments <= 64:
-            raise ValueError(
-                f"DynamoDbSourceSpec.total_segments must be between 2 and 64, "
-                f"got {self.total_segments}"
-            )
+            raise InvalidValue("DynamoDBSourceSpec.total_segments must be between 2 and 64")
         if self.limit is not None and self.limit < 1:
-            raise ValueError(f"DynamoDbSourceSpec.limit must be >= 1, got {self.limit}")
+            raise InvalidValue("DynamoDBSourceSpec.limit must be >= 1")
 
     @property
     def kind(self) -> SourceKind:
@@ -315,5 +354,5 @@ SourceSpec = (
     | TempSourceSpec
     | MongoSourceSpec
     | ClickHouseSourceSpec
-    | DynamoDbSourceSpec
+    | DynamoDBSourceSpec
 )

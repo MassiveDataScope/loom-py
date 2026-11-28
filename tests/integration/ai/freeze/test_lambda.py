@@ -16,23 +16,19 @@ is loom's, unmodified.
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import json
-import os
-import sys
-import threading
 import time
-import urllib.request
 from collections import Counter
 from collections.abc import AsyncIterator, Callable, Generator, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import ModuleType
 from typing import Any, Literal
 
 import pytest
+
+from tests.helpers.aws_island import FakeAwsIsland
 
 # fastmcp lives in the optional 'mcp-tests' group; skip before anything that imports it
 # (the pool module, the server module), so a lane without the group collects no error.
@@ -58,23 +54,30 @@ from pydantic_ai.models.function import (  # noqa: E402
 )
 
 from loom.ai import registry, remote_auth  # noqa: E402
-from loom.ai.abc import AgentHandle, McpHandle  # noqa: E402
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, _mcp  # noqa: E402
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, _mcp  # noqa: E402
 from loom.ai.engines.pydantic_ai import _transport as _transport  # noqa: E402
 from loom.ai.engines.pydantic_ai._transport import EvictableTransport  # noqa: E402
-from loom.ai.errors import AgentRunError, AgentRunErrorCode  # noqa: E402
+from loom.ai.errors import AgentRunErrorCode  # noqa: E402
 from loom.composition import create_app  # noqa: E402
-from loom.core.command import Command  # noqa: E402
 from loom.core.identity import Identity  # noqa: E402
 from loom.core.identity.wire import encode_identity  # noqa: E402
+from loom.core.job.envelope import JobEnvelope  # noqa: E402
 from loom.core.job.job import Job  # noqa: E402
 from loom.core.plugins import entrypoints as entrypoints_module  # noqa: E402
-from loom.core.use_case import Agent, Input, Mcp, UseCase  # noqa: E402
-from loom.rest.model import RestInterface, RestRoute  # noqa: E402
-from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler  # noqa: E402
-from loom.testing import LambdaEvent, LambdaTestClient  # noqa: E402
+from loom.serverless.aws.lambda_ import LambdaHandler, LambdaRuntime  # noqa: E402
+from loom.testing import LambdaEvent, LambdaTestClient, make  # noqa: E402
+from tests.helpers.lambda_jobs import jobs_queue, jobs_trigger
 from tests.integration.ai._entrypoints import fake_entry_points  # noqa: E402
 from tests.integration.ai.freeze.server import Era, LiveMcpServer, serving  # noqa: E402
+from tests.integration.ai.freeze.t06_app.clerk_jobs import AskClerkJob  # noqa: E402
+from tests.integration.ai.freeze.t06_app.shared import (  # noqa: E402
+    AGENT,
+    GAP_TAKEN,
+    RAISED,
+    SERVER,
+    TOOLS,
+)
+from tests.integration.ai.freeze.t06_app.tool_jobs import CallToolJob, CallTwiceJob  # noqa: E402
 
 # Not marked 'integration': that marker means a real external service, and this needs
 # only loopback sockets, so it runs in the fast lane, which installs 'mcp-tests'.
@@ -87,10 +90,13 @@ pytestmark = [
 Trigger = Literal["http", "jobs"]
 Path_ = Literal["marker", "agent"]
 
-_SERVER = "orders"
-_AGENT = "clerk"
-_TOOLS = ("echo", "book", "slow")
-_MANIFEST = "loom_t06_lambda_manifest"
+_APP = "tests.integration.ai.freeze.t06_app"
+_PACKAGES: dict[tuple[Trigger, bool], list[str]] = {
+    ("http", False): [f"{_APP}.tools"],
+    ("http", True): [f"{_APP}.tools", f"{_APP}.clerk"],
+    ("jobs", False): [f"{_APP}.tool_jobs"],
+    ("jobs", True): [f"{_APP}.tool_jobs", f"{_APP}.clerk_jobs"],
+}
 _TOKEN_KIND = "t06-fetched-token"
 _HANDSHAKE = ("server/discover", "initialize", "notifications/initialized", "tools/list")
 _SECRET = "t06-lambda-suite-secret-of-at-least-32-bytes"
@@ -105,11 +111,6 @@ _BEARER = {
 }
 _CALLER = encode_identity(Identity(subject="tester"))
 _SETTLE_S = 5.0
-_GAP_TAKEN = threading.Event()
-"""Set by a test once it moved the wall clock while a ``slow`` call is in flight."""
-_RAISED: list[AgentRunErrorCode] = []
-"""The code of every ``AgentRunError`` a use case or job saw, noted before it propagated."""
-
 _POST_CONNECTS: dict[str, Callable[[int], int]] = {
     "modern": lambda posts: 0,
     "legacy": lambda posts: posts,
@@ -131,104 +132,6 @@ _PATHS = pytest.mark.parametrize("path", ["marker", "agent"])
 # ---------------------------------------------------------------------------
 # The application: each marker, from a use case (http) and from a job (SQS)
 # ---------------------------------------------------------------------------
-
-
-class Say(Command, frozen=True):
-    """Which tool to call, and with what."""
-
-    tool: str = "echo"
-    text: str = "marker"
-
-
-def _noted(error: AgentRunError) -> AgentRunError:
-    _RAISED.append(error.code)
-    return error
-
-
-class CallTool(UseCase[object, dict[str, Any]]):
-    """Calls one tool through an ``Mcp()`` marker: no agent, no model."""
-
-    async def execute(
-        self, cmd: Say = Input(), orders: McpHandle = Mcp(_SERVER, include=_TOOLS)
-    ) -> dict[str, Any]:
-        try:
-            return dict(await orders.call_untyped(cmd.tool, {"text": cmd.text}))
-        except AgentRunError as error:
-            raise _noted(error) from None
-
-
-class CallTwice(UseCase[object, int]):
-    """Calls ``echo`` twice at once through an ``Mcp()`` marker."""
-
-    async def execute(self, orders: McpHandle = Mcp(_SERVER, include=_TOOLS)) -> int:
-        calls = (orders.call_untyped("echo", {"text": str(n)}) for n in range(2))
-        return len(await asyncio.gather(*calls))
-
-
-class EchoDuringSlow(UseCase[object, int]):
-    """Calls ``echo`` while a ``slow`` call is in flight, once the test moved the clock."""
-
-    async def execute(self, orders: McpHandle = Mcp(_SERVER, include=_TOOLS)) -> int:
-        slow = asyncio.ensure_future(orders.call_untyped("slow", {"text": "slow"}))
-        while not _GAP_TAKEN.is_set():
-            await asyncio.sleep(0.01)
-        await orders.call_untyped("echo", {"text": "during"})
-        await slow
-        return 2
-
-
-class AskClerk(UseCase[object, str]):
-    """Runs the agent, whose model calls the tool the prompt names."""
-
-    async def execute(self, cmd: Say = Input(), clerk: AgentHandle = Agent(_AGENT)) -> str:
-        try:
-            await clerk.run(cmd.tool)
-        except AgentRunError as error:
-            raise _noted(error) from None
-        return cmd.tool
-
-
-class ToolsInterface(RestInterface[object]):
-    prefix = "/mcp"
-    routes = (
-        RestRoute(use_case=CallTool, method="POST", path="/call"),
-        RestRoute(use_case=CallTwice, method="POST", path="/twice"),
-        RestRoute(use_case=EchoDuringSlow, method="POST", path="/inflight"),
-    )
-
-
-class ClerkInterface(RestInterface[object]):
-    prefix = "/mcp"
-    routes = (RestRoute(use_case=AskClerk, method="POST", path="/ask"),)
-
-
-class CallToolJob(Job[None]):
-    """The ``Mcp()`` marker, from a job of an SQS batch."""
-
-    async def execute(
-        self, tool: str, text: str, orders: McpHandle = Mcp(_SERVER, include=_TOOLS)
-    ) -> None:
-        try:
-            await orders.call_untyped(tool, {"text": text})
-        except AgentRunError as error:
-            raise _noted(error) from None
-
-
-class CallTwiceJob(Job[None]):
-    """Two ``echo`` calls at once, from a job of an SQS batch."""
-
-    async def execute(self, orders: McpHandle = Mcp(_SERVER, include=_TOOLS)) -> None:
-        await asyncio.gather(*(orders.call_untyped("echo", {"text": str(n)}) for n in range(2)))
-
-
-class AskClerkJob(Job[None]):
-    """The agent, from a job of an SQS batch."""
-
-    async def execute(self, tool: str, clerk: AgentHandle = Agent(_AGENT)) -> None:
-        try:
-            await clerk.run(tool)
-        except AgentRunError as error:
-            raise _noted(error) from None
 
 
 # ---------------------------------------------------------------------------
@@ -391,14 +294,37 @@ class _World:
         The client sends a GET while the function's loop runs, in Init or an
         invocation; this only waits for the server's thread to log it.
         """
+        self._wait(lambda: self.streams() >= streams, f"{streams} GET streams")
+
+    def settle_stream(self, session: str | None) -> None:
+        """Wait until the server logged a GET event stream of *session*."""
+        self._wait(lambda: self.streams_of(session) > 0, f"a GET stream of session {session}")
+
+    def _wait(self, logged: Callable[[], bool], what: str) -> None:
         deadline = time.monotonic() + _SETTLE_S
-        while self.streams() < streams:
-            assert time.monotonic() < deadline, f"the server logged {self.streams()} GET streams"
+        while not logged():
+            assert time.monotonic() < deadline, f"the server never logged {what}"
             time.sleep(0.01)
 
     def streams(self) -> int:
         """GET event streams the client opened in all."""
         return sum(request.verb == "GET" for request in self.server.log)
+
+    def streams_of(self, session: str | None) -> int:
+        """GET event streams of *session* the client opened since the mark."""
+        return sum(
+            request.verb == "GET" and request.session == session
+            for request in self.server.log[self.since.log :]
+        )
+
+    def sessions(self, method: str) -> list[str | None]:
+        """The session each request of *method* since the mark carried, in order."""
+        since = self.server.log[self.since.log :]
+        return [request.session for request in since if request.method == method]
+
+    def silent_connects(self) -> int:
+        """TCP connects since the mark that carried no request."""
+        return self.server.silent_connects(self.since.connects)
 
     @property
     def since(self) -> _Mark:
@@ -441,36 +367,35 @@ class _World:
             body = {key: value for key, value in params.items() if key in ("tool", "text")}
             client = LambdaTestClient(self.handler)  # type: ignore[arg-type]
             return client.post(f"/mcp/{route}", json=body, headers=_BEARER).status_code == 200
-        envelope = {"job": job.__qualname__, "params": params, "payload": {}, "identity": _CALLER}
-        event = LambdaEvent.sqs_record(json.dumps(envelope), message_id=str(next(self._ids)))
+        envelope = make(
+            JobEnvelope, job=job.__qualname__, params=params, identity=_CALLER, task_id=None
+        )
+        event = LambdaEvent.sqs_record(
+            msgspec.json.encode(envelope).decode(), message_id=str(next(self._ids))
+        )
         return self.handler(event, None) == {"batchItemFailures": []}
 
 
 def _write_project(tmp_path: Path, url: str, trigger: Trigger, *, agents: bool) -> str:
     """Write the function's configuration and its agent; return the configuration's path."""
-    manifest = ModuleType(_MANIFEST)
-    if trigger == "http":
-        manifest.USE_CASES = [CallTool, CallTwice, EchoDuringSlow, *([AskClerk] if agents else [])]  # type: ignore[attr-defined]
-        manifest.INTERFACES = [ToolsInterface, *([ClerkInterface] if agents else [])]  # type: ignore[attr-defined]
-    else:
-        manifest.JOBS = [CallToolJob, CallTwiceJob, *([AskClerkJob] if agents else [])]  # type: ignore[attr-defined]
     if agents:
-        manifest.AGENTS = ["agents/*.yaml"]  # type: ignore[attr-defined]
         _write_agent(tmp_path / "agents")
-    sys.modules[_MANIFEST] = manifest
     server = {"url": url, "timeout_ms": 5000, "auth": {"kind": _TOKEN_KIND}}
     config: dict[str, Any] = {
         "app": {
             "name": "t06",
             "code_path": str(tmp_path),
-            "discovery": {"mode": "manifest", "manifest": {"module": _MANIFEST}},
+            "packages": _PACKAGES[(trigger, agents)],
+            "agents": ["agents/*.yaml"] if agents else [],
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
         "ai": {
             "engine": "pydantic-ai",
             "models": {"default": {"provider": "fake", "model": "fake-model"}},
-            "mcp_servers": {_SERVER: server},
+            "mcp_servers": {SERVER: server},
         },
     }
     if trigger == "http":
@@ -479,7 +404,8 @@ def _write_project(tmp_path: Path, url: str, trigger: Trigger, *, agents: bool) 
         jwt_auth = {"secret_path": str(secret), "algorithms": ["HS256"], "audience": _AUDIENCE}
         config["app"]["rest"] = {"auth": {"jwt": jwt_auth}}
     else:
-        config["lambda"] = {"functions": {"worker": {"trigger": {"source": "jobs"}}}}
+        config.update(jobs_queue())
+        config["lambda"] = {"functions": {"worker": {"trigger": jobs_trigger()}}}
     path = tmp_path / "app.yaml"
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
     return str(path)
@@ -489,7 +415,7 @@ def _write_agent(directory: Path) -> None:
     directory.mkdir()
     spec = {
         "spec_version": 1,
-        "name": _AGENT,
+        "name": AGENT,
         "description": "Calls the order server's tools.",
         "instructions": "Call the tool you are asked for.",
         "output": {
@@ -501,27 +427,18 @@ def _write_agent(directory: Path) -> None:
                 "properties": {"answer": {"type": "string"}},
             },
         },
-        "capabilities": [{"kind": "mcp", "server": _SERVER, "include": list(_TOOLS)}],
+        "capabilities": [{"kind": "mcp", "server": SERVER, "include": list(TOOLS)}],
     }
-    (directory / f"{_AGENT}.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
-
-
-@pytest.fixture(autouse=True)
-def _no_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A proxy on the machine would make the toolset keep fastmcp's stock transport."""
-    for key in list(os.environ):
-        if key.lower().endswith("_proxy"):
-            monkeypatch.delenv(key)
-    monkeypatch.setattr(urllib.request, "getproxies", urllib.request.getproxies_environment)
+    (directory / f"{AGENT}.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
 
 
 @pytest.fixture(autouse=True)
 def _isolated(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """One credential, one manifest and one list of raised codes per test."""
+    """One credential and one list of raised codes per test."""
     remote_auth._STRATEGIES._by_endpoint.clear()
     FetchedToken.fetches = 0
-    _RAISED.clear()
-    _GAP_TAKEN.clear()
+    RAISED.clear()
+    GAP_TAKEN.clear()
     monkeypatch.setattr(
         entrypoints_module,
         "entry_points",
@@ -529,7 +446,6 @@ def _isolated(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     )
     yield
     remote_auth._STRATEGIES._by_endpoint.clear()
-    sys.modules.pop(_MANIFEST, None)
 
 
 def _counted(monkeypatch: pytest.MonkeyPatch) -> tuple[list[object], list[EvictableTransport]]:
@@ -555,7 +471,9 @@ World = Callable[..., _World]
 
 
 @pytest.fixture
-def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[World]:
+def world(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, island: FakeAwsIsland
+) -> Iterator[World]:
     """Builds a server of one era and a Lambda function of one trigger over it, at Init.
 
     The pool's wall clock is patched before anything is built, so every pool
@@ -568,13 +486,13 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[World]:
             clock = _WallClock()
             monkeypatch.setattr(_transport, "time", clock)
             model = _Model()
-            provider = PydanticAIEngineProvider(model_resolver=model.model)
-            monkeypatch.setattr(registry, "resolve_engine_provider", lambda name: provider)
+            provider = PydanticAIEnginePlugin(model_resolver=model.model)
+            monkeypatch.setattr(registry, "resolve_engine_plugin", lambda name: provider)
             builds, drops = _counted(monkeypatch)
             config = _write_project(tmp_path, server.url, trigger, agents=agents)
             function = "worker" if trigger == "jobs" else None
-            adapter = LambdaAdapter(function=function)
-            handler = create_app(config, adapter=adapter, environment="test")
+            adapter = LambdaRuntime(function=function)
+            handler = create_app(config, runtime=adapter, environment="test")
             stack.callback(handler.close)
             built = _World(server, handler, model, clock, builds, drops, trigger)
             built.mark()
@@ -671,7 +589,7 @@ class TestAThawWithTheSessionStillValid:
         assert built.runs()["echo"] == 1
         assert built.connects() == 1
         assert FetchedToken.fetches == 1
-        assert _RAISED == []
+        assert RAISED == []
 
     @_TRIGGERS
     def test_two_concurrent_calls_evict_once(self, world: World, trigger: Trigger) -> None:
@@ -686,7 +604,7 @@ class TestAThawWithTheSessionStillValid:
         assert built.rebuilds() == 0
         assert built.methods() == ["tools/call", "tools/call"]
         assert built.runs()["echo"] == 2
-        assert _RAISED == []
+        assert RAISED == []
 
     def test_a_call_in_flight_across_the_gap_is_not_cut(self, world: World) -> None:
         """A call made after the gap while another is in flight drops nothing; both answer."""
@@ -697,20 +615,20 @@ class TestAThawWithTheSessionStillValid:
             try:
                 assert built.server.started.wait(_SETTLE_S)
                 built.freeze(6.0)
-                _GAP_TAKEN.set()
+                GAP_TAKEN.set()
                 deadline = time.monotonic() + _SETTLE_S
                 while built.runs()["echo"] < 1:
                     assert time.monotonic() < deadline, "the call after the gap never ran"
                     time.sleep(0.01)
             finally:
                 # Whatever failed above, let the worker finish so the executor can exit.
-                _GAP_TAKEN.set()
+                GAP_TAKEN.set()
                 built.server.release.set()
             assert served.result(_SETTLE_S)
 
         assert built.evictions() == 0
         assert built.runs() == Counter({"slow": 1, "echo": 1})
-        assert (built.rebuilds(), _RAISED) == (0, [])
+        assert (built.rebuilds(), RAISED) == (0, [])
 
     def test_the_legacy_event_stream_cut_by_the_eviction_reopens_off_the_call_path(
         self, world: World
@@ -753,7 +671,7 @@ class TestAThawWithTheSessionStillValid:
             assert (built.runs()["echo"], built.rebuilds()) == (1, 0)
             return
         assert not served
-        assert _RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
+        assert RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
         assert built.runs()["echo"] == 0
         assert built.call()
         assert built.rebuilds() == 1
@@ -784,7 +702,7 @@ class TestAFreezeWhereTheServerForgotTheSession:
         ]
         assert built.runs()["echo"] == 1
         assert FetchedToken.fetches == 1
-        assert _RAISED == []
+        assert RAISED == []
 
 
 class TestACallCutMidResponse:
@@ -799,7 +717,7 @@ class TestACallCutMidResponse:
 
         assert not built.by(path, "book")
 
-        assert _RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
+        assert RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
         assert built.runs()["book"] == 1
         assert built.methods() == ["tools/call"]
         if path == "agent":
@@ -810,7 +728,7 @@ class TestACallCutMidResponse:
 
         assert built.runs() == {"book": 1, "echo": 1}
         assert built.rebuilds() == 1
-        assert _RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
+        assert RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
 
 
 class TestTwoConcurrentCallsAfterAnExpiry:
@@ -825,4 +743,4 @@ class TestTwoConcurrentCallsAfterAnExpiry:
         assert built.count("initialize") == 1
         assert built.count("tools/call") == 4  # two answered 404, two served
         assert built.runs()["echo"] == 2
-        assert _RAISED == []
+        assert RAISED == []

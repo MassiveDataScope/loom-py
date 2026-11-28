@@ -21,14 +21,14 @@ import yaml
 from loom.ai import registry
 from loom.ai.abc import AgentHandle, McpToolCallResult, McpToolInfo
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
-from loom.composition import Application, CompositionSource, Recipe, compose_application
+from loom.composition import Application, Project, Recipe
 from loom.core.config import ConfigContext
 from loom.core.discovery.base import DiscoveryResult
-from loom.core.persistence.profile import SERVER_PROFILE
+from loom.core.stores.profile import SERVER_PROFILE
 from loom.core.use_case import Agent
 from loom.core.use_case.use_case import UseCase
 from tests.helpers.ai import CountingEngineProvider
-from tests.helpers.composition import composition_source
+from tests.helpers.composition import composition_project
 
 _AGENTS_GLOB = "agents/*.yaml"
 _SERVER_A = "server-a"
@@ -90,14 +90,13 @@ class AcmeAgentEntryPoint:
         self._use_case = use_case
         self._agent_endpoints = agent_endpoints
 
-    def recipe(self, source: CompositionSource) -> Recipe:
-        del source
+    def recipe(self, project: Project) -> Recipe:
+        del project
         return Recipe(
             profile=SERVER_PROFILE,
             discovered=DiscoveryResult(
                 models=(),
                 use_cases=(self._use_case,),
-                interfaces=(),
                 jobs=(),
                 agent_specs=(_AGENTS_GLOB,),
             ),
@@ -105,7 +104,7 @@ class AcmeAgentEntryPoint:
             agent_endpoints=self._agent_endpoints,
         )
 
-    def bind(self, application: Application) -> Application:
+    def mount(self, application: Application) -> Application:
         return application
 
 
@@ -143,12 +142,10 @@ def _compose(
             yaml.safe_dump(_agent(name, capability)), encoding="utf-8"
         )
     document = {"app": {"name": "reachable"}, "ai": _AI}
-    source = composition_source(
+    project = composition_project(
         ConfigContext.from_dict(document), code_path=tmp_path, config_root=tmp_path
     )
-    return compose_application(
-        source, AcmeAgentEntryPoint(use_case, agent_endpoints=agent_endpoints)
-    )
+    return project.compose(AcmeAgentEntryPoint(use_case, agent_endpoints=agent_endpoints))
 
 
 def _init(application: Application) -> None:
@@ -170,7 +167,7 @@ class TestReachableAgents:
     @pytest.fixture
     def provider(self, monkeypatch: pytest.MonkeyPatch) -> _OpeningProvider:
         opening = _OpeningProvider()
-        monkeypatch.setattr(registry, "resolve_engine_provider", lambda _: opening)
+        monkeypatch.setattr(registry, "resolve_engine_plugin", lambda _: opening)
         return opening
 
     def test_without_endpoints_only_marker_named_agents_are_compiled_and_opened(

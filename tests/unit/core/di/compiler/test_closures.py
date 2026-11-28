@@ -12,8 +12,8 @@ from loom.core.di.scope import Scope
 from loom.core.execution import ExecutionScope, Kind
 from loom.core.identity import ANONYMOUS, Identity
 from loom.core.model import BaseModel, ColumnField
-from loom.core.repository.abc import RepoFor
-from loom.core.repository.registration import classify_key
+from loom.core.stores.repository import RepoFor
+from loom.core.stores.repository.registration import classify_key
 from tests.unit.core.di.graph import acme
 from tests.unit.core.di.graph.acme import AcmeCaller, AcmeInput
 
@@ -81,7 +81,7 @@ class TestClosureAutowiring:
 
     def test_an_execution_kind_is_resolved_through_its_resolver_per_build(self) -> None:
         container = acme.container()
-        container.kinds.bind(acme.CALLER, AcmeCallerResolver())
+        container.kinds.register(acme.CALLER, AcmeCallerResolver())
         container.register(AcmeCallerAware, AcmeCallerAware)
 
         with ExecutionScope(ANONYMOUS):
@@ -104,7 +104,7 @@ class TestClosureAutowiring:
         with pytest.raises(ResolutionError):
             container.resolve(AcmeCallerAware)
 
-        container.kinds.bind(acme.CALLER, AcmeCallerResolver())
+        container.kinds.register(acme.CALLER, AcmeCallerResolver())
 
         assert container.resolve(AcmeCallerAware).caller is ANONYMOUS
 

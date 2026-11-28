@@ -11,6 +11,7 @@ from collections.abc import Collection, Mapping
 from types import MappingProxyType
 from typing import Any, ClassVar
 
+from loom.core.errors import InvalidValue
 from loom.core.model import LoomFrozenStruct
 from loom.core.model.redaction import Dsn, mask_dsn
 from loom.core.model.types import PositiveInt
@@ -70,10 +71,10 @@ def require_text(value: str | Dsn, field: str) -> None:
     when it holds no secret.
 
     Raises:
-        ValueError: When *value* holds no text, naming *field*.
+        InvalidValue: When *value* holds no text, naming *field*.
     """
     if not str(value).strip():
-        raise ValueError(f"{field} must not be empty")
+        raise InvalidValue(f"{field} must not be empty")
 
 
 def omit_none(options: Mapping[str, Any]) -> dict[str, Any]:
@@ -110,14 +111,14 @@ def merge_extra(
         *built* updated with *extra*.
 
     Raises:
-        ValueError: When *extra* names a field of *connection*, an option of
+        InvalidValue: When *extra* names a field of *connection*, an option of
             *built* or a reserved option, naming each.
     """
     fold = str.lower if case_insensitive else str
     taken = {fold(name) for name in (*connection.__struct_fields__, *built, *reserved)}
     clashes = sorted(name for name in extra if fold(name) in taken)
     if clashes:
-        raise ValueError(
+        raise InvalidValue(
             f"{type(connection).__name__} already decides {', '.join(clashes)}; "
             "set it on the connection instead"
         )

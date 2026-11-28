@@ -13,7 +13,6 @@ from sqlalchemy.dialects.sqlite.base import SQLiteDialect
 from sqlalchemy.engine import Dialect
 from sqlalchemy.schema import CreateTable
 
-from loom.core.backend.sqlalchemy import compile_all
 from loom.core.model import (
     BaseModel,
     ColumnField,
@@ -23,6 +22,8 @@ from loom.core.model import (
     String,
     get_column_fields,
 )
+from loom.core.model.types import SmallInteger, TinyInteger
+from loom.stores.sqlalchemy.schema import compile_all
 
 
 class Reading(BaseModel):
@@ -34,6 +35,8 @@ class Reading(BaseModel):
     annotated_optional: Annotated[int | None, Field()] = None
     declared_not_null: int | None = ColumnField(nullable=False, default=None)
     declared_null: int = ColumnField(Integer, nullable=True)
+    tiny: Annotated[int, TinyInteger]
+    small: Annotated[int, SmallInteger]
 
 
 class _Tone(Enum):
@@ -81,33 +84,41 @@ def _ddl(dialect: Dialect) -> str:
     return str(CreateTable(metadata.tables["nullable_readings"]).compile(dialect=dialect))
 
 
+_BIG_INTEGER_DDL = [(PGDialect(), "BIGINT"), (SQLiteDialect(), "INTEGER")]
+
+
 class TestOptionalNullColumns:
-    @pytest.mark.parametrize("dialect", [PGDialect(), SQLiteDialect()])
-    def test_an_optional_field_gives_a_null_column(self, dialect: Dialect) -> None:
+    @pytest.mark.parametrize(("dialect", "big"), _BIG_INTEGER_DDL)
+    def test_an_optional_field_gives_a_null_column(self, dialect: Dialect, big: str) -> None:
         ddl = _ddl(dialect)
 
-        assert "\toptional INTEGER," in ddl
-        assert "\tannotated_optional INTEGER," in ddl
+        assert f"\toptional {big}," in ddl
+        assert f"\tannotated_optional {big}," in ddl
 
-    @pytest.mark.parametrize("dialect", [PGDialect(), SQLiteDialect()])
+    @pytest.mark.parametrize(("dialect", "big"), _BIG_INTEGER_DDL)
     def test_a_field_that_does_not_admit_none_gives_a_not_null_column(
-        self, dialect: Dialect
+        self, dialect: Dialect, big: str
     ) -> None:
-        assert "\trequired INTEGER NOT NULL" in _ddl(dialect)
+        assert f"\trequired {big} NOT NULL" in _ddl(dialect)
 
-    @pytest.mark.parametrize("dialect", [PGDialect(), SQLiteDialect()])
-    def test_a_declared_nullable_wins_over_the_annotation(self, dialect: Dialect) -> None:
+    @pytest.mark.parametrize(("dialect", "big"), _BIG_INTEGER_DDL)
+    def test_a_declared_nullable_wins_over_the_annotation(self, dialect: Dialect, big: str) -> None:
         ddl = _ddl(dialect)
 
-        assert "\tdeclared_not_null INTEGER NOT NULL" in ddl
+        assert f"\tdeclared_not_null {big} NOT NULL" in ddl
         assert "\tdeclared_null INTEGER," in ddl
+
+    @pytest.mark.parametrize("dialect", [PGDialect(), SQLiteDialect()])
+    @pytest.mark.parametrize("column", ["tiny", "small"])
+    def test_the_small_integers_are_a_smallint(self, dialect: Dialect, column: str) -> None:
+        assert f"\t{column} SMALLINT NOT NULL" in _ddl(dialect)
 
     def test_an_optional_primary_key_stays_not_null(self) -> None:
         metadata = MetaData()
         compile_all(Reading, metadata=metadata)
 
         assert metadata.tables["nullable_readings"].c.id.nullable is False
-        assert "\tid SERIAL NOT NULL" in _ddl(PGDialect())
+        assert "\tid BIGSERIAL NOT NULL" in _ddl(PGDialect())
 
     def test_the_resolved_field_carries_the_nullability(self) -> None:
         fields = get_column_fields(Reading)
@@ -119,4 +130,6 @@ class TestOptionalNullColumns:
             "annotated_optional": True,
             "declared_not_null": False,
             "declared_null": True,
+            "tiny": False,
+            "small": False,
         }

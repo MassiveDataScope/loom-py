@@ -1,13 +1,13 @@
 """``create_app``: the HTTP entry point composed from YAML configuration.
 
 A shortcut over :func:`loom.composition.create_app` with
-:class:`~loom.rest.fastapi.adapter.FastAPIAdapter`; the composition owns the
-resources, the adapter mounts the routes.
+:class:`~loom.rest.fastapi.runtime.FastAPIRuntime`; the composition owns the
+resources, the runtime mounts the routes.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 from fastapi import FastAPI
@@ -15,7 +15,6 @@ from prometheus_client import CollectorRegistry
 
 from loom.composition import create_app as compose
 from loom.core.config import ConfigResolver
-from loom.core.di.container import LoomContainer
 from loom.core.environment import Environment
 from loom.core.introspection import (
     INTROSPECTION_STATE_ATTR,
@@ -24,7 +23,7 @@ from loom.core.introspection import (
     describe_app,
 )
 from loom.rest.auth import Authenticator
-from loom.rest.fastapi.adapter import FastAPIAdapter
+from loom.rest.fastapi.runtime import FastAPIRuntime
 
 
 def create_app(
@@ -35,7 +34,6 @@ def create_app(
     metrics_registry: CollectorRegistry | None = None,
     authenticator: Authenticator | None = None,
     resolvers: Sequence[ConfigResolver] = (),
-    modules: Sequence[Callable[[LoomContainer], None]] = (),
 ) -> FastAPI:
     """Create a FastAPI application from a config directory or explicit YAML files.
 
@@ -46,7 +44,8 @@ def create_app(
 
     Configuration comes from exactly one of two forms. *config_dir* loads its
     ``base.yaml``, then ``<environment>.yaml`` when present. Explicit
-    *config_paths* are merged left-to-right as given. Either way later files
+    *config_paths* are merged left-to-right as given. With neither, the
+    directory is ``LOOM_CONFIG_DIR``, else ``./config``. Either way later files
     override earlier ones, each file's ``includes`` merge before its own
     values, and the ``LOOM__SECTION__KEY`` variables merge last (see
     :mod:`loom.core.config.overrides`).
@@ -88,7 +87,8 @@ def create_app(
         *config_paths: Paths to YAML configuration files, merged left to
             right. Mutually exclusive with *config_dir*.
         config_dir: Local directory holding ``base.yaml`` and the
-            per-environment overlays. Mutually exclusive with *config_paths*.
+            per-environment overlays. Mutually exclusive with *config_paths*;
+            with neither, ``LOOM_CONFIG_DIR`` or ``./config``.
         environment: Environment of the application; overrides ``LOOM_ENV``.
         code_path: Optional override for ``app.code_path``.  Resolved relative
             to the first config file when not absolute.
@@ -103,20 +103,6 @@ def create_app(
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
             before the built-in ``secrets`` and ``ssm`` defaults.  A resolver
             named like a default replaces it.
-        modules: Optional DI registration modules, each called with the
-            container in order before repositories are registered and before
-            use cases are verified.  Use them to bind ports no repository
-            provides (a clock, an identity verifier, a bridge to another
-            bounded context).  Same semantics as the Celery ``create_app``.
-            The framework registers its own bindings after these modules.
-            ``JobService`` and repositories (``repository_for``,
-            ``DefaultRepositoryBuilder``) are overridable: a module's binding
-            is kept.  ``SessionManager``, ``SqlQueryService``,
-            ``CallerBoundSql``, ``ObservabilityRuntime``, ``ElevationSink``,
-            ``RuntimeExecutor``, ``UseCaseRegistry``, ``StoreCatalog`` and
-            ``ApplicationInvoker`` are reserved: a module binding one fails
-            start-up with
-            :class:`~loom.composition.errors.ReservedBindingError`.
 
     Returns:
         Configured :class:`fastapi.FastAPI` application, ready to serve.
@@ -127,7 +113,7 @@ def create_app(
             and ``app.rest.auth.custom: true`` do not come together.
         DeployCheckError: When a deploy check of level error fails in
             production or staging.
-        ReservedBindingError: When a module binds a framework-owned key.
+        ReservedBindingError: When an installer binds a framework-owned key.
 
     Example — config directory, overlay chosen by ``LOOM_ENV``::
 
@@ -144,10 +130,11 @@ def create_app(
 
     Example — bind a port a use case injects::
 
-        def clock_module(container: LoomContainer) -> None:
-            container.register(Clock, SystemClock, scope=Scope.APPLICATION)
+        class ClockInstaller(Installer):
+            def install(self, container: LoomContainer) -> None:
+                container.register(Clock, SystemClock, scope=Scope.APPLICATION)
 
-        app = create_app("config/app.yaml", modules=[clock_module])
+    The installer lives in a package listed in ``app.packages``; the scan finds it.
 
     Example — explicit layers, the environment named in code::
 
@@ -165,12 +152,11 @@ def create_app(
     """
     return compose(
         *config_paths,
-        adapter=FastAPIAdapter(metrics_registry=metrics_registry, authenticator=authenticator),
+        runtime=FastAPIRuntime(metrics_registry=metrics_registry, authenticator=authenticator),
         config_dir=config_dir,
         environment=environment,
         code_path=code_path,
         resolvers=resolvers,
-        modules=modules,
     )
 
 

@@ -15,6 +15,7 @@ from loom.ai.errors import AgentCompilationError, AgentErrorCode
 from loom.ai.inference import InferenceTarget
 from loom.ai.registry import engine_native_tool_support
 from loom.core.di import LoomContainer
+from tests.helpers.loggers import CapturedLog
 
 
 class _Plan:
@@ -115,9 +116,9 @@ class TestBuildingNativeCapabilities:
 class TestTheNativeToolOracle:
     def test_the_provider_exposes_the_oracle_the_registry_reads(self) -> None:
         """The bootstrap finds the oracle through the documented handshake."""
-        from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+        from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 
-        support = engine_native_tool_support(PydanticAIEngineProvider())
+        support = engine_native_tool_support(PydanticAIEnginePlugin())
 
         assert support is not None
         assert "web_search" in support(InferenceTarget(provider="anthropic", model="a-model"))
@@ -147,23 +148,23 @@ class TestTheNativeToolOracle:
             kinds = engine_supported_kinds(_Engine(), "third-party")
 
         assert kinds == frozenset({"sql"})
-        assert "third-party" in caplog.text
+        assert "third-party" in CapturedLog(caplog).rendered_text
 
     def test_the_registry_keeps_native_when_the_engine_provides_it(self) -> None:
         """The real engine keeps the kind, because it supplies the oracle."""
-        from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+        from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
         from loom.ai.registry import engine_supported_kinds
 
-        assert "native" in engine_supported_kinds(PydanticAIEngineProvider(), "pydantic-ai")
+        assert "native" in engine_supported_kinds(PydanticAIEnginePlugin(), "pydantic-ai")
 
 
 class TestAnnouncedCapabilityKinds:
     def test_the_announced_kinds_are_exactly_those_of_the_table(self) -> None:
         """The adapter cannot announce a kind it has no builder for, or hide one it has."""
-        from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+        from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
         from loom.ai.engines.pydantic_ai._capabilities import _KINDS
 
-        announced = PydanticAIEngineProvider().supported_capability_kinds()
+        announced = PydanticAIEnginePlugin().supported_capability_kinds()
 
         assert announced == frozenset(compiled.kind for compiled in _KINDS)
 

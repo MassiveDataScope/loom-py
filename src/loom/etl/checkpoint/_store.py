@@ -12,13 +12,13 @@ parameter:
 * **Polars** :class:`polars.LazyFrame` — Arrow IPC written via ``sink_ipc()``
   (streaming, no in-memory collect) and read back via ``scan_ipc()`` (lazy,
   memory-mapped, predicate pushdown).
-  Backend: :class:`~loom.etl.checkpoint._backends._polars._PolarsCheckpointBackend`.
+  Backend: :class:`~loom.etl.checkpoint._io._polars._PolarsCheckpointIO`.
 
 * **Spark** ``pyspark.sql.DataFrame`` — Parquet directory written via
   ``df.write.parquet()`` and read via ``spark.read.parquet()``.  Cuts the
   lineage DAG; Photon-optimised.  Avoids competing with the shuffle memory
   pool that ``df.cache()`` would enter.
-  Backend: :class:`~loom.etl.checkpoint._backends._spark._SparkCheckpointBackend`.
+  Backend: :class:`~loom.etl.checkpoint._io._spark._SparkCheckpointIO`.
 
 Path structure
 --------------
@@ -44,24 +44,22 @@ Cleanup
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Protocol, runtime_checkable
 
-from loom.etl.checkpoint._backends._polars import _PolarsCheckpointBackend
+from loom.core.errors import InvalidValue
 from loom.etl.checkpoint._cleaners import FsspecTempCleaner, TempCleaner
+from loom.etl.checkpoint._io._polars import _PolarsCheckpointIO
 from loom.etl.checkpoint._paths import correlation_scope_base, run_scope_base, scope_base
 from loom.etl.checkpoint._scope import CheckpointScope
 
-_log = logging.getLogger(__name__)
-
 
 @runtime_checkable
-class _CheckpointBackend(Protocol):
+class _CheckpointIO(Protocol):
     """Physical I/O contract for one DataFrame backend.
 
-    Both :class:`~loom.etl.checkpoint._backends._polars._PolarsCheckpointBackend` and
-    :class:`~loom.etl.checkpoint._backends._spark._SparkCheckpointBackend` satisfy this
-    protocol.  ``CheckpointStore`` holds a single ``_CheckpointBackend`` chosen
+    Both :class:`~loom.etl.checkpoint._io._polars._PolarsCheckpointIO` and
+    :class:`~loom.etl.checkpoint._io._spark._SparkCheckpointIO` satisfy this
+    protocol.  ``CheckpointStore`` holds a single ``_CheckpointIO`` chosen
     at construction time, keeping ``put`` / ``get`` free of backend branches.
     """
 
@@ -95,7 +93,7 @@ class CheckpointStore:
 
         store = CheckpointStore(
             root="s3://my-bucket/loom-checkpoints",
-            backend=_PolarsCheckpointBackend(
+            backend=_PolarsCheckpointIO(
                 storage_options={
                     "aws_server_side_encryption": "aws:kms",
                     "aws_sse_kms_key_id": "alias/loom-temp",
@@ -110,12 +108,12 @@ class CheckpointStore:
     def __init__(
         self,
         root: str,
-        backend: _CheckpointBackend | None = None,
+        backend: _CheckpointIO | None = None,
         cleaner: TempCleaner | None = None,
     ) -> None:
         self._root = root.rstrip("/")
         self._cleaner = cleaner if cleaner is not None else FsspecTempCleaner()
-        self._backend = backend if backend is not None else _PolarsCheckpointBackend({})
+        self._backend = backend if backend is not None else _PolarsCheckpointIO({})
 
     def put(
         self,
@@ -142,16 +140,15 @@ class CheckpointStore:
                             any prior content for this name is overwritten.
 
         Raises:
-            ValueError: When *scope* is ``CORRELATION`` and *correlation_id*
+            InvalidValue: When *scope* is ``CORRELATION`` and *correlation_id*
                         is ``None``.
-            TypeError:  When *data* type does not match the configured backend.
+            InvalidType: When *data* type does not match the configured backend.
         """
         if scope is CheckpointScope.CORRELATION and not correlation_id:
-            raise ValueError(
+            raise InvalidValue(
                 f"IntoTemp({name!r}, scope=CORRELATION) requires a correlation_id. "
                 "Pass correlation_id= to ETLRunner.run()."
             )
-        _log.debug("checkpoint put name=%r scope=%s append=%s", name, scope, append)
         base = scope_base(
             self._root,
             run_id=run_id,
@@ -187,13 +184,11 @@ class CheckpointStore:
         run_base = run_scope_base(self._root, run_id)
         result = self._backend.probe(name, run_base)
         if result is not None:
-            _log.debug("checkpoint get name=%r scope=run", name)
             return result
         if correlation_id is not None:
             corr_base = correlation_scope_base(self._root, correlation_id)
             result = self._backend.probe(name, corr_base)
             if result is not None:
-                _log.debug("checkpoint get name=%r scope=correlation", name)
                 return result
         raise FileNotFoundError(
             f"Intermediate {name!r} not found. "
@@ -209,7 +204,6 @@ class CheckpointStore:
             run_id: UUID of the pipeline run to clean.
         """
         path = run_scope_base(self._root, run_id)
-        _log.debug("checkpoint cleanup run path=%s", path)
         self._cleaner.delete_tree(path)
 
     def cleanup_correlation(self, correlation_id: str) -> None:
@@ -222,5 +216,4 @@ class CheckpointStore:
             correlation_id: Logical job ID whose intermediates to purge.
         """
         path = correlation_scope_base(self._root, correlation_id)
-        _log.debug("checkpoint cleanup correlation path=%s", path)
         self._cleaner.delete_tree(path)

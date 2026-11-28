@@ -2,7 +2,7 @@
 
 The decorator declares (``@cached``), the composition root binds: the module
 built here registers the gateways and the
-:class:`~loom.core.repository.registration.RepositoryDecorator` that wraps a
+:class:`~loom.core.stores.repository.registration.RepositoryDecorator` that wraps a
 marked repository in :class:`~loom.core.cache.repository.CachedRepository`
 when the registration module builds it.  The same module binds the
 :class:`~loom.core.cache.calls.CachedCalls` that turns a ``@cache_call``
@@ -12,6 +12,7 @@ section both only announce, at boot, what runs uncached.
 
 from __future__ import annotations
 
+import logging
 import random
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -27,12 +28,13 @@ from loom.core.cache.calls import (
 )
 from loom.core.cache.decorators import declares_cache_policy
 from loom.core.cache.dependency import GenerationalDependencyResolver
+from loom.core.cache.event import CacheEvent, CacheKey
 from loom.core.cache.gateway import CacheGateway
 from loom.core.cache.repository import CachedRepository
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config import ConfigContext, ConfigSection
 from loom.core.di.container import LoomContainer
-from loom.core.logger import get_logger
-from loom.core.repository.registration import RepositoryDecorator
+from loom.core.di.errors import describe_key
+from loom.core.stores.repository.registration import RepositoryDecorator
 
 
 @dataclass(frozen=True)
@@ -70,25 +72,27 @@ class _CacheSlot:
 
     Attributes:
         key: The key claimed.
-        kept: The event logged when a binding is already there.
-        log_field: The log field naming the kept binding's type.
     """
 
     key: object
-    kept: str
-    log_field: str
 
     def claim(self, container: LoomContainer, instance: object) -> None:
-        """Bind *instance* under :attr:`key`, or log :attr:`kept` naming the binding kept."""
+        """Bind *instance* under :attr:`key`, or log the binding kept there."""
         existing = container.resolve_or_none(self.key)
         if existing is not None:
-            get_logger(__name__).warning(self.kept, **{self.log_field: type(existing).__qualname__})
+            logging.getLogger(__name__).warning(
+                CacheEvent.BINDING_KEPT,
+                extra={
+                    CacheKey.SLOT: describe_key(self.key),
+                    CacheKey.KEPT_BINDING: type(existing).__qualname__,
+                },
+            )
             return
         container.register_instance(self.key, instance)
 
 
-_CALLS_SLOT = _CacheSlot(CachedCalls, "CacheCallsAlreadyRegistered", "calls")
-_DECORATOR_SLOT = _CacheSlot(RepositoryDecorator, "CacheDecoratorAlreadyRegistered", "decorator")
+_CALLS_SLOT = _CacheSlot(CachedCalls)
+_DECORATOR_SLOT = _CacheSlot(RepositoryDecorator)
 
 
 def cache_module(config: CacheConfig) -> Callable[[LoomContainer], None]:
@@ -97,13 +101,12 @@ def cache_module(config: CacheConfig) -> Callable[[LoomContainer], None]:
     The returned module applies *config* to aiocache before it builds any
     gateway, opens the data and counter gateways, and registers them, the
     resolver, the :class:`~loom.core.cache.calls.CachedCalls` binder that
-    caches ``@cache_call`` coroutines, and — unless one is already registered,
-    in which case it logs ``CacheDecoratorAlreadyRegistered`` and leaves the
-    slot alone — a
-    :class:`~loom.core.repository.registration.RepositoryDecorator` that wraps
-    every ``@cached`` repository the registration module builds.  All of it
-    happens when the module runs against a container, so a boot that fails
-    earlier has not touched the global aiocache registry.
+    caches ``@cache_call`` coroutines, and a
+    :class:`~loom.core.stores.repository.registration.RepositoryDecorator` that
+    wraps every ``@cached`` repository the registration module builds. A binder
+    or decorator a deployment registered first is kept, and ``loom.cache.binding_kept``
+    names it. All of it happens when the module runs against a container, so a
+    boot that fails earlier has not touched the global aiocache registry.
 
     Args:
         config: The decoded ``cache:`` section.
@@ -151,7 +154,10 @@ def _announce_uncached(repository: Any) -> Any:
     decorator a single time per model per container.
     """
     if declares_cache_policy(type(repository)):
-        get_logger(__name__).warning("CacheNotConfigured", repository=type(repository).__qualname__)
+        logging.getLogger(__name__).warning(
+            CacheEvent.REPOSITORY_NOT_CONFIGURED,
+            extra={CacheKey.REPOSITORY: type(repository).__qualname__},
+        )
     return repository
 
 
@@ -170,9 +176,9 @@ def cache_module_for(ctx: ConfigContext) -> Callable[[LoomContainer], None]:
     Returns:
         :func:`cache_module` over the section when it is present and enabled;
         otherwise a module whose decorator leaves every repository bare and
-        logs ``CacheNotConfigured`` for each marked class.
+        logs ``loom.cache.repository_not_configured`` for each marked class.
     """
-    config = ctx.section_optional(ConfigKey.CACHE, CacheConfig)
+    config = ctx.section_optional(ConfigSection.CACHE, CacheConfig)
     if config is not None and config.enabled:
         return cache_module(config)
     return _announcing_module

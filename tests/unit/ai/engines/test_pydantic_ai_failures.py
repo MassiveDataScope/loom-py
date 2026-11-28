@@ -18,13 +18,15 @@ from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, 
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from loom.ai.abc import AgentEngine, ErrorEvent
-from loom.ai.engines.pydantic_ai._engine import MAX_LOGGED_CAUSE_CHARS, PydanticAIEngine
+from loom.ai.engines.pydantic_ai._engine import PydanticAIEngine
 from loom.ai.engines.pydantic_ai._errors import classify
 from loom.ai.engines.pydantic_ai._events import IGNORED_EVENT_KINDS, MAPPED_EVENT_KINDS
 from loom.ai.errors import AgentRunErrorClass, AgentRunErrorCode, is_retriable, run_error_class
-from loom.ai.runtime import AgentRunError
+from loom.ai.event import AiEvent
+from loom.ai.execution import AgentRunError
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
+from tests.helpers.loggers import CapturedLog
 from tests.helpers.pydantic_ai_engine import (
     NullDeps,
     answering_model,
@@ -36,7 +38,8 @@ from tests.helpers.pydantic_ai_engine import (
 from tests.unit.ai.engines.doubles import damaged_stream_model
 
 _IDENTITY = Identity(subject="caller")
-_ANSWER: Mapping[str, str] = {"answer": "ok"}
+_CANARY = "card 4111"
+_SECRET_ANSWER: Mapping[str, str] = {"answer": _CANARY}
 
 
 def _http(status: int) -> ModelHTTPError:
@@ -173,50 +176,56 @@ def _damaged_whole_model(payload: bytes) -> FunctionModel:
     return FunctionModel(respond)
 
 
+class TestAForeignFailureReachesTheCaller:
+    async def test_the_error_event_names_the_type_and_never_the_text(self) -> None:
+        """A provider or tool exception can quote data, so the event carries its type only."""
+        engine = build_engine(make_plan(), failing_model(lambda: RuntimeError(_CANARY)))
+
+        async with engine.run_stream("assess", identity=_IDENTITY) as events:
+            failure = [event async for event in events][-1]
+
+        assert isinstance(failure, ErrorEvent)
+        assert _CANARY not in failure.message
+        assert "RuntimeError" in failure.message
+
+
 class TestASchemaBreakingAnswerIsLogged:
-    async def test_the_answer_that_broke_the_schema_is_logged_and_never_published(
+    """The caller is told the code; the operator the type of its cause, never the answer."""
+
+    async def test_a_streamed_run_logs_the_cause_type_and_never_the_answer(
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """The caller is told the code; the operator is told which answer broke it."""
-        engine = build_engine(make_plan(), damaged_stream_model(encode(_ANSWER)))
+        engine = build_engine(make_plan(), damaged_stream_model(encode(_SECRET_ANSWER)))
 
         with caplog.at_level(logging.WARNING):
             async with engine.run_stream("assess", identity=_IDENTITY) as events:
                 failure = [event async for event in events][-1]
 
         assert isinstance(failure, ErrorEvent)
-        assert "answer" not in failure.message
-        assert any('answer":"ok"}' in record.getMessage() for record in caplog.records)
+        assert _CANARY not in failure.message
+        _assert_cause_logged_without(_CANARY, caplog)
 
-    async def test_the_logged_cause_is_truncated(self, caplog: pytest.LogCaptureFixture) -> None:
-        """A run's damaged answer is model-authored text, so the log caps how much it keeps."""
-        huge_payload = encode({"answer": "x" * (MAX_LOGGED_CAUSE_CHARS * 2)})
-        engine = build_engine(make_plan(), damaged_stream_model(huge_payload))
-
-        with caplog.at_level(logging.WARNING):
-            async with engine.run_stream("assess", identity=_IDENTITY) as events:
-                async for _ in events:
-                    pass
-
-        cause_records = [
-            record.getMessage() for record in caplog.records if "raised from" in record.getMessage()
-        ]
-        assert cause_records
-        assert all(len(record) < MAX_LOGGED_CAUSE_CHARS * 2 for record in cause_records)
-
-    async def test_the_answer_that_broke_the_schema_on_a_plain_run_is_logged_too(
+    async def test_a_plain_run_logs_the_cause_type_and_never_the_answer(
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """``engine.run`` shares ``_log_cause`` with the streamed path; this pins its own call
-        site."""
-        engine = build_engine(make_plan(), _damaged_whole_model(encode(_ANSWER)))
+        engine = build_engine(make_plan(), _damaged_whole_model(encode(_SECRET_ANSWER)))
 
-        with caplog.at_level(logging.WARNING), pytest.raises(AgentRunError):
+        with caplog.at_level(logging.WARNING), pytest.raises(AgentRunError) as raised:
             await engine.run("assess", identity=_IDENTITY)
 
-        assert any("raised from" in record.getMessage() for record in caplog.records)
+        assert _CANARY not in str(raised.value)
+        _assert_cause_logged_without(_CANARY, caplog)
+
+
+def _assert_cause_logged_without(canary: str, caplog: pytest.LogCaptureFixture) -> None:
+    causes = [
+        record for record in caplog.records if record.getMessage() == AiEvent.RUN_FAILED_FROM_CAUSE
+    ]
+    assert causes
+    assert all(record.exc_info is not None for record in causes)
+    assert all(canary not in f"{event} {fields}" for event, fields in CapturedLog(caplog).events)
 
 
 class _AttemptCounter:
@@ -236,9 +245,9 @@ def _attempt_counter(error: Exception) -> _AttemptCounter:
 
 
 def _engine(*, retries: int, failure: _AttemptCounter) -> AgentEngine:
-    from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider
+    from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin
 
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: failing_model(failure))
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: failing_model(failure))
     return provider.create_engine(
         make_plan(retries=retries), deps=NullDeps(), container=LoomContainer()
     )

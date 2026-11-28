@@ -1,4 +1,4 @@
-"""Persistence backend registry: resolution by name and the ``none`` backend."""
+"""Store backend registry: resolution by name and the ``none`` backend."""
 
 from __future__ import annotations
 
@@ -6,38 +6,44 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import ClassVar
-from unittest.mock import MagicMock
+from typing import Any, ClassVar, cast
 
 import pytest
 
 import loom.core.plugins.entrypoints as entrypoints_module
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.di.container import LoomContainer
-from loom.core.persistence import (
-    NoneBackend,
-    PersistenceBackend,
-    PersistenceWiring,
-    resolve_backend,
+from loom.core.plugins.entrypoints import (
+    DuplicateEntryPointError,
+    MissingDependency,
+    select_entry_point,
 )
-from loom.core.persistence.profile import SERVER_PROFILE, BackendRuntime
-from loom.core.plugins.entrypoints import DuplicateEntryPointError
+from loom.core.stores import (
+    NullStorePlugin,
+    StorePlugin,
+    StoreWiring,
+    resolve_store_plugin,
+)
+from loom.core.stores.profile import SERVER_PROFILE, StorePluginContext
 from tests.helpers.persistence import build_backend
 
-_GROUP = "loom.persistence.backends"
+_GROUP = "loom.stores.plugins"
 _SRC = Path(__file__).resolve().parents[4] / "src"
 
 
 class AcmePersistenceDist:
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, requires: tuple[str, ...] = ()) -> None:
         self.name = name
+        self.requires = requires
 
 
 class AcmePersistenceEntryPoint:
-    def __init__(self, name: str, dist_name: str, target: object) -> None:
+    def __init__(
+        self, name: str, dist_name: str, target: object, requires: tuple[str, ...] = ()
+    ) -> None:
         self.name = name
         self.group = _GROUP
-        self.dist = AcmePersistenceDist(dist_name)
+        self.dist = AcmePersistenceDist(dist_name, requires)
         self._target = target
 
     def load(self) -> object:
@@ -56,10 +62,8 @@ class _FakeBackend:
     name: ClassVar[str] = "fake"
     repository_type: ClassVar[type | None] = None
 
-    def build(
-        self, ctx: ConfigContext, models: object, runtime: BackendRuntime
-    ) -> PersistenceWiring:
-        return NoneBackend().build(ctx, (), runtime)
+    def build(self, ctx: ConfigContext, models: object, context: StorePluginContext) -> StoreWiring:
+        return NullStorePlugin().build(ctx, (), context)
 
 
 def _install(
@@ -83,7 +87,7 @@ class TestResolveBackend:
         )
 
         with pytest.raises(ConfigError) as excinfo:
-            resolve_backend("missing")
+            resolve_store_plugin("missing")
 
         message = str(excinfo.value)
         assert "'missing'" in message
@@ -94,15 +98,15 @@ class TestResolveBackend:
     ) -> None:
         _install(monkeypatch, ())
 
-        with pytest.raises(ConfigError, match="No persistence backends are registered"):
-            resolve_backend("missing")
+        with pytest.raises(ConfigError, match="No store plugins are registered"):
+            resolve_store_plugin("missing")
 
     def test_injected_entry_point_resolves_to_an_instance_of_its_class(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _install(monkeypatch, (AcmePersistenceEntryPoint("fake", "loom-fake", _FakeBackend),))
 
-        backend = resolve_backend("fake")
+        backend = resolve_store_plugin("fake")
 
         assert isinstance(backend, _FakeBackend)
         assert backend.name == "fake"
@@ -117,32 +121,35 @@ class TestResolveBackend:
         )
 
         with pytest.raises(DuplicateEntryPointError):
-            resolve_backend("fake")
+            resolve_store_plugin("fake")
 
     def test_none_backend_is_registered_by_loom(self) -> None:
-        backend = resolve_backend("none")
+        backend = resolve_store_plugin("none")
 
-        assert isinstance(backend, NoneBackend)
+        assert isinstance(backend, NullStorePlugin)
 
 
-class TestNoneBackend:
-    def _wiring(self) -> PersistenceWiring:
-        backend: PersistenceBackend = NoneBackend()
+class _UntouchedContainer:
+    """A container that fails the test as soon as anything reads or calls it."""
+
+    def __getattr__(self, name: str) -> Any:
+        raise AssertionError(f"the registration module touched container.{name}")
+
+
+class TestNullStorePlugin:
+    def _wiring(self) -> StoreWiring:
+        backend: StorePlugin = NullStorePlugin()
         return build_backend(backend, ConfigContext.from_dict({}), (), SERVER_PROFILE)
 
     def test_build_has_no_unit_of_work_and_no_default_repository_type(self) -> None:
         wiring = self._wiring()
 
         assert wiring.uow_factory is None
-        assert NoneBackend.repository_type is None
+        assert NullStorePlugin.repository_type is None
         assert wiring.readiness is None
 
     def test_registration_module_registers_nothing(self) -> None:
-        container = MagicMock(spec=LoomContainer)
-
-        self._wiring().repo_registration_module(container)
-
-        assert not container.method_calls
+        self._wiring().repo_registration_module(cast(LoomContainer, _UntouchedContainer()))
 
 
 class TestPersistencePackageImport:
@@ -151,9 +158,10 @@ class TestPersistencePackageImport:
             "import sys\n"
             "sys.modules['sqlalchemy'] = None\n"
             "sys.modules['boto3'] = None\n"
-            "import loom.core.persistence\n"
-            "assert not [m for m in sys.modules if m.startswith('loom.core.repository')], "
-            "sorted(m for m in sys.modules if m.startswith('loom.core.repository'))\n"
+            "import loom.core.stores\n"
+            "adapters = ('loom.stores',)\n"
+            "leaked = sorted(m for m in sys.modules if m.startswith(adapters))\n"
+            "assert not leaked, leaked\n"
         )
         env = {**os.environ, "PYTHONPATH": str(_SRC)}
         result = subprocess.run(
@@ -164,21 +172,89 @@ class TestPersistencePackageImport:
 
 
 class _BrokenEntryPoint(AcmePersistenceEntryPoint):
+    def __init__(self, name: str, missing: str, requires: tuple[str, ...] = ()) -> None:
+        super().__init__(name, "loom-kernel", _FakeBackend, requires)
+        self._missing = missing
+
     def load(self) -> object:
-        raise ModuleNotFoundError("No module named 'sqlalchemy'", name="sqlalchemy")
+        raise ModuleNotFoundError(f"No module named {self._missing!r}", name=self._missing)
+
+
+_KERNEL_REQUIRES = (
+    "pymongo>=4.18.3,<5.0; extra == 'mongo'",
+    "boto3>=1.35; extra == 'aws'",
+    "fastapi>=0.115; extra == 'rest'",
+    "fastapi>=0.115; extra == 'lambda'",
+    "Typing-Extensions>=4; extra == 'typing'",
+    "msgspec>=0.18",
+)
 
 
 class TestBrokenBackendImport:
-    def test_backend_whose_module_import_fails_reports_the_extra_to_install(
+    @pytest.mark.parametrize(
+        ("missing", "installs"),
+        [
+            ("pymongo", "loom-kernel[mongo]"),
+            ("pymongo.errors", "loom-kernel[mongo]"),
+            ("boto3", "loom-kernel[aws]"),
+            ("typing_extensions", "loom-kernel[typing]"),
+            ("fastapi", "loom-kernel[rest] or loom-kernel[lambda]"),
+        ],
+    )
+    def test_a_missing_third_party_module_names_the_path_the_module_and_the_extras(
         self,
         monkeypatch: pytest.MonkeyPatch,
+        missing: str,
+        installs: str,
     ) -> None:
-        _install(monkeypatch, (_BrokenEntryPoint("sqlalchemy", "loom-kernel", _FakeBackend),))
+        _install(monkeypatch, (_BrokenEntryPoint("audit", missing, _KERNEL_REQUIRES),))
 
         with pytest.raises(ConfigError) as excinfo:
-            resolve_backend("sqlalchemy")
+            resolve_store_plugin("audit", path="stores.audit.backend")
 
-        message = str(excinfo.value)
-        assert "'sqlalchemy'" in message
-        assert "loom-kernel[sqlalchemy]" in message
+        root = missing.partition(".")[0]
+        assert str(excinfo.value) == (
+            f"stores.audit.backend: store plugin 'audit' needs {root!r}, "
+            f"which is not installed: install {installs}"
+        )
         assert isinstance(excinfo.value.__cause__, ModuleNotFoundError)
+
+    def test_a_module_no_extra_provides_names_only_the_module(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _install(monkeypatch, (_BrokenEntryPoint("audit", "acme_driver", _KERNEL_REQUIRES),))
+
+        with pytest.raises(ConfigError) as excinfo:
+            resolve_store_plugin("audit", path="stores.audit.backend")
+
+        assert str(excinfo.value) == (
+            "stores.audit.backend: store plugin 'audit' needs 'acme_driver', which is not installed"
+        )
+
+    @pytest.mark.parametrize("missing", ["loom.stores.mongo.plugin", "loom"])
+    def test_a_missing_loom_module_propagates_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch, missing: str
+    ) -> None:
+        _install(monkeypatch, (_BrokenEntryPoint("audit", missing, _KERNEL_REQUIRES),))
+
+        with pytest.raises(ModuleNotFoundError) as excinfo:
+            resolve_store_plugin("audit", path="stores.audit.backend")
+
+        assert excinfo.value.name == missing
+
+
+class TestShippedBackendExtras:
+    @pytest.mark.parametrize(
+        ("backend", "module", "extra"),
+        [("mongo", "pymongo", "mongo"), ("dynamodb", "boto3", "aws")],
+    )
+    def test_the_distribution_metadata_names_the_extra_of_a_builtin_backend(
+        self, backend: str, module: str, extra: str
+    ) -> None:
+        entry = select_entry_point(_GROUP, backend, on_duplicate="error")
+        assert entry is not None
+
+        missing = MissingDependency(module=module, entry=entry)
+
+        assert extra in missing.extras
+        assert f"loom-kernel[{extra}]" in missing.describe()

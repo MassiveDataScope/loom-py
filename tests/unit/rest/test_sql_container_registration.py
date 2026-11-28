@@ -8,9 +8,9 @@ from loom.composition._sql import SqlWiring, register_sql_collaborators
 from loom.core.di.container import LoomContainer
 from loom.core.identity import Identity
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.sql import CallerBoundSql, NullSqlQueryService, SqlQueryService
-from loom.core.sql.abc import RolesNotBoundError
+from loom.core.observability.observability import Observability
+from loom.core.stores.sql import CallerBoundSql, NullSqlQueryService, SqlQueryService
+from loom.core.stores.sql.abc import RolesNotBoundError
 from tests.unit.core.sql._fakes import FakeSqlExecutor, make_connection_config, make_sql_config
 
 
@@ -36,7 +36,7 @@ class TestSqlCollaboratorRegistration:
     ) -> None:
         """A use case may inject either path, so both must be resolvable."""
         container = LoomContainer()
-        register_sql_collaborators(container, _wiring(), ObservabilityRuntime.noop())
+        register_sql_collaborators(container, _wiring(), Observability.noop())
         assert isinstance(container.resolve(SqlQueryService), SqlQueryService)
         assert isinstance(container.resolve(CallerBoundSql), CallerBoundSql)
 
@@ -48,7 +48,7 @@ class TestSqlCollaboratorRegistration:
         register_sql_collaborators(
             container,
             SqlWiring(config=None, registry=None, service=NullSqlQueryService()),
-            ObservabilityRuntime.noop(),
+            Observability.noop(),
         )
         assert isinstance(container.resolve(CallerBoundSql), CallerBoundSql)
 
@@ -57,7 +57,7 @@ class TestSqlCollaboratorRegistration:
     ) -> None:
         """The instance in the container is the bound one, not a passthrough."""
         container = LoomContainer()
-        register_sql_collaborators(container, _wiring(), ObservabilityRuntime.noop())
+        register_sql_collaborators(container, _wiring(), Observability.noop())
         sql = container.resolve(CallerBoundSql)
         identity = Identity(subject="user-1", roles=("role_intruder",), mechanism="jwt")
         with pytest.raises(RolesNotBoundError):
@@ -69,7 +69,7 @@ class TestSqlCollaboratorRegistration:
         """The span must reach the app's observers, not a runtime built on the side."""
         observer = RecordingAuditObserver()
         container = LoomContainer()
-        register_sql_collaborators(container, _wiring(), ObservabilityRuntime([observer]))
+        register_sql_collaborators(container, _wiring(), Observability([observer]))
         sql = container.resolve(CallerBoundSql)
         await sql.execute(
             "SELECT 1",

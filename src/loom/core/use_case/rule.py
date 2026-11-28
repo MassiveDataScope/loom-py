@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Protocol, Self, TypeVar
 
 from loom.core.command.base import Command
-from loom.core.errors import RuleViolation
+from loom.core.errors import InvalidType, InvalidUse, InvalidValue, RuleViolationError, UnknownKey
 from loom.core.use_case._predicates import (
     is_present as _is_present,
 )
@@ -47,7 +47,7 @@ class Rule:
     Build rules with :meth:`check`, :meth:`forbid` and :meth:`require_present`.
 
     Args:
-        evaluator: Returns the violation message (``str``), a ``RuleViolation``,
+        evaluator: Returns the violation message (``str``), a ``RuleViolationError``,
             or ``None`` when the arguments are valid.
         field: Field a ``str`` violation is reported on.
         command_sources: Command fields whose values are passed to ``evaluator``.
@@ -69,19 +69,19 @@ class Rule:
     def check(
         cls,
         *targets: FieldRef,
-        via: Callable[..., str | RuleViolation | None],
+        via: Callable[..., str | RuleViolationError | None],
     ) -> Rule:
         """Validate fields with ``via``, which receives the targets' values.
 
-        ``via`` returns the violation message (``str``), a ``RuleViolation``, or
+        ``via`` returns the violation message (``str``), a ``RuleViolationError``, or
         ``None`` when the values are valid. Any other result, a ``bool``
         included, raises ``TypeError``.
 
         Raises:
-            ValueError: When no target is given.
+            InvalidValue: When no target is given.
         """
         if not targets:
-            raise ValueError("Rule.check(...) requires at least one target.")
+            raise InvalidValue("Rule.check(...) requires at least one target.")
         return cls(evaluator=via, field=targets[0].leaf, command_sources=tuple(targets))
 
     @classmethod
@@ -129,10 +129,10 @@ class Rule:
         """Also pass these runtime context values.
 
         Raises:
-            ValueError: When no name is given.
+            InvalidValue: When no name is given.
         """
         if not names:
-            raise ValueError("Rule.from_params(...) requires at least one parameter name.")
+            raise InvalidValue("Rule.from_params(...) requires at least one parameter name.")
         return replace(self, param_names=(*self.param_names, *names))
 
     def when_present(self, predicate: FieldRef | FieldExpr) -> Rule:
@@ -148,10 +148,11 @@ class Rule:
         """Evaluate the rule against one command.
 
         Raises:
-            RuleViolation: When the evaluator reports a violation.
-            TypeError: When the evaluator returns anything else than a message,
-                a ``RuleViolation`` or ``None``.
-            ValueError: When a runtime context key the rule reads is missing.
+            RuleViolationError: When the evaluator reports a violation.
+            InvalidType: When the evaluator returns anything else than a message,
+                a ``RuleViolationError`` or ``None``.
+            InvalidUse: When the rule reads runtime context and none is given.
+            UnknownKey: When a runtime context key the rule reads is missing.
         """
         if self.predicate is not None and not _predicate_is_present(
             command, fields_set, self.predicate
@@ -168,9 +169,9 @@ class Rule:
 
         if self.param_names:
             if context is None:
-                raise ValueError("Rule.from_params(...) requires runtime context.")
+                raise InvalidUse("Rule.from_params(...) requires runtime context.")
             if missing := [n for n in self.param_names if n not in context]:
-                raise ValueError(f"Missing runtime context keys for rule: {', '.join(missing)}")
+                raise UnknownKey(f"Missing runtime context keys for rule: {', '.join(missing)}")
             args.extend(context[n] for n in self.param_names)
 
         result = self.evaluator(*args)
@@ -178,14 +179,14 @@ class Rule:
             self._raise_outcome(result, command)
 
     def _raise_outcome(self, result: object, command: Command) -> None:
-        if isinstance(result, RuleViolation):
+        if isinstance(result, RuleViolationError):
             raise result
         if isinstance(result, str):
-            raise RuleViolation(self._resolved_field(command), result)
-        raise TypeError(
+            raise RuleViolationError(self._resolved_field(command), result)
+        raise InvalidType(
             f"Rule.check on field '{self._resolved_field(command)}': the evaluator "
             f"returned {type(result).__name__}; return the violation message (str), "
-            "a RuleViolation, or None when the value is valid."
+            "a RuleViolationError, or None when the value is valid."
         )
 
     def _resolved_field(self, command: Command) -> str:

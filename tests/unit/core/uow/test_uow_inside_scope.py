@@ -19,15 +19,15 @@ import pytest
 from pymongo import AsyncMongoClient
 
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.errors import UnitOfWorkInsideScope
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.mongo.uow import MongoUnitOfWork, NoOpMongoUnitOfWork
-from loom.core.repository.sqlalchemy.uow import SQLAlchemyUnitOfWork
-from loom.core.uow.abc import UnitOfWork
-from loom.core.uow.coordinator import OrderedCommits
-from loom.core.uow.scope import invocation
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.uow.abc import UnitOfWork
+from loom.core.stores.uow.coordinator import OrderedCommits
+from loom.core.stores.uow.scope import invocation
 from loom.core.use_case.use_case import UseCase
+from loom.stores.mongo.uow import MongoUnitOfWork, NoOpMongoUnitOfWork
+from loom.stores.sqlalchemy.uow import SQLAlchemyUnitOfWork
 
 from ..conftest import RecordingSessionManager, make_session
 from ..repository.mongo._fake import FakeMongoClient
@@ -62,7 +62,7 @@ def _sqlalchemy_case() -> ScopedUnitOfWorkCase:
         _sqlalchemy(manager),
         "SQLAlchemyUnitOfWork",
         lambda: manager.exits,
-        lambda: session.commit.await_count,
+        lambda: session.count("commit"),
     )
 
 
@@ -120,7 +120,7 @@ class TestInsideAScope:
 
     async def test_a_use_case_entering_one_by_hand_fails_with_it(self) -> None:
         manager = RecordingSessionManager(make_session())
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: Factory(_store())})
         )
 
@@ -131,7 +131,7 @@ class TestInsideAScope:
 
     async def test_a_use_case_entering_one_by_hand_commits_nothing_on_its_own(self) -> None:
         session = make_session()
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: Factory(_store())})
         )
 
@@ -140,7 +140,7 @@ class TestInsideAScope:
         with pytest.raises(UnitOfWorkInsideScope):
             await executor.execute(use_case)
 
-        session.commit.assert_not_awaited()
+        assert session.count("commit") == 0
 
 
 class TestOutsideAScope:

@@ -10,7 +10,53 @@ from loom.core.errors.codes import ErrorCode
 
 
 class LoomError(Exception):
-    """Base class for all framework errors.
+    """The base of loom's own errors: a marker with no code and no transport meaning.
+
+    :class:`CodedError` adds the code transports translate.
+    """
+
+
+class InvalidValue(LoomError, ValueError):
+    """A loom API was given a value of the right type that it cannot accept.
+
+    The message names the parameter and the rule, never the value it was given.
+    """
+
+
+class InvalidType(LoomError, TypeError):
+    """A loom API was given a value of a type it does not accept.
+
+    The message names the parameter and the expected type, never the value it was given.
+    """
+
+
+class InvalidUse(LoomError, RuntimeError):
+    """A loom API was called in a state that does not allow it.
+
+    Such as before it was opened or compiled, after it was closed, or a second
+    bind of what binds once. The message names the state, never a value.
+    """
+
+
+class InternalError(LoomError, RuntimeError):
+    """A loom invariant broke: a defect in loom, never the caller's fault.
+
+    The message names the invariant, never a value.
+    """
+
+
+class UnknownKey(LoomError, KeyError):
+    """A lookup by key or name found nothing.
+
+    The message names what was looked up and where, never a value. It reads as
+    written, without the quotes ``KeyError`` adds.
+    """
+
+    __str__ = Exception.__str__
+
+
+class CodedError(LoomError):
+    """A failure transports translate into an answer.
 
     Carries a machine-readable ``code`` used by transport adapters to
     produce appropriate responses (HTTP status, dead-letter routing, etc.)
@@ -41,7 +87,7 @@ class LoomError(Exception):
         code: The catalogue member that discriminates the error.
 
     Attributes:
-        retryable: Whether running the work again could still succeed; a
+        is_retryable: Whether running the work again could still succeed; a
             subclass a retry would repeat or make worse sets it ``False``.
         http_status: A 4xx or 5xx status (an ``HTTPStatus`` or its int), or
             ``None`` to keep the code table.
@@ -52,7 +98,7 @@ class LoomError(Exception):
         raise NotFound("User", id=42)
     """
 
-    retryable: bool = True
+    is_retryable: bool = True
     http_status: int | None = None
     public_message: bool = False
 
@@ -61,12 +107,30 @@ class LoomError(Exception):
         self.code: StrEnum = code
         super().__init__(message)
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        """Pickle the error without calling ``__init__``, so a subclass may take any arguments.
+
+        Returns:
+            The class and arguments to rebuild the error and the state to restore.
+        """
+        return (type(self).__new__, (type(self), *self.args), self.__getstate__())
+
+    def __setstate__(self, state: Any) -> None:
+        """Restore the attributes :meth:`__reduce__` saved, those in ``__dict__`` and in slots.
+
+        Args:
+            state: The attribute mapping, or that mapping and the slot mapping.
+        """
+        attributes, slots = state if isinstance(state, tuple) else (state, {})
+        for name, value in {**attributes, **slots}.items():
+            setattr(self, name, value)
+
     def public_detail(self) -> Mapping[str, Any]:
         """Return fields an HTTP error detail may add. Empty unless overridden."""
         return {}
 
 
-class DomainError(LoomError):
+class DomainError(CodedError):
     """Base class for all business-logic errors.
 
     Raised inside UseCase execution. Transport adapters catch and convert
@@ -75,10 +139,10 @@ class DomainError(LoomError):
     one: a job raising it is consumed, not requeued.
     """
 
-    retryable: bool = False
+    is_retryable: bool = False
 
 
-class SystemError(LoomError):
+class SystemError(CodedError):
     """Base class for infrastructure and unexpected errors.
 
     Raised when a repository, external service, or internal subsystem

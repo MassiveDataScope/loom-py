@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loom.core.backend.sqlalchemy import _topological_sort
+from loom.stores.sqlalchemy.schema import _topological_sort
 
 
 class _A: ...

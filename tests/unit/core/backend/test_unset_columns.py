@@ -8,8 +8,8 @@ import msgspec
 import pytest
 from sqlalchemy import MetaData
 
-from loom.core.backend.sqlalchemy import compile_all
 from loom.core.model import BaseModel, ColumnField
+from loom.stores.sqlalchemy.schema import compile_all
 
 
 class _Badge(BaseModel):

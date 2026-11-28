@@ -26,10 +26,10 @@ from sqlalchemy.pool import NullPool
 
 from loom.core.authz import Decision, Grant, Permission, Role, RoleCatalog, Scope
 from loom.core.authz.product import clear_authz_product, register_authz_product
-from loom.core.locator import Application, load_application
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, store_of
-from loom.core.repository.sqlalchemy.rls import create_schema, register_scope_source
-from loom.core.repository.sqlalchemy.rls.sources import clear_scope_sources
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, store_of
+from loom.stores.sqlalchemy.alembic import StoreSchema, load_store_schema
+from loom.stores.sqlalchemy.rls import create_schema, register_scope_source
+from loom.stores.sqlalchemy.rls.sources import clear_scope_sources
 
 URI_ENV_VAR = "LOOM_PG_IT_URI"
 URI_ENV_VAR_B = "LOOM_PG_IT_URI_B"
@@ -192,7 +192,7 @@ def _bootstrap_factory(module_database_uri: str, created_roles: set[str]) -> Boo
     """
 
     async def factory(schema: str, **options: Any) -> ScopedDatabase:
-        from loom.core.repository.sqlalchemy.rls import (
+        from loom.stores.sqlalchemy.rls import (
             BootstrapConfig,
             DatabaseRoles,
             DatabaseUser,
@@ -267,13 +267,13 @@ def application_for(
     *,
     schema: str | None = None,
     store: StoreKey = DEFAULT_STORE,
-) -> Application:
-    """Load a synthetic product as *store*'s ``Application`` from a generated configuration file."""
+) -> StoreSchema:
+    """Load a synthetic product as *store*'s ``StoreSchema`` from a generated configuration file."""
     name = schema or product.SCHEMA
     config = {
         "app": {
             "name": name,
-            "discovery": {"mode": "modules", "modules": {"include": [product.__name__]}},
+            "packages": [product.__name__],
         },
         "stores": {
             store: {
@@ -301,7 +301,7 @@ def application_for(
     }
     path = tmp_path / f"{name}.yaml"
     path.write_text(yaml.safe_dump(config))
-    return load_application(str(path), store=store)
+    return load_store_schema(str(path), store=store)
 
 
 def store_section(
@@ -350,7 +350,9 @@ MANAGE = Permission("members.manage")
 CATALOG = RoleCatalog((MANAGE,), (Role("admin", (MANAGE,)),))
 FLAG = "SELECT coalesce(current_setting('loom.scope.editor.any', true), '')"
 OWNER_SETTING = "SELECT coalesce(current_setting('loom.scope.owner', true), '')"
-DECISION = Decision(allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.of(U1)))
+DECISION = Decision(
+    allowed=True, grant=Grant(subject=U1, role="admin", scope=Scope.from_segments(U1))
+)
 
 
 @dataclass

@@ -74,12 +74,13 @@ from loom.ai.errors import (
     AgentRunErrorCode,
     require_authenticated,
 )
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.registry import require_provider_sdk
 from loom.core.di import LoomContainer
 from loom.core.engine.compilable import Compilable
 from loom.core.engine.plan import ExecutionPlan
-from loom.core.sql.abc import SqlQueryResult
-from loom.core.sql.service import SqlQueryService
+from loom.core.stores.sql.abc import SqlQueryResult
+from loom.core.stores.sql.service import SqlQueryService
 from loom.core.use_case.invoker import ApplicationInvoker
 
 _logger = logging.getLogger(__name__)
@@ -174,8 +175,8 @@ def _usecase_toolset(
 def _usecase_tool(grant: _UsecaseGrant, context: BuildContext) -> Tool[Any]:
     async def call(run: RunContext[Any], **arguments: Any) -> ToolReturn:
         del run
-        caller = require_authenticated(f"tool '{grant.tool_name}'")
-        async with capability_call(context, "usecase", grant.tool_name, caller):
+        require_authenticated(f"tool '{grant.tool_name}'")
+        async with capability_call(context, "usecase", grant.tool_name):
             return await guarded(grant.tool_name, lambda: grant.invoke(arguments), ok_return)
 
     return Tool.from_schema(
@@ -198,7 +199,7 @@ def _sql_toolset(capability: CompiledSqlCapability, context: BuildContext) -> Ab
         if oversized is not None:
             return oversized
         roles = capability.roles_of(caller)
-        async with capability_call(context, "sql", name, caller):
+        async with capability_call(context, "sql", name):
             return await guarded(
                 name,
                 lambda: _query(capability, container, sql, roles),
@@ -426,7 +427,9 @@ async def _delegate(capability: CompiledA2ACapability, prompt: str, tool: str) -
     except AgentRunError:
         raise
     except Exception as exc:
-        _logger.warning("a2a tool '%s' could not reach the remote agent", tool, exc_info=True)
+        _logger.warning(
+            AiEvent.TOOL_REMOTE_AGENT_UNREACHABLE, extra={AiKey.TOOL: tool}, exc_info=True
+        )
         raise AgentRunError(
             AgentRunErrorCode.TOOL_UNAVAILABLE,
             f"tool '{tool}': the remote agent is unavailable",
@@ -523,7 +526,7 @@ def build_toolsets(
             its context here, at build time, and every other toolset resolves
             through the per-invocation bundle instead.
         mcp: The worker's MCP toolsets. Passing the *same* store for every plan
-            is what makes an ``mcp`` grant reuse the connection the runtime
+            is what makes an ``mcp`` grant reuse the connection the host
             already opened instead of adding one per agent.
 
     Returns:
@@ -536,7 +539,7 @@ def build_toolsets(
             name is longer than a provider accepts, an optional dependency is
             missing, or a factory does not produce a toolset.
     """
-    context = BuildContext.of(plan, container, mcp)
+    context = BuildContext.from_plan(plan, container, mcp)
     reject_unusable_names(plan.capabilities, context.agent)
     return tuple(_build(plan, _Destination.TOOLSET, context))
 

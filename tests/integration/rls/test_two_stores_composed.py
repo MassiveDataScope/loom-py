@@ -2,7 +2,7 @@
 
 ``default`` serves ``notes`` on server A and ``audit`` serves ``memos`` on
 server B, each from a schema of its own: B's is created and verified through
-``load_application(store="audit")``. Use cases run through the composed
+``load_store_schema(store="audit")``. Use cases run through the composed
 application as a caller, so every session they touch, in either store, must
 carry that caller's identity and its own store's settings.
 """
@@ -20,24 +20,24 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from loom.composition import AppConfig, Application, compose_application
+from loom.composition import AppConfig, Application
 from loom.core.authz import Scope
 from loom.core.command import Command
 from loom.core.config import ConfigContext
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope as DiScope
 from loom.core.engine.post_commit import store_channel
-from loom.core.errors import ScopeOwnershipError, StoresNotCommitted, UndeclaredStoreWrite
+from loom.core.errors import ScopeOwnershipError, StoresNotCommittedError, UndeclaredStoreWrite
 from loom.core.identity import Identity
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, store_binding
-from loom.core.repository.abc import RepoFor
-from loom.core.repository.sqlalchemy.rls import elevate
-from loom.core.repository.sqlalchemy.rls.verify import verify
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
-from loom.core.uow.coordinator import Committed, RolledBack
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, store_binding
+from loom.core.stores.repository import RepoFor
+from loom.core.stores.uow.coordinator import Committed, RolledBack
 from loom.core.use_case import Input, Joined, UseCase
 from loom.core.use_case.invoker import ApplicationInvoker
-from tests.helpers.composition import Serving, composition_source
+from loom.stores.sqlalchemy.rls import elevate
+from loom.stores.sqlalchemy.rls.verify import verify
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from tests.helpers.composition import Serving, WithOverrides, composition_project
 from tests.integration.agnosticism import memos, notes
 from tests.integration.rls.conftest import (
     AUDIT,
@@ -85,13 +85,15 @@ class _Sessions:
     managers: Mapping[StoreKey, SessionManager]
     ran: list[StoreKey] = field(default_factory=list)
 
-    def of(self, key: StoreKey) -> AsyncSession:
+    def session_for(self, key: StoreKey) -> AsyncSession:
         session = self.managers[key].active_session
         assert session is not None, f"store {key!r} is not enlisted"
         return session
 
     async def owners(self) -> dict[StoreKey, str]:
-        return {key: str((await self.of(key).execute(OWNER)).scalar_one()) for key in _STORES}
+        return {
+            key: str((await self.session_for(key).execute(OWNER)).scalar_one()) for key in _STORES
+        }
 
 
 _STORES = (DEFAULT_STORE, AUDIT)
@@ -135,7 +137,7 @@ class _RecordMemo(UseCase[memos.Memo, str]):
 
     async def execute(self, cmd: _NewMemo = Input()) -> str:
         await self.memos.create(cmd)
-        return str((await self.sessions.of(AUDIT).execute(OWNER)).scalar_one())
+        return str((await self.sessions.session_for(AUDIT).execute(OWNER)).scalar_one())
 
 
 class _NoteThenNestedMemo(UseCase[notes.Note, tuple[str, str]]):
@@ -152,7 +154,7 @@ class _NoteThenNestedMemo(UseCase[notes.Note, tuple[str, str]]):
     async def execute(self) -> tuple[str, str]:
         await self.notes.create(_NewNote(owner_id=U1, editor="ana", body="outer"))
         nested = await self.invoker.invoke(_RecordMemo, payload={"owner_id": T1, "body": "nested"})
-        own = str((await self.sessions.of(DEFAULT_STORE).execute(OWNER)).scalar_one())
+        own = str((await self.sessions.session_for(DEFAULT_STORE).execute(OWNER)).scalar_one())
         return own, nested
 
 
@@ -165,9 +167,9 @@ class _ElevateEditor(UseCase[notes.Note, dict[StoreKey, str]]):
 
     async def execute(self) -> dict[StoreKey, str]:
         await self.sessions.owners()
-        await elevate("editor", DECISION, at=Scope.of(U1))
+        await elevate("editor", DECISION, at=Scope.from_segments(U1))
         return {
-            key: str((await self.sessions.of(key).execute(EDITOR_FLAG)).scalar_one())
+            key: str((await self.sessions.session_for(key).execute(EDITOR_FLAG)).scalar_one())
             for key in _STORES
         }
 
@@ -244,11 +246,13 @@ class TwoStores:
             AUDIT: store_section(self.audit, memos.SCOPE_BINDINGS),
         }
         ctx = ConfigContext.from_dict(
-            {"stores": stores, "persistence": {"cursors": {"signing": "ephemeral"}}}
+            {
+                "stores": {**stores, "settings": {"cursors": {"signing": "ephemeral"}}},
+            }
         )
-        source = composition_source(ctx, app=AppConfig(name="two_stores_composed"))
+        project = composition_project(ctx, app=AppConfig(name="two_stores_composed"))
         adapter = Serving(notes.Note, memos.Memo, use_cases=_USE_CASES)
-        return compose_application(source, adapter, modules=(_sessions_module,))
+        return project.compose(WithOverrides(adapter, _sessions_module))
 
     async def rows(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """Every note body on A and memo body on B, read through the bypass users."""
@@ -294,7 +298,7 @@ async def application(two_stores: TwoStores) -> AsyncIterator[Application]:
 
 def _as(application: Application, subject: str) -> Any:
     identity = Identity(subject=subject, attributes={"tenant": TENANT[subject]})
-    return application.kernel.app.for_identity(identity)
+    return application.kernel.invoker.for_identity(identity)
 
 
 @pytest.fixture
@@ -377,7 +381,7 @@ class TestTwoStoresComposed:
         sessions = application.kernel.container.resolve(_Sessions)
         caller = _as(application, U1)
 
-        with pytest.raises(StoresNotCommitted) as raised:
+        with pytest.raises(StoresNotCommittedError) as raised:
             await caller.invoke(_SplitCommit)
 
         outcome = raised.value.outcome

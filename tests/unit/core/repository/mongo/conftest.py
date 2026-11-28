@@ -5,7 +5,7 @@ from datetime import datetime
 import pytest
 
 from loom.core.model import BaseModel, ColumnField, DateTime
-from loom.core.repository.mongo.query_compiler import MongoQueryCompiler
+from loom.stores.mongo.query_compiler import MongoQueryCompiler
 
 
 class Article(BaseModel):

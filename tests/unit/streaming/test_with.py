@@ -9,7 +9,7 @@ import pytest
 
 from loom.core.model import LoomStruct
 from loom.streaming import (
-    ContextFactory,
+    ContextSupplier,
     Message,
     MessageMeta,
     RecordStep,
@@ -187,20 +187,20 @@ class TestWith:
         assert adapter.sync_contexts == {}
         assert adapter.plain_deps == {"validator": "plain", "retries": 3}
 
-    def test_context_factory_detected_as_factory(self) -> None:
-        """ContextFactory is stored in context_factories, not contexts or plain_deps."""
-        factory = ContextFactory(lambda: _FakeSyncClient())
+    def test_context_supplier_detected_as_supplier(self) -> None:
+        """ContextSupplier is stored in context_suppliers, not contexts or plain_deps."""
+        factory = ContextSupplier(lambda: _FakeSyncClient())
         adapter: With[AcmePayload, _Result] = With(process=_make_process(_SyncStep()), db=factory)
 
-        assert adapter.context_factories == {"db": factory}
+        assert adapter.context_suppliers == {"db": factory}
         assert adapter.sync_contexts == {}
         assert adapter.plain_deps == {}
 
 
-class TestContextFactory:
-    def test_context_factory_creates_fresh_instance(self) -> None:
+class TestContextSupplier:
+    def test_context_supplier_creates_fresh_instance(self) -> None:
         """Each call to create() returns a new instance."""
-        factory = ContextFactory(lambda: _FakeSyncClient())
+        factory = ContextSupplier(lambda: _FakeSyncClient())
         a = factory.create()
         b = factory.create()
 

@@ -120,7 +120,7 @@ class TestTheHttpTransportCarriesTheCredentials:
     def test_the_session_holds_the_pool_the_builder_made(self) -> None:
         toolset = build_mcp_toolset(_capability(), init_timeout=10.0)
 
-        session = _ToolsetSession(_OpenToolset.of(toolset))
+        session = _ToolsetSession(_OpenToolset.from_toolset(toolset))
 
         assert session._current.pool is toolset.client.transport.pool
 
@@ -302,6 +302,8 @@ class TestBehindAProxy:
     ) -> None:
         """The proxy here is the server itself: a host that never resolves is reached through it."""
         async with _proxy_that_serves() as (address, requests):
+            monkeypatch.delenv("NO_PROXY")
+            monkeypatch.delenv("no_proxy")
             monkeypatch.setenv("HTTP_PROXY", address)
             capability = CompiledMcpCapability(
                 server="orders", url="http://orders.invalid/mcp", timeout_ms=5000

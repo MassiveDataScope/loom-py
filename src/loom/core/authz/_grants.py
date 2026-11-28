@@ -26,7 +26,7 @@ def require_aware(name: str, moment: datetime) -> None:
     if not isinstance(moment, datetime):
         raise TypeError(f"{name} must be a datetime, not {type(moment).__name__}.")
     if moment.utcoffset() is None:
-        raise ValueError(f"{name} must be timezone-aware: {moment!r}.")
+        raise ValueError(f"{name} must be timezone-aware.")
 
 
 def _require_subject(subject: str) -> None:

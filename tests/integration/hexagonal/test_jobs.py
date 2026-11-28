@@ -8,15 +8,20 @@ runs, and the job a caller-less dispatch runs failing closed.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 
 from loom.composition import Application
+from loom.core.engine.observation import UseCaseEvent
+from loom.core.errors import Unauthenticated
 from loom.core.execution import ExecutionRequired
 from loom.core.identity import Identity, reset_identity, set_identity
 from loom.core.job import JobService
 from loom.core.job.context import flush_pending_dispatches
 from loom.core.job.handle import JobFailedError, JobHandle
+from loom.core.log_names import LogField
+from tests.helpers.loggers import CapturedLog
 from tests.integration.hexagonal.conftest import (
     ANA,
     BO,
@@ -37,13 +42,14 @@ def application(compose: Compose) -> Application:
 
 
 async def _dispatched_by(application: Application, caller: Identity | None) -> JobHandle[str]:
-    service = application.kernel.container.resolve(JobService)
+    """Dispatch the job as *caller* and return its handle once the job has run."""
     token = set_identity(caller)
     try:
-        handle = service.dispatch(TrackShipmentJob, params=PARAMS)
+        handle = application.jobs.dispatch_after_commit(TrackShipmentJob, params=PARAMS)
     finally:
         reset_identity(token)
     await flush_pending_dispatches()
+    await application.jobs.wait_until_idle()
     return handle
 
 
@@ -53,13 +59,12 @@ async def _run_as(application: Application, caller: Identity, shipment_id: str) 
     return await service.run(TrackShipmentJob, params={"shipment_id": shipment_id})
 
 
-def _failed_jobs(caplog: pytest.LogCaptureFixture) -> list[str]:
+def _failed_jobs(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
     return [
-        str(record.msg["error"])
-        for record in caplog.records
-        if isinstance(record.msg, dict)
-        and record.msg.get("usecase") == TrackShipmentJob.__name__
-        and record.msg.get("status") == "failure"
+        entry
+        for _, entry in CapturedLog(caplog).events
+        if entry.get(LogField.USE_CASE) == TrackShipmentJob.__name__
+        and entry.get(LogField.STATUS) == "failure"
     ]
 
 
@@ -96,7 +101,8 @@ class TestACallerlessDispatch:
             await _dispatched_by(application, None)
 
         (failure,) = _failed_jobs(caplog)
-        assert failure.startswith("Authentication required")
+        assert CapturedLog(caplog).exception_types(UseCaseEvent.FAILED) == [Unauthenticated] * 2
+        assert "error" not in failure
         assert seen.calls == []
 
     async def test_waits_into_job_failed_error(self, application: Application) -> None:

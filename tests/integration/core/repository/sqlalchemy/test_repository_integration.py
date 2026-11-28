@@ -5,7 +5,7 @@ from typing import Any
 import msgspec
 import pytest
 
-from loom.core.repository.abc import (
+from loom.core.stores.repository import (
     CursorCodec,
     FilterGroup,
     FilterOp,
@@ -16,14 +16,14 @@ from loom.core.repository.abc import (
     QuerySpec,
     SortSpec,
 )
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy, with_session_scope
-from loom.testing import RepositoryIntegrationHarness, ScenarioDict
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository, with_session_scope
+from loom.testing import RepositoryIntegrationHarness, ScenarioDict, make
 from tests.integration.fake_repo.product.model import Product
 from tests.integration.fake_repo.product.review.schemas import CreateProductReview
 from tests.integration.fake_repo.product.schemas import CreateProduct, UpdateProduct
 
 
-class _CustomProductRepository(RepositorySQLAlchemy[Product, int]):
+class _CustomProductRepository(SQLAlchemyRepository[Product, int]):
     """Example custom repository using the compiled CoreModel read path."""
 
     @with_session_scope(write=False)
@@ -91,7 +91,7 @@ class TestRepositorySQLAlchemyIntegration:
         await integration_context.load(scenario_catalog_with_price_20)
 
         page = await integration_context.product.repository.list_paginated(
-            PageParams(page=1, limit=10),
+            make(PageParams, page=1, limit=10),
             FilterParams(filters={"price": 20.0}),
         )
 
@@ -107,7 +107,8 @@ class TestRepositorySQLAlchemyIntegration:
     ) -> None:
         await integration_context.load(scenario_catalog_with_price_20)
 
-        query_page_1 = QuerySpec(
+        query_page_1 = make(
+            QuerySpec,
             filters=FilterGroup(filters=(FilterSpec(field="price", op=FilterOp.EQ, value=20.0),)),
             sort=(SortSpec(field="id", direction="ASC"),),
             pagination=PaginationMode.OFFSET,
@@ -122,7 +123,8 @@ class TestRepositorySQLAlchemyIntegration:
         assert page_1.has_next is True
         assert [item.name for item in page_1.items] == ["b"]
 
-        query_page_2 = QuerySpec(
+        query_page_2 = make(
+            QuerySpec,
             filters=query_page_1.filters,
             sort=query_page_1.sort,
             pagination=PaginationMode.OFFSET,
@@ -145,7 +147,8 @@ class TestRepositorySQLAlchemyIntegration:
     ) -> None:
         await integration_context.load(scenario_catalog_with_price_20)
 
-        first_query = QuerySpec(
+        first_query = make(
+            QuerySpec,
             filters=FilterGroup(filters=(FilterSpec(field="price", op=FilterOp.EQ, value=20.0),)),
             sort=(SortSpec(field="id", direction="ASC"),),
             pagination=PaginationMode.CURSOR,
@@ -157,7 +160,8 @@ class TestRepositorySQLAlchemyIntegration:
         assert first_page.next_cursor is not None
         assert [item.name for item in first_page.items] == ["b"]
 
-        second_query = QuerySpec(
+        second_query = make(
+            QuerySpec,
             filters=first_query.filters,
             sort=first_query.sort,
             pagination=PaginationMode.CURSOR,
@@ -306,7 +310,8 @@ class TestRelatedColumnFilter:
         )
 
         page = await integration_context.product.repository.list_with_query(
-            QuerySpec(
+            make(
+                QuerySpec,
                 filters=FilterGroup(
                     filters=(FilterSpec(field="reviews.rating", op=FilterOp.EQ, value=5),)
                 ),

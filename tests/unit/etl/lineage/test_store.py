@@ -39,7 +39,6 @@ class TestTableLineageStore:
             started_at=datetime(2024, 1, 1, tzinfo=UTC),
             status=RunStatus.SUCCESS,
             duration_ms=1,
-            error=None,
         )
 
         store.write_record(record)
@@ -58,7 +57,6 @@ class TestTableLineageStore:
             started_at=datetime(2024, 1, 1, tzinfo=UTC),
             status=RunStatus.SUCCESS,
             duration_ms=1,
-            error=None,
         )
 
         store.write_record(record)

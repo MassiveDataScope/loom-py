@@ -17,7 +17,7 @@ uses it follows one pattern, whatever the pillar:
 1. **One optional dependency, one island.** An island is a module that
    imports the vendor SDK at its top, with an ordinary `import`, and nothing
    else in loom imports that SDK. The island builds what the SDK serves
-   (`loom.ai.engines.pydantic_ai.providers.bedrock`, `loom.core.sql.clickhouse`,
+   (`loom.ai.engines.pydantic_ai.providers.bedrock`, `loom.stores.clickhouse`,
    `loom.streaming.bytewax`).
 2. **The selector loads the island, not the SDK.** A registry keyed by
    provider, engine or backend name loads the island by module path once it
@@ -33,10 +33,10 @@ uses it follows one pattern, whatever the pillar:
 The island needs no `try`/`except` of its own: its `ImportError` is what
 `import_optional` translates. Islands today: the pydantic-ai providers and
 extras (`loom.ai.engines.pydantic_ai.providers`, `.extras`), the client
-builders `loom.core.connections.{aws,mongo,clickhouse}.client` (boto3, pymongo,
+builders `loom.connections.{aws,mongo,clickhouse}.client` (boto3, pymongo,
 clickhouse-connect; see [ADR 0006](adr/0006-hexagonal-layers.md)), the
 change-stream source `loom.streaming.mongo._bytewax_source` (pymongo), and the whole-package islands
-that predate the rule (`loom.core.sql.clickhouse`, `loom.streaming.bytewax`,
+that predate the rule (`loom.stores.clickhouse`, `loom.streaming.bytewax`,
 `loom.etl.testing`). A dependency listed under `dependencies` is not
 optional and gets no island: import it at the top like any other. A test that stands in for an absent or stubbed SDK
 blocks the SDK **and** evicts the island, so the next load re-imports it;
@@ -48,5 +48,5 @@ not. Code that predates this rule is migrated when it is next touched.
 An island may import another island directly: both need the same SDK, so the
 import adds no requirement. Core paths load an island with the typed loader of
 the engine's contract package (`aws_island`, `mongo_island`,
-`clickhouse_island` in `loom.core.connections.<engine>`), never with an
+`clickhouse_island` in `loom.connections.<engine>`), never with an
 `import` of the island module.

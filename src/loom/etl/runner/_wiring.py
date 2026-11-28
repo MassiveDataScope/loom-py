@@ -9,23 +9,25 @@ import logging
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 
-from loom.core.config import ConfigContext, ConfigKey
+from loom.core.config import ConfigContext, ConfigError, ConfigSection
+from loom.core.errors import InvalidUse
 from loom.core.plugins.optional import import_optional
 from loom.etl._uri import is_cloud_path
 from loom.etl.checkpoint import CheckpointStore, FsspecTempCleaner, TempCleaner
-from loom.etl.checkpoint._backends._polars import _PolarsCheckpointBackend
-from loom.etl.checkpoint._backends._spark import _SparkCheckpointBackend
+from loom.etl.checkpoint._io._polars import _PolarsCheckpointIO
+from loom.etl.checkpoint._io._spark import _SparkCheckpointIO
 from loom.etl.checkpoint._options import encryption_options
+from loom.etl.event import EtlEvent, EtlKey
 from loom.etl.lineage._config import LineageConfig
 from loom.etl.lineage.sinks import LineageStore, LineageWriter, TableLineageStore
-from loom.etl.runner._agents import UnservedAgents
-from loom.etl.runner._providers import load_backend_provider
-from loom.etl.runtime.contracts import (
+from loom.etl.ports.contracts import (
     AgentBatchRunner,
     ClientCommandExecutor,
     SourceReader,
     TargetWriter,
 )
+from loom.etl.runner._agents import UnservedAgents
+from loom.etl.runner._engines import load_etl_engine
 from loom.etl.storage._config import StorageConfig, StorageEngine
 
 _log = logging.getLogger(__name__)
@@ -61,15 +63,15 @@ def make_backends(
         * ``spark is None`` -> Polars backends.
 
     Raises:
-        ValueError: If ``storage.engine='spark'`` but ``spark`` is not provided.
+        InvalidUse: If ``storage.engine='spark'`` but ``spark`` is not provided.
     """
     if config.engine == "spark" and spark is None:
-        raise ValueError(
+        raise InvalidUse(
             "A SparkSession is required when storage.engine='spark'. "
             "Pass spark=<session> to ETLRunner.from_yaml() or ETLRunner.from_config()."
         )
     engine = _resolve_engine(config, spark)
-    provider = load_backend_provider(engine)
+    provider = load_etl_engine(engine)
     return provider.create_backends(config, spark)
 
 
@@ -82,7 +84,7 @@ def make_checkpoint_store(
     if not config.checkpoint_root:
         return None
     if not is_cloud_path(config.checkpoint_root):
-        raise ValueError(
+        raise ConfigError(
             "checkpoint_root must be a cloud URI (s3://, gs://, abfss://, ...). "
             "Local checkpoint paths are not supported."
         )
@@ -107,7 +109,7 @@ def make_lineage_writer(
         return None
     lineage.validate()
     engine = _resolve_engine(storage, spark)
-    provider = load_backend_provider(engine)
+    provider = load_etl_engine(engine)
     return provider.create_lineage_writer(storage, lineage, spark)
 
 
@@ -121,7 +123,7 @@ def make_lineage_store(
         return None
     lineage.validate()
     engine = _resolve_engine(storage, spark)
-    provider = load_backend_provider(engine)
+    provider = load_etl_engine(engine)
     writer = provider.create_lineage_writer(storage, lineage, spark)
     if lineage.database:
         return TableLineageStore(writer, database=lineage.database)
@@ -143,7 +145,7 @@ def make_client_executor(
         or ``None`` when no client backend is configured.
     """
     engine = _resolve_engine(config, spark)
-    provider = load_backend_provider(engine)
+    provider = load_etl_engine(engine)
     return provider.create_client_executor(config, spark)
 
 
@@ -174,7 +176,7 @@ def make_agent_runner(
     Raises:
         MissingExtraError: When the ``etl-polars`` extra is not installed.
     """
-    if not context.has(ConfigKey.AI):
+    if not context.has(ConfigSection.AI):
         return None
     engine = _resolve_engine(config, spark)
     if engine != StorageEngine.POLARS:
@@ -208,12 +210,11 @@ def _make_checkpoint_backend(spark: Any, storage_options: dict[str, str]) -> Any
         encryption = encryption_options(storage_options)
         if encryption:
             _log.warning(
-                "checkpoint encryption options ignored by the Spark backend keys=%s; "
-                "set fs.s3a.server-side-encryption-algorithm / -key on the Spark session",
-                sorted(encryption),
+                EtlEvent.CHECKPOINT_ENCRYPTION_IGNORED,
+                extra={EtlKey.OPTION_KEYS: sorted(encryption)},
             )
-        return _SparkCheckpointBackend(spark)
-    return _PolarsCheckpointBackend(storage_options)
+        return _SparkCheckpointIO(spark)
+    return _PolarsCheckpointIO(storage_options)
 
 
 def _resolve_engine(config: StorageConfig, spark: Any) -> str:

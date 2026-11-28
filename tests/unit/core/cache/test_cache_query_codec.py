@@ -17,12 +17,17 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+import msgspec
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from loom.core.cache import CacheConfig, CachedRepository
 from loom.core.cache.decorators import cache_query
+from loom.core.cache.event import CacheEvent
 from loom.core.cache.result_codec import build_result_codec
-from loom.core.errors import BoundaryValidationError
+from loom.core.errors import BoundaryValidationError, InvalidType
+from tests.helpers.loggers import CapturedLog
 
 from ._doubles import (
     AcmeCacheWidget,
@@ -211,7 +216,7 @@ class TestUnusableAnnotations:
     ) -> None:
         repository = OutOfGrammarReadRepository(_widgets(ROW_COUNT), AcmeCacheWidget)
 
-        with pytest.raises(RuntimeError) as excinfo:
+        with pytest.raises(InvalidType) as excinfo:
             wrap_with_cache(repository, cache_config)
 
         message = str(excinfo.value)
@@ -230,7 +235,7 @@ class TestUnusableAnnotations:
 
         codec_env.repository.attached = attached  # type: ignore[attr-defined]
 
-        with pytest.raises(RuntimeError, match="attached"):
+        with pytest.raises(InvalidType, match="attached"):
             _ = codec_env.wrapper.attached
 
 
@@ -384,10 +389,14 @@ class TestPayloadWrittenByAnEarlierVersion:
         self,
         warm_env: CachedEnv[AcmeCacheWidget],
         cache_config: CacheConfig,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         wrapper, _repository = self._evolved(warm_env, cache_config)
 
         assert await wrapper.stats() == EvolvedStats(total=ROW_COUNT, label="all", source="v2")
+        assert CapturedLog(caplog).exception_types(CacheEvent.PAYLOAD_MISMATCHED) == [
+            BoundaryValidationError
+        ]
 
     async def test_the_stale_entry_is_overwritten_so_the_next_call_hits(
         self,
@@ -492,3 +501,20 @@ class TestGrammarBoundaries:
         assert codec is not None
         assert codec.decode([{"total": 1, "label": "a"}]) == [Stats(total=1, label="a")]
         assert codec.decode(None) is None
+
+
+def _returns_numbers() -> tuple[int, ...]:
+    raise NotImplementedError
+
+
+class TestResultCodecProperties:
+    @given(values=st.lists(st.integers(min_value=-(2**63), max_value=2**63 - 1), max_size=12))
+    def test_tuple_result_round_trips_through_payload(self, values: list[int]) -> None:
+        codec = build_result_codec(_returns_numbers, model=None)
+        assert codec is not None
+
+        encoded = codec.encode(tuple(values))
+        stored = msgspec.json.decode(msgspec.json.encode(encoded.payload))
+
+        assert encoded.value == tuple(values)
+        assert codec.decode(stored) == tuple(values)

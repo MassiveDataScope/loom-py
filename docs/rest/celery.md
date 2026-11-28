@@ -1,7 +1,7 @@
 # Celery worker
 
 `loom-kernel` bootstraps Celery workers from the same config, discovery and
-composition used by the REST API: the worker gets the same persistence backends,
+composition used by the REST API: the worker gets the same store backends,
 row-level security and startup checks. Jobs are first-class citizens — they
 support `Input()`, `LoadById()`, `Rule`, and full DI injection just like use cases.
 
@@ -20,11 +20,11 @@ pip install "loom-kernel[celery]"
 | Concept | Purpose |
 |---------|---------|
 | `Job` | Background unit of work — runs asynchronously on a worker |
-| `JobService.dispatch()` | Enqueue a job after the current UoW commits (fire-and-forget) |
+| `JobService.dispatch_after_commit()` | Enqueue a job after the current UoW commits (fire-and-forget) |
 | `JobService.run()` | Execute a job immediately in the calling process |
 | `JobCallback` | Hook invoked by the broker on task success or failure |
 | `bootstrap_worker()` | Single entry point to start a Celery worker |
-| `CeleryAdapter` | The worker's adapter over the shared composition (`loom.celery.adapter`) |
+| `CeleryRuntime` | The worker's runtime over the shared composition (`loom.celery.runtime`) |
 | `WorkerNotOpenError` | Raised by every task of a worker process whose application failed to open |
 | `CeleryConfig` | YAML-driven broker and worker settings |
 | `JobConfig` | Per-job routing and retry overrides from YAML |
@@ -55,7 +55,7 @@ class SendRestockEmailJob(Job[bool]):
     """Send a restock notification email. Returns True when email was sent."""
 
     __queue__ = "notifications"
-    __retries__ = 2
+    __retry__ = Backoff(first_s=10, factor=3, max_s=600)
     __timeout__ = 30  # soft time limit in seconds
 
     async def execute(
@@ -75,7 +75,7 @@ class SendRestockEmailJob(Job[bool]):
 | ClassVar | Type | Default | Description |
 |----------|------|---------|-------------|
 | `__queue__` | `str` | `"default"` | Target Celery queue |
-| `__retries__` | `int` | `3` | Max automatic retries on failure |
+| `__retry__` | `Backoff \| None` | `None` | Delay between attempts; `None` takes the loom default `Backoff(5, 2, 300)` |
 | `__countdown__` | `int` | `0` | Delay in seconds before first execution |
 | `__timeout__` | `int \| None` | `None` | Soft time limit in seconds |
 | `__priority__` | `int` | `0` | Task priority (broker-dependent) |
@@ -87,7 +87,7 @@ see {ref}`rest-per-job-overrides-from-yaml`.
 
 ## Dispatch a job
 
-Use `JobService.dispatch()` inside a use case to enqueue a job after the current
+Use `JobService.dispatch_after_commit()` inside a use case to enqueue a job after the current
 Unit of Work commits. The job is **not sent** if the UoW rolls back — dispatch is
 transactionally safe:
 
@@ -112,7 +112,7 @@ class DispatchRestockEmailUseCase(UseCase[Product, DispatchRestockEmailResponse]
         cmd: DispatchRestockEmailCommand = Input(),
         product: Product = LoadById(Product, by="product_id"),
     ) -> DispatchRestockEmailResponse:
-        handle = self._jobs.dispatch(
+        handle = self._jobs.dispatch_after_commit(
             SendRestockEmailJob,
             params={"product_id": int(product_id)},
             payload={
@@ -126,10 +126,15 @@ class DispatchRestockEmailUseCase(UseCase[Product, DispatchRestockEmailResponse]
         return DispatchRestockEmailResponse(job_id=handle.job_id, queue=handle.queue)
 ```
 
-`dispatch()` returns a `JobHandle` immediately — the broker call happens after the
+`dispatch_after_commit()` returns a `JobHandle` immediately — the broker call happens after the
 UoW commits. The HTTP response does not wait for the job to complete.
 
-### dispatch() parameters
+`dispatch_now()` takes the same arguments and sends the job at once, before the caller's writes
+commit. On every transport, sending means enqueueing: the call returns once the job is on its queue
+(the broker, SQS, or the inline timer), never after running it, and the job runs whatever the
+caller does next, a raise or a rollback included.
+
+### dispatch_after_commit() parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -137,11 +142,10 @@ UoW commits. The HTTP response does not wait for the job to complete.
 | `params` | `dict \| None` | Path/query params for `execute()` signature |
 | `payload` | `dict \| None` | JSON body passed as `Input()` command |
 | `on_success` | `type[Callback] \| None` | Callback invoked by the broker on success |
-| `on_failure` | `type[Callback] \| None` | Callback invoked by the broker on failure |
+| `on_failure` | `type[Callback] \| None` | Callback invoked by the worker on every terminal failure of the job task |
 | `queue` | `str \| None` | Override the job's `__queue__` for this dispatch only |
-| `countdown` | `int \| None` | Delay in seconds before execution |
+| `countdown` | `int \| None` | Delay in seconds before execution, 0 through 900 inclusive |
 | `priority` | `int \| None` | Override the job's `__priority__` |
-| `eta` | `datetime \| None` | Absolute datetime for first execution |
 
 ---
 
@@ -165,28 +169,112 @@ class BuildProductSummaryUseCase(UseCase[Product, ProductSummaryResponse]):
         return ProductSummaryResponse(product_id=int(product_id), summary=summary)
 ```
 
-`run()` works identically in both `InlineJobService` (development / tests) and
-`CeleryJobService` (production). When Celery is configured, it bypasses the broker
+`run()` works identically in both `JobService with InlineJobTransport` (development / tests) and
+`JobService with CeleryJobTransport` (production). When Celery is configured, it bypasses the broker
 entirely — the job runs in the API process via the same DI container.
 
-Use `dispatch()` for fire-and-forget work; use `run()` when you need the result now.
+Use `dispatch_after_commit()` for fire-and-forget work; use `run()` when you need the result now.
+
+### The inline transport
+
+`JobService with InlineJobTransport` follows the model of a queue, run in this process: every
+dispatch, `dispatch_now()`, a post-commit flush, with a countdown or with none, is handed to a
+`JobTimer` with its delay (zero included) and runs once the call that sent it has returned. A job
+that dispatches another enqueues it the same way, so a chain of jobs runs one job after another,
+never nested in its sender, and an outer job's timeout does not run while its children do.
+The transport needs a timer: composition builds an `AsyncioJobTimer` (or uses the `JobTimer` a test
+binds), and a hand-built transport takes one, `InlineJobTransport(factory, executor, timer=AsyncioJobTimer())`.
+
+The timer also honours `countdown`, `JobPostponement` and failure backoff: a
+delayed job waits in the memory of the process and runs again
+with its attempt and postponements carried. Exhausted attempts abandon the job and
+call `on_failure`. A job delayed this way is lost when the process stops (the
+timer reports each one to the execution observers as `JOB_ABANDONED` with reason
+`shutdown`, and logs it), so the service logs a warning at
+start-up: use Celery or SQS in production. A Lambda function cannot hold a delay
+(`can_wait_in_process=False`): its inline service refuses a countdown above zero with `JobDelayRefusedError`,
+abandons a `JobPostponement`, and abandons a failing job at its first attempt with its own error.
+Its jobs with no delay still run on the timer, and each invocation returns once they have run:
+Lambda freezes the environment as soon as the handler returns.
+
+### Wait until the inline jobs are idle
+
+`await application.jobs.wait_until_idle()` returns once no inline job is running or waiting on
+the timer, including the jobs those jobs dispatch and those waiting for a countdown. Call it inside
+`application.running()`, while the resources the jobs use (a database pool, the AWS clients) are
+still open. `application.jobs` is the application's `JobService`. A transport whose jobs run in
+another process (Celery, SQS) holds nothing here, so for it `wait_until_idle()` returns at once.
+
+A CLI or runner that sends jobs and reports what they came to waits for them before it counts,
+as the `consume` example in "React to job outcomes in your application" does.
+
+Without the wait, `running()` exiting applies `jobs.shutdown` to whatever is still enqueued: under
+`cancel` those jobs are lost, before they ran, and reported with reason `shutdown`.
+
+In tests, `HttpTestHarness` waits after each request, and a Lambda handler (so `LambdaTestClient`)
+after each invocation: a test asserts a job's effects right after the call. A test that dispatches
+through the `JobService` itself awaits `wait_until_idle()`. A bound `ManualTimer` runs, on
+`wait_until_idle()`, every step already due, the jobs sent with no countdown and the ones they send,
+without moving its clock; a countdown runs when the test calls `await timer.advance(seconds)`.
+
+### Shutdown of delayed jobs
+
+What stopping the application does with the delayed jobs the inline timer holds is
+configured, and `Application.running()` exiting is the only trigger: the application
+calls nothing.
+
+```yaml
+jobs:
+  shutdown:
+    mode: wait        # wait | cancel (default: cancel)
+    timeout_s: 600    # only with wait; optional, no limit when absent
+```
+
+| Mode | On exit |
+|------|---------|
+| `cancel` (default) | Cancels every pending step and reports each job lost as `JOB_ABANDONED` with reason `shutdown`. |
+| `wait` | Waits until no step is pending, counting the steps scheduled meanwhile (retries, postponements, callbacks of running steps), for at most `timeout_s`. What is still pending then is cancelled and reported as in `cancel`. |
+
+Each job lost is also one `ERROR` record, `Job abandoned`, with `loom.job.name`,
+`loom.task_id` and `loom.reason`. A delayed step that raises outside the run of its job
+(a failure callback that cannot notify, for example) is abandoned the same way with
+reason `step_crashed`. An application observer therefore sees every delayed job
+lost: a CLI that counts abandonments exits non-zero when work was dropped at shutdown.
+
+A server keeps `cancel`: stopping must be quick, and a job delayed inline is not durable
+anyway. A CLI or a process that ends by itself uses `wait`, so the delayed jobs it
+started finish before it exits. A `timeout_s` with `cancel`, a timeout of zero or less
+and an unknown mode are a `ConfigError` at start-up and in `loom check`. Celery and SQS
+hold nothing pending in this process, so `jobs.shutdown` does not affect them.
+
+In tests, `ManualTimer(JobShutdown(mode=ShutdownMode.WAIT))` bound with
+`Override.instance(JobTimer, ...)` follows the same contract in fake time, closed by
+`running()` exit like the built timer: on exit it runs the pending steps until idle or until `timeout_s`
+seconds of the fake clock, and `timer.lost` lists what was dropped. Give it
+`ManualTimer(execution_observer=...)` to receive the same `shutdown` abandonments.
 
 ---
 
 ## Callbacks
 
-Callbacks are injected by the DI container and can interact with the application
-via `ApplicationInvoker`. Implement `on_success` and/or `on_failure` — both can be
-sync or async:
+A callback is a subclass of `JobCallback` defined in a package listed in
+`app.packages`: the scan finds it, and Celery registers a success and a failure
+task for it. Both hooks do nothing until overridden, so override `on_success`,
+`on_failure` or both, each as `def` or `async def`. The DI container builds the
+callback, so it can interact with the application via `ApplicationInvoker`.
+A `dispatch_after_commit(..., on_success=X)` naming a class the scan did not find is refused
+with a `ValueError`, by every job service the composition builds, before anything is
+sent:
 
 ```python
 # app/product/callbacks.py
 from typing import Any
+from loom.core.job.callback import JobCallback
 from loom.core.use_case.invoker import ApplicationInvoker
 from app.product.model import Product
 
 
-class RestockEmailSuccessCallback:
+class RestockEmailSuccessCallback(JobCallback):
     """Tags the product category when a restock email is sent successfully."""
 
     def __init__(self, app: ApplicationInvoker) -> None:
@@ -204,11 +292,11 @@ class RestockEmailSuccessCallback:
                 payload={"category": f"{product.category}-restock-notified"},
             )
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
+    def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None:
         pass  # log or send alert
 
 
-class RestockEmailFailureCallback:
+class RestockEmailFailureCallback(JobCallback):
     """Tags the product category when restock email dispatch fails."""
 
     def __init__(self, app: ApplicationInvoker) -> None:
@@ -217,9 +305,7 @@ class RestockEmailFailureCallback:
     def on_success(self, job_id: str, result: Any, **context: Any) -> None:
         pass
 
-    async def on_failure(
-        self, job_id: str, exc_type: str, exc_msg: str, **context: Any
-    ) -> None:
+    async def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None:
         product_id = context.get("product_id")
         entity = self._app.entity(Product)
         product = await entity.get(params={"id": product_id})
@@ -236,18 +322,97 @@ class RestockEmailFailureCallback:
 # called on task success — result is the value returned by Job.execute()
 async def on_success(self, job_id: str, result: Any, **context: Any) -> None: ...
 
-# called on task failure — exc_type / exc_msg describe the exception
-async def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None: ...
+
+# called on task failure — exc_type is the exception's fully qualified class name
+# (app.billing.PaymentDeclined; a builtin bare: ValueError), exc_code its loom code
+async def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None: ...
 ```
 
-`**context` contains the raw `payload` dict passed to `dispatch()` — use it to
+`**context` contains the raw `payload` dict passed to `dispatch_after_commit()` — use it to
 recover entity IDs and other parameters the callback needs.
 
-> **Fire-and-forget**: when a job dispatched via `dispatch()` fails, the failure
+> **Fire-and-forget**: when a job dispatched via `dispatch_after_commit()` fails, the failure
 > callback is invoked and the exception is **silenced**. The HTTP layer is not affected.
 > Use `run()` when you need the exception to propagate synchronously.
 
+> **Delivery of the failure callback**: the worker that ends the job with an error sends the
+> failure callback task itself, with the error's class and message, before it stores the failure.
+> Every terminal failure notifies, including a job refused because the worker could not open its
+> application and a soft time limit; a retried failure does not. The callback is delivered *at
+> least once*: a worker that dies between the send and the acknowledgement of the job repeats
+> it. A hard kill (hard time limit, out of memory, `SIGKILL`) cannot notify. Deploy workers before
+> dispatchers: a worker older than the dispatcher refuses the `failure_callback` argument.
+>
+> The soft time limit equals the job's timeout, which the runner already enforces on the event
+> loop, so Celery's own soft limit fires only when a job blocks that loop.
+
 ---
+
+## React to job outcomes in your application
+
+Every job run reports to the *execution observers*: `JOB_STARTED`, then
+`JOB_SUCCEEDED`, `JOB_POSTPONED`, `JOB_FAILED` or `JOB_ABANDONED`, the last
+carrying its `reason` (an `AbandonReason`: `attempts_exhausted`, `not_retryable`,
+`job_asked`, `cannot_wait`, and, for a delayed inline job, `shutdown` when it was
+cancelled as the process stopped and `step_crashed` when its step raised outside the run
+of the job). An observer is any class with
+`on_event(event: ExecutionEvent)`. It works the same on every transport (inline,
+Celery, SQS, Lambda), which a job callback does not: callbacks differ per
+transport, and SQS refuses them.
+
+Declare your own per environment, as `module:Class` references:
+
+```yaml
+observability:
+  execution_observers:
+    - trachinus.entrypoints.job_failures:JobFailureRecorder
+```
+
+Loom builds each class with no arguments, after the observers it builds itself
+(Prometheus when enabled), and delivers every event to all of them.
+
+- A reference that is malformed, does not import or names a class without
+  `on_event` is a `ConfigError` naming the entry, at start-up and in
+  `loom check --deploy`. `loom check` imports the module from `app.code_path`,
+  as it does for `checks.modules`; it does not build the class.
+- An observer that raises is logged (`loom.engine.execution_observer_failed`) and
+  skipped: it breaks neither the run nor the other observers.
+- `on_event` may be called from any thread. Keep the observer thread-safe and quick.
+
+A consumer that must exit with status 1 when a job was abandoned records it in
+an observer and checks it after `running()`:
+
+```python
+# trachinus/entrypoints/job_failures.py
+import threading
+
+from loom.core.engine.events import EventKind, ExecutionEvent
+
+
+class JobFailureRecorder:
+    abandoned: list[ExecutionEvent] = []
+    _lock = threading.Lock()
+
+    def on_event(self, event: ExecutionEvent) -> None:
+        if event.kind is EventKind.JOB_ABANDONED:
+            with self._lock:
+                self.abandoned.append(event)
+```
+
+```python
+# trachinus/entrypoints/consume.py
+async def consume(application: Application) -> int:
+    async with application.running():
+        await drain_queue(application)
+        await application.jobs.wait_until_idle()
+    for event in JobFailureRecorder.abandoned:
+        print(f"abandoned {event.use_case_name}: {event.reason}", file=sys.stderr)
+    return 1 if JobFailureRecorder.abandoned else 0
+```
+
+`wait_until_idle()` lets the inline jobs finish before the count (see "Wait until the inline jobs
+are idle"). The count also includes the inline jobs lost at shutdown (reason `shutdown`), so the
+CLI does not exit 0 when work was dropped.
 
 ## Post-commit failures
 
@@ -259,12 +424,12 @@ exception the failed action raised, carrying whether anything committed.
 
 - **`committed=True`** — the job's transaction committed. The worker task
   treats it as a terminal failure: it is **not retried**, and
-  `JOB_EXHAUSTED` is emitted instead of `JOB_RETRYING`. Retrying would run
+  `JOB_ABANDONED` is emitted instead of `JOB_FAILED`. Retrying would run
   the job's `execute()` a second time even though its write already
   committed; the fix belongs to whatever the post-commit action talks to
   (the broker, the cache), not to re-running the job.
 - **`committed=False`** — the job owned no unit of work (declared
-  `read_only`, or the worker runs without a persistence backend). Nothing
+  `read_only`, or the worker runs without a store backend). Nothing
   was written, so the task is retried like any other failure.
 
 See [Execution lifecycle](use-case-dsl.md#execution-lifecycle) for how the
@@ -289,13 +454,13 @@ while an elevation is active raises `NestedElevation`. See
 ADR 0008
 (`docs/architecture/adr/0008-stores-and-units-of-work.md`).
 
-`JobService.dispatch(Job, payload=..., params=...)` is asynchronous: the job is
+`JobService.dispatch_after_commit(Job, payload=..., params=...)` is asynchronous: the job is
 sent after the caller's commit, runs in its own unit of work, possibly in
 another process, and is delivered at least once. It returns a `JobHandle`, not
 the result.
 
 Use `invoke` when the caller needs the result or the two writes must be atomic;
-use `dispatch` for work that can happen later, or that must run as another
+use `dispatch_after_commit` for work that can happen later, or that must run as another
 identity.
 
 ---
@@ -305,9 +470,9 @@ identity.
 - `asyncio.gather` over several `invoke` calls: one invocation scope has one
   owner task; a participant touched from a `gather` child raises
   `ScopeOwnershipError`. Await the calls one after another.
-- Callbacks (`on_success` / `on_failure`, or `on_all_success` /
-  `on_any_failure` on `dispatch_parallel`) with the SQS backend: `dispatch`
-  refuses them with `SQSDispatchError` (code `sqs_callbacks`).
+- Callbacks (`on_success` / `on_failure`) with the SQS backend:
+  `dispatch_after_commit` refuses them with `SQSDispatchError` (code
+  `sqs_callbacks`).
 - `handle.wait()` with the SQS backend: an SQS `JobHandle` carries no result
   to wait for. Use `run()` or `invoke` when you need the result.
 - Renaming or moving a `Job` class while messages are in flight: the envelope
@@ -317,8 +482,8 @@ identity.
 - Queue URLs or boto3 clients inside a use case: the configuration belongs in
   `sqs.queues` and `aws:`; a use case injects `JobService` and names a queue
   at most.
-- `dispatch` for work the request needs now: it runs after the commit, so the
-  response cannot depend on it. Use `invoke`.
+- `dispatch_after_commit` for work the request needs now: it runs after the
+  commit, so the response cannot depend on it. Use `invoke`.
 - Non-idempotent jobs: delivery is at least once with SQS and with Celery
   (tasks are registered with `acks_late=True`, so a worker lost mid-task
   re-runs it). Make `execute()` safe to repeat, for example keyed by a
@@ -329,10 +494,10 @@ broker, is deferred.
 
 ---
 
-## Pick the job backend
+## Pick the job transport
 
-A use case injects `JobService` and never names a backend. `app.job_service`
-names the backend for every queue `celery.queues` does not list: `inline`,
+A use case injects `JobService` and never names a transport. `app.job_service`
+names the transport for every queue `celery.queues` does not list: `inline`,
 `celery`, `sqs` or a `module:Class` reference. The effective queue of a job is the
 `queue=` of the call, otherwise its `__queue__` after the `jobs.<Job>.queue`
 override.
@@ -356,16 +521,17 @@ Here `notifications` and `erp` go to Celery and any other queue runs inline.
 `task_default_queue` (`default` unless set) must be listed in `queues`, but it
 stays with `app.job_service`: a job left on `__queue__ = "default"` runs inline.
 
-- Only the backends in use are built: with no `celery.queues` and an inline
+- Only the transports in use are built: with no `celery.queues` and an inline
   default, Celery is not even imported.
-- One backend is registered as itself; two sit behind a `JobRouter`.
-- `run()` goes to the default backend (in-process for `inline`, `celery` and `sqs`).
-- `dispatch_parallel()` over jobs of several backends returns one `JobGroup`
-  in input order, and refuses callbacks with `MixedJobBackendsError`.
-- Startup fails with `JobBackendError` for an unknown name or when Celery or
-  SQS is needed without its `loom[celery]` or `loom[sqs]` extra.
-- A `module:Class` backend is built as `Class(context)`, where `context` is a
-  `loom.composition.JobBackendContext`.
+- One `JobService` is registered; it picks an `InlineJobTransport`,
+  `CeleryJobTransport` or `SQSJobTransport` by effective queue.
+- `run()` executes in process for every transport.
+- `dispatch_parallel()` over jobs of several transports returns one `JobGroup`
+  in input order. It takes no callbacks.
+- Startup fails with `JobTransportError` for an unknown name or when Celery or
+  SQS is needed without its `loom[celery]` or `loom[aws]` extra.
+- A `module:Class` transport is built as `Class(context)`, where `context` is a
+  `loom.composition.JobTransportContext`.
 - `LOOM__APP__JOB_SERVICE` can override the key in production and staging,
   but never with a `module:Class` reference.
 
@@ -376,8 +542,8 @@ section and the extra select Celery, and anything else runs inline.
 ### SQS
 
 `app.job_service: sqs` sends each dispatched job to Amazon SQS as one message
-whose body is the `JobEnvelope` the Lambda SQS adapter runs. Install
-`loom-kernel[sqs]`.
+whose body is the `JobEnvelope` the Lambda SQS runtime runs. Install
+`loom-kernel[aws]`.
 
 ```yaml
 app:
@@ -389,8 +555,12 @@ aws:
 
 sqs:
   queues:
-    default: https://sqs.eu-west-1.amazonaws.com/123456789012/shop
-    orders: https://sqs.eu-west-1.amazonaws.com/123456789012/orders.fifo
+    default:
+      url: https://sqs.eu-west-1.amazonaws.com/123456789012/shop
+      abandoned: dead_letter
+    orders:
+      url: https://sqs.eu-west-1.amazonaws.com/123456789012/orders.fifo
+      abandoned: discard
 ```
 
 ```python
@@ -400,17 +570,22 @@ class ShipOrderJob(Job[None]):
 ```
 
 - `sqs:` takes the `aws:` client keys, overriding them, plus `queues`.
+- Each queue is a mapping: its `url` and `abandoned`, what becomes of an abandoned message: `dead_letter`
+  (default) or `discard`. A queue written as a bare URL is refused at load,
+  naming the mapping.
 - Only the jobs SQS serves need a URL: those on `celery.queues` go to Celery.
 - Startup fails with `SQSQueueConfigError` when a job's queue has no URL, or
   when a job on a FIFO queue (URL ending in `.fifo`) declares no `__group_by__`.
 - On a FIFO queue, the SHA-256 of the group field's value is the
   `MessageGroupId` (it meets SQS's limits and keeps the value out of SQS), and
   the task id is the `MessageDeduplicationId`.
-- `dispatch` raises `SQSDispatchError`, before anything is sent, for:
-  callbacks, a `priority` other than the job's, a queue without a URL, a
-  delay over 900 s, any delay on a FIFO queue (FIFO queues take a delay per
-  queue only), a FIFO payload whose group field is missing or null, a body
-  holding a character SQS refuses, or a body over 256 KiB.
+- `dispatch_after_commit` refuses an out-of-bound countdown (above 900 or
+  negative) with `ValueError` before anything is sent. It raises
+  `SQSDispatchError`, before anything is sent, for: callbacks, a `priority`
+  other than the job's, a queue without a URL, any delay on a FIFO queue
+  (FIFO queues take a delay per queue only), a FIFO payload whose group field
+  is missing or null, a body holding a character SQS refuses, or a body over
+  256 KiB.
 - The message is sent after the commit, on the shielded publish lane, so a
   cancellation after the commit does not lose it. A failed send is logged and
   raised as `SQSDispatchError` with the job, task id, queue and AWS error code,
@@ -429,7 +604,8 @@ sqs:
   batch_size: 10
   max_concurrent_sends: 1
   queues:
-    default: https://sqs.eu-west-1.amazonaws.com/123456789012/shop
+    default:
+      url: https://sqs.eu-west-1.amazonaws.com/123456789012/shop
 ```
 
 - `batch` (default `true`): `false` sends each job with its own `SendMessage`.
@@ -447,7 +623,7 @@ sqs:
   `SQSDispatchError` (`code="sqs_batch_partial_failure"`) carrying the count
   and codes.
 - If the shielded send itself dies (the loop closing), each job not yet handed
-  to SQS is logged as `PostCommitShieldedActionNeverRan`.
+  to SQS is logged as `loom.engine.post_commit_shielded_action_never_ran`.
 - Nothing waits for jobs from other requests: a batch never outlives the
   execution that committed it.
 
@@ -468,10 +644,12 @@ lambda:
           batch_size: 100
           batching_window_s: 5
           max_concurrency: 50
-          report_batch_item_failures: true
 ```
 
 - `name` is a key of `sqs.queues`.
+- At Init the function checks the queue it consumes, and only that one: an
+  application that only dispatches calls neither `GetQueueAttributes` nor
+  `GetQueueUrl`.
 - `batch_size` (1–10000; 10 at most on a FIFO queue; over 10 needs
   `batching_window_s` of at least 1), `batching_window_s` (0–300) and
   `max_concurrency` (2–1000) are the
@@ -479,10 +657,98 @@ lambda:
   `BatchSize`, `MaximumBatchingWindowInSeconds` and
   [`ScalingConfig.MaximumConcurrency`](https://docs.aws.amazon.com/lambda/latest/api/API_ScalingConfig.html).
   loom validates them for the deployment but does not apply them.
-- `report_batch_item_failures` (default `true`) must match the mapping's
-  `ReportBatchItemFailures`: `false` makes the handler raise
-  `SQSBatchFailedError` when a record fails, so Lambda retries the whole batch.
+- The event source mapping must enable `ReportBatchItemFailures`: the deploy
+  manifest always says so, and there is no setting to turn it off. The handler
+  returns the messages the queue must deliver again in `batchItemFailures`.
 - An http function, and a direct event trigger, refuse the `queue:` block.
+
+#### Dead letters and attempts
+
+`abandoned` names what becomes of an abandoned message and who owns the attempt
+limit:
+
+| `abandoned` | Dead-letter queue | The attempt limit |
+|---|---|---|
+| `dead_letter` (default) | the one in the queue's `RedrivePolicy` | the `maxReceiveCount` of that policy; a job consumed from the queue may not declare `max_attempts` in its own `jobs.<Job>.retry` |
+| `discard` | none | `max_attempts` of the job (loom default 3) |
+
+- A function consuming a `dead_letter` queue reads the queue's `RedrivePolicy`
+  once, at Init. Without one, startup fails naming the queue and both options:
+  attach a dead-letter queue, or set `abandoned: discard`.
+- `jobs.defaults.retry.max_attempts` does not apply to jobs consumed from a
+  `dead_letter` queue: `maxReceiveCount` wins. Startup logs the effective policy of
+  the jobs of the consumed queue.
+- A function consuming a queue that `sqs.queues` does not map fails startup
+  naming `sqs.queues.<name>`.
+
+#### Settlement
+
+The function settles each message by what its job came to. The decision is
+per message; only the calls to SQS are grouped, by action and queue, at most
+ten entries each.
+
+| Outcome | Action | In `batchItemFailures` |
+|---|---|---|
+| Succeeded | none | no |
+| Abandoned (`JobAbandonment`, an error that cannot succeed, or attempts exhausted), `dead_letter` | `SendMessageBatch` to the dead-letter queue, with the reason as the `loom.abandonment_reason` attribute | only if that send failed |
+| Abandoned, `discard` | none: an ERROR log with `outcome=discarded` | no |
+| Postponed (`JobPostponement`), standard queue | `SendMessageBatch` to the same queue with `DelaySeconds` and `loom.postponements` plus one | only if that send failed |
+| Postponed, FIFO queue | refused, as a FIFO queue takes no per-message delay; settled as Failed | yes |
+| Failed | `ChangeMessageVisibilityBatch` to the backoff delay | yes |
+
+- A success makes no call to SQS, and loom never calls `DeleteMessage`: Lambda
+  deletes every record not in `batchItemFailures`.
+- `JobPostponement` re-sends the message instead of changing its visibility, so a
+  postponement never counts toward `maxReceiveCount`; a job that keeps asking to
+  wait is never dead-lettered.
+- The attempt a job reads is the record's `ApproximateReceiveCount`, and its
+  postponements are the `loom.postponements` attribute. A failure on the last attempt
+  is abandoned: a `dead_letter` queue receives it from loom instead of from SQS
+  after one more delivery.
+- A call that fails for some entries lists only those messages; one that fails
+  for all lists all of them, and the failure is logged in one line per call. A
+  failed visibility change is logged and never aborts the batch.
+- Each settlement call is bounded: 1 s to connect, 1 s to read, one attempt. A
+  timeout in the middle of a settlement redelivers the batch: a message may run
+  twice, none is lost.
+- A `jobs` function must declare `trigger.queue`: the configuration is refused
+  without it, and `loom deploy manifest` refuses it too.
+- The function reads the dead-letter policy of the queue it consumes once, at
+  Init, with the application's own SQS client and its retries: two calls
+  (`GetQueueAttributes` and `GetQueueUrl`) once per cold start. A botocore error,
+  or a `RedrivePolicy` missing or unreadable, names the queue and stops start-up.
+  An invocation never reads queue metadata. The function logs one
+  `Job retry policies` line for its jobs.
+- A record the function did not run (the invocation ran out of time, or it
+  follows a failed message on a FIFO queue) stays in `batchItemFailures`
+  without being settled. It is not an attempt of the job, though SQS counts its
+  delivery in `ApproximateReceiveCount`.
+- A record settles only if its event source ARN is the queue the function
+  consumes. Any other ARN is logged as an ERROR and listed in
+  `batchItemFailures` until the queue's own `RedrivePolicy` dead-letters it.
+- A message whose `ApproximateReceiveCount` is not a positive integer or whose
+  `loom.postponements` is not a non-negative one is malformed: only that message is
+  abandoned.
+- A malformed message is abandoned at once, with `MalformedJobMessage` as reason.
+  A message naming a job the function does not serve is retried, as a deploy
+  may still be rolling out, but only up to the queue's limit (`maxReceiveCount`
+  on `dead_letter`, the default `max_attempts` on `discard`); then it is abandoned.
+
+**IAM.** The role of a function consuming a queue needs:
+
+| Action | Resource |
+|---|---|
+| `sqs:ChangeMessageVisibility`, `sqs:SendMessage`, `sqs:GetQueueAttributes` | the source queue |
+| `sqs:SendMessage`, `sqs:GetQueueUrl` | the dead-letter queue |
+
+The producer role needs `sqs:SendMessage` on the queues it dispatches to.
+
+**Moving dead letters back.** A message sent to a dead-letter queue directly,
+not by SQS through the `RedrivePolicy`, has no source queue recorded. In
+LocalStack 4.14, `StartMessageMoveTask` without a `DestinationArn` fails on
+it, and with `DestinationArn` set to the source queue it moves it back. In the
+console, choose "Redrive to custom destination", not "Redrive to source queue";
+with the API or CLI, always pass `DestinationArn`.
 
 ### Who can run a job
 
@@ -562,16 +828,16 @@ In `config/worker.yaml`:
 jobs:
   SendRestockEmailJob:
     queue: notifications
-    retries: 2
+    retry: {max_attempts: 4}
     timeout: 30
 
   BuildProductSummaryJob:
     queue: analytics
-    retries: 1
+    retry: {first_s: 1, max_attempts: 2}
 
   SyncProductToErpJob:
     queue: erp
-    retries: 3
+    retry: {factor: 1.5, jitter: false}
     countdown: 5
     priority: 5
 ```
@@ -579,135 +845,94 @@ jobs:
 | Field | Job ClassVar | Description |
 |-------|-------------|-------------|
 | `queue` | `__queue__` | Target Celery queue |
-| `retries` | `__retries__` | Max automatic retries |
+| `retry` | `__retry__` | Retry policy, see below |
 | `countdown` | `__countdown__` | Delay in seconds before execution |
 | `timeout` | `__timeout__` | Soft time limit in seconds |
 | `priority` | `__priority__` | Task priority |
+
+### Retry policy
+
+A job is attempted at most `max_attempts` times (3 by default). After a failed
+attempt it waits `Backoff(first_s, factor, max_s, jitter)`: `first_s * factor ** (attempt - 1)`
+seconds, capped at `max_s` (never above 900) and, with `jitter` (the default), drawn
+uniformly from zero to that value. A job may raise `JobPostponement(reason, delay_s=None)`
+to run again later without using an attempt, or `JobAbandonment(reason)` to give up at
+once; a loom error whose `is_retryable` is `False` is abandoned at its first attempt, and any other exception is retried.
+
+The most specific layer wins, and a section that sets only some fields inherits the
+rest from the layer below: `jobs.<Job>.retry`, then `jobs.defaults.retry`, then the
+job's `__retry__`, then the loom default. `max_attempts` is only set in YAML.
+A job reads the delivery it runs under by declaring `delivery: JobDelivery | None =
+Delivery()` on `execute` (its `attempt` and `postponements`); a job run by another job gets
+`None`.
+
+```yaml
+jobs:
+  defaults:
+    retry: {max_attempts: 5}
+  SyncProductToErpJob:
+    retry: {first_s: 30}
+```
+
+Start-up logs one line with each job's effective policy and the layer it came from.
 
 ---
 
 (rest-worker-bootstrap)=
 ## Worker bootstrap
 
-### Option 1: Discovery from YAML (recommended)
+### Package discovery
 
-Declare `app.discovery` in `worker.yaml` and let the framework discover jobs,
-use cases, and interfaces automatically. This is the most production-friendly option:
-
-In `config/worker.yaml`:
+Declare application packages in `config/worker.yaml`. The worker recursively
+scans their modules for jobs, use cases, and models:
 
 ```yaml
-includes:
-  - celery.yaml
-
 app:
-  name: billing-worker
-  discovery:
-    mode: modules
-    modules:
-      include:
-        - app.product.model
-        - app.product.jobs
-        - app.product.use_cases
-        - app.product.interface
-        - app.product.callbacks
-
-persistence:
-  cursors:
-    signing: ephemeral
+  name: acme-worker
+  packages: [acme]
 
 stores:
+  settings:
+    cursors:
+      signing: ephemeral
   default:
     backend: sqlalchemy
     url: ${oc.env:DATABASE_URL}
 ```
 
-| Key | Meaning |
-| --- | --- |
-| `celery.yaml` | broker settings |
-| `name` | required: names the worker and its metrics |
-| `signing` | `signing: ephemeral` is for `development.yaml` only; `production.yaml` configures keys |
-
 ```python
-# src/app/worker_main.py
 from loom.celery.bootstrap import bootstrap_worker
-from app.runtime_config import worker_config_paths
 
-result = bootstrap_worker(*worker_config_paths())
+result = bootstrap_worker("config/worker.yaml")
 celery_app = result.celery_app
 ```
 
-Discovery automatically includes all use cases — callbacks can call
-`ApplicationInvoker.entity(...)` without any extra configuration.
-
-### Option 2: Manifest (explicit, deterministic)
-
-Define a manifest module that lists all jobs and callbacks explicitly.
-Ideal for production when you want full control over what is registered:
-
-```python
-# app/manifest.py
-from app.product.jobs import SendRestockEmailJob, BuildProductSummaryJob, SyncProductToErpJob
-from app.product.callbacks import RestockEmailSuccessCallback, RestockEmailFailureCallback
-from app.product.use_cases import DispatchRestockEmailUseCase, BuildProductSummaryUseCase
-from app.product.model import Product
-
-MODELS = [Product]
-JOBS = [SendRestockEmailJob, BuildProductSummaryJob, SyncProductToErpJob]
-CALLBACKS = [RestockEmailSuccessCallback, RestockEmailFailureCallback]
-USE_CASES = [DispatchRestockEmailUseCase, BuildProductSummaryUseCase]
-```
-
-In `config/worker.yaml`:
-
-```yaml
-includes:
-  - celery.yaml
-
-app:
-  name: billing-worker
-  discovery:
-    mode: manifest
-    manifest:
-      module: app.manifest
-
-persistence:
-  cursors:
-    signing: ephemeral
-
-stores:
-  default:
-    backend: sqlalchemy
-    url: ${oc.env:DATABASE_URL}
-```
-
-`name` is required: it names the worker and its metrics.
-
-`signing: ephemeral` is for `development.yaml` only; `production.yaml` configures keys.
+The scanner sorts classes by defining module and qualname. Job callbacks, the
+`JobCallback` subclasses of those packages, are found the same way: no
+`callbacks=` argument exists.
 
 ### Option 3: Explicit jobs in code
 
 For simple workers or micro-services with a single job, pass jobs directly.
-If `app.discovery` is also present in the YAML (e.g. inherited from a shared
+If `app.packages` is also present in the YAML (e.g. inherited from a shared
 `base.yaml`), use cases discovered there are automatically added to the registry —
-callbacks can use `ApplicationInvoker` without any extra parameter:
+callbacks, found in the same packages, can use `ApplicationInvoker` without any
+extra parameter:
 
 ```python
 # src/app/worker_main.py
 from loom.celery.bootstrap import bootstrap_worker
 from app.product.jobs import SendRestockEmailJob
-from app.product.callbacks import RestockEmailSuccessCallback
 
 result = bootstrap_worker(
-    "config/worker.yaml",   # includes base.yaml → app.discovery auto-supplements registry
+    "config/worker.yaml",  # includes base.yaml → app.packages supplements registry
     jobs=[SendRestockEmailJob],
-    callbacks=[RestockEmailSuccessCallback],
 )
 celery_app = result.celery_app
 ```
 
-If `app.discovery` is **not** in the YAML and callbacks need `ApplicationInvoker`,
-pass the interfaces whose routes the callbacks interact with:
+A callback is found only through `app.packages`. Without it, a worker whose jobs
+need `ApplicationInvoker` passes the interfaces whose routes they interact with:
 
 ```python
 from app.product.interface import ProductInterface
@@ -715,8 +940,7 @@ from app.product.interface import ProductInterface
 result = bootstrap_worker(
     "config/worker.yaml",
     jobs=[SendRestockEmailJob],
-    interfaces=[ProductInterface],     # auto-extracts use-cases from routes (including AutoCRUD)
-    callbacks=[RestockEmailSuccessCallback],
+    interfaces=[ProductInterface],  # auto-extracts use-cases from routes (including AutoCRUD)
 )
 ```
 
@@ -729,7 +953,6 @@ result = bootstrap_worker(
     "config/worker.yaml",
     jobs=[SendRestockEmailJob],
     use_cases=[GetProductUseCase, UpdateProductUseCase],
-    callbacks=[RestockEmailSuccessCallback],
 )
 ```
 
@@ -762,7 +985,7 @@ The built-in resolvers use boto3's default region and credential chain, and
 create their client only when a placeholder resolves: a YAML with no
 `${secrets:...}` or `${ssm:...}` never touches AWS and boots without boto3.
 When a placeholder does resolve and boto3 is missing, the error names the extra
-to install, `loom-kernel[config-ssm]`.
+to install, `loom-kernel[aws]`.
 
 `resolvers=` adds your own prefixes or overrides a built-in by name. Any object
 with a `name` and a `resolve(key) -> object` works:
@@ -770,11 +993,13 @@ with a `name` and a `resolve(key) -> object` works:
 ```python
 from loom.celery.auto import create_app
 
+
 class VaultResolver:
     name = "vault"
 
     def resolve(self, key: str) -> str:
         return read_vault_secret(key)
+
 
 celery_app = create_app("config/worker.yaml", resolvers=[VaultResolver()])
 ```
@@ -803,7 +1028,7 @@ The three ways to ensure this are described in {ref}`rest-worker-bootstrap`:
 3. Pass `use_cases=` — declare use cases explicitly
 
 When using the `jobs=` explicit bootstrap **and** `worker.yaml` inherits
-`app.discovery` from a base config, the framework supplements the registry
+`app.packages` from a base config, the framework supplements the registry
 automatically from the discovery config — no code change needed.
 
 ---
@@ -833,7 +1058,7 @@ uv run celery -A app.worker_main:celery_app worker \
 The worker composes on the same recipe as the API
 ([Composition and lifecycle](../getting-started/composition.md)):
 `bootstrap_worker`, `loom.celery.auto.create_app` and
-`loom.composition.create_app(..., adapter=CeleryAdapter(...))` build the same
+`loom.composition.create_app(..., runtime=CeleryRuntime(...))` build the same
 application. What stays specific to the worker is its discovery, its pool
 profile (`WORKER_PROFILE`), the agent markers it refuses, and which Celery
 signal checks, opens and closes the application:
@@ -845,10 +1070,10 @@ signal checks, opens and closes the application:
 
 ```python
 # src/app/worker_main.py
-from loom.celery.adapter import CeleryAdapter
+from loom.celery.runtime import CeleryRuntime
 from loom.composition import create_app
 
-celery_app = create_app("config/worker.yaml", adapter=CeleryAdapter())
+celery_app = create_app("config/worker.yaml", runtime=CeleryRuntime())
 ```
 
 - The startup checks — `create_all`, or with `schema.mode: external` the
@@ -880,7 +1105,7 @@ celery_app = create_app("config/worker.yaml", adapter=CeleryAdapter())
 ### Persistence
 
 The worker resolves its backend like the API, through the
-`loom.persistence.backends` entry points:
+`loom.stores.plugins` entry points:
 
 1. `stores.default.backend`, when the `stores.default` section is declared —
    `sqlalchemy`, `mongo`, `dynamodb`, `none` or a backend of your own;
@@ -891,7 +1116,7 @@ With `sqlalchemy` the worker applies row-level security exactly as the API
 does: session settings per transaction, the pool reset, and the
 `schema.mode: external` checks. A backend whose extra is not installed stops
 startup with a `ConfigError` naming `loom-kernel[<backend>]`. Agent and MCP
-markers are still refused at startup: the worker hosts no agent runtime.
+markers are still refused at startup: the worker hosts no agent host.
 
 A worker that discovers no model runs connection-only: no repository and no
 cursor codec, and its startup check is a single `SELECT 1` that, on Postgres,
@@ -926,6 +1151,7 @@ Or patch it in a pytest fixture:
 ```python
 import pytest
 from app.worker_main import celery_app
+
 
 @pytest.fixture(autouse=True)
 def celery_eager(monkeypatch):

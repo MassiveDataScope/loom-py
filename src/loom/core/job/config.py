@@ -3,12 +3,63 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
+from enum import StrEnum
 from typing import Any
 
-from loom.core.config import ConfigContext, ConfigKey
+from msgspec import structs
+
+from loom.core.config import ConfigContext, ConfigError, ConfigSection
+from loom.core.config.keys import INTERPOLATION
+from loom.core.config.loader import config_strings, convert_section
+from loom.core.errors import InvalidValue
+from loom.core.job.delivery import JobDelivery
+from loom.core.job.envelope import JobEnvelope
 from loom.core.job.job import Job
+from loom.core.job.policy import DEFAULT_RETRY, Backoff, Countdown, Redelivery, RetryPolicy
 from loom.core.model import LoomFrozenStruct
+
+
+class RetrySource(StrEnum):
+    """A layer a retry field can come from, most specific first."""
+
+    JOB_CONFIG = "jobs.<Job>.retry"
+    DEFAULTS_CONFIG = "jobs.defaults.retry"
+    CLASS = "__retry__"
+    LOOM = "loom default"
+    REDRIVE = "RedrivePolicy maxReceiveCount"
+    NO_REDELIVERY = "no redelivery"
+
+
+class RetryConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
+    """A ``retry`` section; a field left unset keeps the value of the layer below.
+
+    Attributes:
+        first_s: Ceiling of the delay after the first failure.
+        factor: Growth of the ceiling for each further attempt.
+        max_s: Ceiling of every delay, at most 900.
+        jitter: Whether a delay is drawn from zero to its ceiling.
+        max_attempts: Attempts before a failure is final.
+    """
+
+    first_s: int | None = None
+    factor: float | None = None
+    max_s: int | None = None
+    jitter: bool | None = None
+    max_attempts: int | None = None
+
+
+_NO_RETRY = RetryConfig()
+
+
+class JobDefaults(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
+    """The ``jobs.defaults`` section: what every job without its own section gets.
+
+    Attributes:
+        retry: The retry layer every job inherits from.
+    """
+
+    retry: RetryConfig = _NO_RETRY
 
 
 class JobConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
@@ -19,39 +70,216 @@ class JobConfig(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fiel
 
     Attributes:
         queue: Target Celery queue name.
-        retries: Maximum number of automatic retries on failure.
+        retry: The job's retry layer over ``jobs.defaults.retry``.
         countdown: Delay in seconds before first execution.
         timeout: Soft time limit in seconds.
         priority: Task priority (broker-dependent interpretation).
     """
 
     queue: str | None = None
-    retries: int | None = None
+    retry: RetryConfig = _NO_RETRY
     countdown: int | None = None
     timeout: int | None = None
     priority: int | None = None
 
 
+class ShutdownMode(StrEnum):
+    """What the inline job timer does with the steps still pending when the application stops."""
+
+    CANCEL = "cancel"
+    WAIT = "wait"
+
+
+class JobShutdown(LoomFrozenStruct, frozen=True, kw_only=True, forbid_unknown_fields=True):
+    """The ``jobs.shutdown`` section: what stopping the application does with delayed inline jobs.
+
+    ``cancel`` drops every pending step and logs the jobs lost. ``wait`` lets the
+    pending steps run, and the steps they schedule in turn, until none is pending
+    or *timeout_s* is over; what is still pending then is dropped and logged as
+    in ``cancel``. Celery and SQS hold nothing in this process, so neither reads it.
+
+    Attributes:
+        mode: What to do with pending steps; ``cancel`` by default.
+        timeout_s: Seconds ``wait`` lasts at most; ``None`` waits until idle.
+
+    Raises:
+        InvalidValue: When *timeout_s* is not above zero, or is set with ``cancel``.
+    """
+
+    mode: ShutdownMode = ShutdownMode.CANCEL
+    timeout_s: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.timeout_s is None:
+            return
+        if self.mode is ShutdownMode.CANCEL:
+            raise InvalidValue("timeout_s only applies to mode 'wait'")
+        if self.timeout_s <= 0:
+            raise InvalidValue("timeout_s must be above zero")
+
+    @classmethod
+    def check_written(cls, ctx: ConfigContext) -> None:
+        """Validate the ``jobs.shutdown`` section as written, as ``loom check`` does.
+
+        A section holding a placeholder is left to start-up, which resolves it.
+
+        Raises:
+            ConfigError: When the section is invalid as written.
+        """
+        key = f"{ConfigSection.JOBS}.shutdown"
+        written = ctx.raw(key)
+        if written is None or any(INTERPOLATION in text for _, text in config_strings(written)):
+            return
+        convert_section(written, key, cls)
+
+    @property
+    def is_waiting(self) -> bool:
+        """Whether pending steps get to run before the rest is dropped."""
+        return self.mode is ShutdownMode.WAIT
+
+
 _EMPTY = JobConfig()
+_NO_DEFAULTS = JobDefaults()
+CANCEL_AT_SHUTDOWN = JobShutdown()
+
+
+@dataclass(frozen=True)
+class ResolvedRetry:
+    """A job's effective retry policy and the layer each of its fields came from."""
+
+    policy: RetryPolicy
+    sources: Mapping[str, RetrySource]
+
+    @classmethod
+    def resolve(
+        cls,
+        job_type: type[Job[Any]],
+        defaults: RetryConfig = _NO_RETRY,
+        job: RetryConfig = _NO_RETRY,
+    ) -> ResolvedRetry:
+        """The loom default, under ``__retry__`` of *job_type*, under *defaults*, under *job*.
+
+        Each field takes the value of the most specific layer that sets it.
+
+        Raises:
+            InvalidValue: When the resulting policy is invalid.
+        """
+        fields: dict[str, tuple[Any, RetrySource]] = {
+            name: (value, RetrySource.LOOM)
+            for name, value in (
+                *asdict(DEFAULT_RETRY.backoff).items(),
+                ("max_attempts", DEFAULT_RETRY.max_attempts),
+            )
+        }
+        if job_type.__retry__ is not None:
+            fields |= {
+                name: (value, RetrySource.CLASS)
+                for name, value in asdict(job_type.__retry__).items()
+            }
+        for layer, source in (
+            (defaults, RetrySource.DEFAULTS_CONFIG),
+            (job, RetrySource.JOB_CONFIG),
+        ):
+            fields |= {
+                name: (value, source)
+                for name, value in structs.asdict(layer).items()
+                if value is not None
+            }
+        values = {name: value for name, (value, _) in fields.items()}
+        max_attempts = values.pop("max_attempts")
+        return cls(
+            RetryPolicy(Backoff(**values), max_attempts),
+            {name: source for name, (_, source) in fields.items()},
+        )
+
+    def describe(self, redelivery: Redelivery) -> str:
+        """The policy and where it came from: one source when every field shares it.
+
+        Args:
+            redelivery: What the transport does with a job that must run again;
+                a transport that retries nothing shows one attempt.
+        """
+        values = {**asdict(self.policy.backoff), "max_attempts": self.policy.max_attempts}
+        sources = dict(self.sources)
+        if not redelivery.can_retry:
+            values["max_attempts"] = 1
+            sources["max_attempts"] = RetrySource.NO_REDELIVERY
+        origins = set(sources.values())
+        if len(origins) == 1:
+            return f"{_format_fields(values)} ({origins.pop().value})"
+        return ", ".join(
+            f"{name}={value} ({sources[name].value})" for name, value in values.items()
+        )
+
+
+def _format_fields(values: Mapping[str, Any]) -> str:
+    return " ".join(f"{name}={value}" for name, value in values.items())
 
 
 @dataclass(frozen=True)
 class JobOptions:
-    """A job's effective queue, retries, countdown, soft time limit and priority."""
+    """A job's effective queue, retry policy, countdown, soft time limit and priority."""
 
     queue: str
-    retries: int
+    retry: ResolvedRetry
     countdown: int
     timeout: int | None
     priority: int
 
+    def delivery_for(
+        self,
+        job_type: type[Job[Any]],
+        envelope: JobEnvelope,
+        *,
+        attempt: int = 1,
+        postponements: int = 0,
+        timeout_s: float | None = None,
+    ) -> JobDelivery:
+        """Build a delivery with this job's resolved retry policy.
+
+        Args:
+            job_type: The job named by the envelope.
+            envelope: The message being delivered.
+            attempt: Attempt number, starting at one.
+            postponements: Runs postponed without spending an attempt.
+            timeout_s: Remaining execution time, or no limit.
+        """
+        return JobDelivery(
+            job_type=job_type,
+            envelope=envelope,
+            attempt=attempt,
+            postponements=postponements,
+            policy=self.retry.policy,
+            queue=self.queue,
+            timeout_s=timeout_s,
+        )
+
     @classmethod
-    def resolve(cls, job_type: type[Job[Any]], config: JobConfig = _EMPTY) -> JobOptions:
-        """*config* over the ClassVars of *job_type*: a ``None`` field keeps its ClassVar."""
+    def resolve(
+        cls,
+        job_type: type[Job[Any]],
+        config: JobConfig = _EMPTY,
+        defaults: JobDefaults = _NO_DEFAULTS,
+    ) -> JobOptions:
+        """*config* over the ClassVars of *job_type*: a ``None`` field keeps its ClassVar.
+
+        Raises:
+            InvalidValue: When a retry layer makes the backoff invalid.
+            ConfigError: When the effective countdown is outside 0 to
+                :attr:`~loom.core.job.policy.Countdown.MAX_SECONDS` seconds.
+        """
+        seconds = job_type.__countdown__ if config.countdown is None else config.countdown
+        try:
+            countdown = Countdown(seconds).seconds
+        except ValueError as exc:
+            raise ConfigError(
+                f"{job_type.__name__} countdown is {seconds}; "
+                f"a countdown is 0 to {Countdown.MAX_SECONDS} seconds"
+            ) from exc
         return cls(
             queue=job_type.__queue__ if config.queue is None else config.queue,
-            retries=job_type.__retries__ if config.retries is None else config.retries,
-            countdown=job_type.__countdown__ if config.countdown is None else config.countdown,
+            retry=ResolvedRetry.resolve(job_type, defaults.retry, config.retry),
+            countdown=countdown,
             timeout=job_type.__timeout__ if config.timeout is None else config.timeout,
             priority=job_type.__priority__ if config.priority is None else config.priority,
         )
@@ -63,30 +291,65 @@ class JobSettings:
 
     The composition builds one per application, so two applications in one
     process never see each other's sections and the ClassVars stay as
-    declared. A job it was not built with has its ClassVars.
+    declared. A job it was not built with has its ClassVars. ``shutdown`` is the
+    ``jobs.shutdown`` section.
     """
 
     jobs: Mapping[type[Job[Any]], JobOptions] = field(default_factory=dict)
+    shutdown: JobShutdown = CANCEL_AT_SHUTDOWN
 
     @classmethod
     def from_config(cls, ctx: ConfigContext, jobs: Iterable[type[Job[Any]]]) -> JobSettings:
         """Resolve each of *jobs* against its ``jobs.<Job>`` section in *ctx*.
 
         Raises:
-            ConfigError: When a section is present but invalid.
+            ConfigError: When a section is present but invalid, a retry layer
+                makes a job's backoff invalid, ``jobs.shutdown`` is invalid, or a
+                job's effective countdown is
+                outside 0 to :attr:`~loom.core.job.policy.Countdown.MAX_SECONDS`
+                seconds.
         """
-        return cls(
-            {
-                job_type: JobOptions.resolve(
-                    job_type,
-                    ctx.section_or_default(
-                        f"{ConfigKey.JOBS}.{job_type.__name__}", JobConfig, _EMPTY
-                    ),
-                )
-                for job_type in jobs
-            }
+        defaults = ctx.section_or_default(
+            f"{ConfigSection.JOBS}.defaults", JobDefaults, _NO_DEFAULTS
         )
+        resolved: dict[type[Job[Any]], JobOptions] = {}
+        for job_type in jobs:
+            section = f"{ConfigSection.JOBS}.{job_type.__name__}"
+            config = ctx.section_or_default(section, JobConfig, _EMPTY)
+            try:
+                resolved[job_type] = JobOptions.resolve(job_type, config, defaults)
+            except ValueError as exc:
+                raise ConfigError(f"{section}.retry: {exc}") from exc
+        shutdown = ctx.section_or_default(
+            f"{ConfigSection.JOBS}.shutdown", JobShutdown, CANCEL_AT_SHUTDOWN
+        )
+        return cls(resolved, shutdown)
 
-    def of(self, job_type: type[Job[Any]]) -> JobOptions:
-        """The options of *job_type* in this application."""
+    def options_for(self, job_type: type[Job[Any]]) -> JobOptions:
+        """The options of *job_type* in this application.
+
+        Raises:
+            ConfigError: When *job_type* is not in this application and its
+                countdown is outside 0 to
+                :attr:`~loom.core.job.policy.Countdown.MAX_SECONDS` seconds.
+        """
         return self.jobs.get(job_type) or JobOptions.resolve(job_type)
+
+    def with_retries(self, retries: Mapping[type[Job[Any]], ResolvedRetry]) -> JobSettings:
+        """These settings with the retry policy of each job in *retries* replaced."""
+        replaced = {
+            job: replace(self.options_for(job), retry=retry) for job, retry in retries.items()
+        }
+        return replace(self, jobs={**self.jobs, **replaced})
+
+    def describe_retries(self, redelivery: Redelivery, jobs: Iterable[type[Job[Any]]]) -> list[str]:
+        """Each job's effective retry policy, as ``Job: policy``, and where it came from.
+
+        Args:
+            redelivery: What the transport does with a job that must run again.
+            jobs: The jobs the runner serves.
+        """
+        return [
+            f"{job_type.__qualname__}: {self.options_for(job_type).retry.describe(redelivery)}"
+            for job_type in jobs
+        ]

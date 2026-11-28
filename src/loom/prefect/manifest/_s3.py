@@ -9,6 +9,9 @@ from typing import IO, cast
 import fsspec
 import msgspec
 
+from loom.core.errors import InvalidValue
+from loom.core.log_names import LogField
+from loom.prefect.event import PrefectEvent
 from loom.prefect.manifest._model import RunManifest
 
 _log = logging.getLogger(__name__)
@@ -19,8 +22,8 @@ _SAFE_CORR_ID = re.compile(r"^[a-zA-Z0-9_\-]{1,256}$")
 def _validate_correlation_id(correlation_id: str) -> None:
     """Raise ValueError if correlation_id is not safe to embed in an S3 key."""
     if not _SAFE_CORR_ID.match(correlation_id):
-        raise ValueError(
-            f"correlation_id contains invalid characters: {correlation_id!r}. "
+        raise InvalidValue(
+            "correlation_id contains invalid characters. "
             "Only alphanumerics, hyphens, and underscores are allowed."
         )
 
@@ -74,7 +77,11 @@ class S3JsonManifestStore:
         except FileNotFoundError:
             return None
         except Exception:
-            _log.warning("manifest load failed for %s", correlation_id, exc_info=True)
+            _log.warning(
+                PrefectEvent.MANIFEST_LOAD_FAILED,
+                extra={LogField.CORRELATION_ID: correlation_id},
+                exc_info=True,
+            )
             return None
 
     def save(self, manifest: RunManifest) -> None:
@@ -110,7 +117,11 @@ class S3JsonManifestStore:
         except FileNotFoundError:
             pass
         except Exception:
-            _log.warning("manifest delete failed for %s", correlation_id, exc_info=True)
+            _log.warning(
+                PrefectEvent.MANIFEST_DELETE_FAILED,
+                extra={LogField.CORRELATION_ID: correlation_id},
+                exc_info=True,
+            )
 
 
 __all__ = ["S3JsonManifestStore"]

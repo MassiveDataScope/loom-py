@@ -6,6 +6,8 @@ import re
 from collections.abc import Callable
 from typing import Any, TypeVar
 
+from loom.core.errors import InvalidValue
+
 _UC = TypeVar("_UC")
 
 _USE_CASE_KEY_ATTR = "__loom_use_case_key__"
@@ -20,13 +22,13 @@ def set_use_case_key(use_case_type: type[Any], key: str) -> None:
         key: Stable invocation key.
 
     Raises:
-        ValueError: If key is empty or contains invalid characters.
+        InvalidValue: If key is empty or contains invalid characters.
     """
     normalized = key.strip()
     if not normalized:
-        raise ValueError("Use-case key cannot be empty.")
+        raise InvalidValue("Use-case key cannot be empty.")
     if _VALID_KEY.fullmatch(normalized) is None:
-        raise ValueError(f"Use-case key must match ^[a-z0-9_.:-]+$ (got {key!r}).")
+        raise InvalidValue("Use-case key must match ^[a-z0-9_.:-]+$.")
     setattr(use_case_type, _USE_CASE_KEY_ATTR, normalized)
 
 

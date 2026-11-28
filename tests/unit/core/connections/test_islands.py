@@ -21,8 +21,9 @@ from loom.core.connections import (
 from loom.core.connections.aws import AwsPool
 from loom.core.connections.mongo import MongoPool
 from loom.core.model.redaction import Dsn, Secret
-from loom.core.persistence.database import DatabaseConfig
 from loom.core.plugins.optional import import_optional
+from loom.core.stores.database import DatabaseConfig
+from tests.helpers.aws import OTHER_REGION
 
 
 def _parameters(function: Any) -> set[str]:
@@ -43,17 +44,11 @@ class TestAwsConnectionIsland:
         Config(**options["config"])  # an unknown keyword raises TypeError
         assert set(options) <= _parameters(boto3.session.Session.client)
 
-    def test_the_aws_island_builds_a_client_with_every_bound(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_the_aws_island_builds_a_client_with_every_bound(self, mocked_aws: None) -> None:
         pytest.importorskip("boto3")
-        # Static credentials: building a client resolves them, and the host's own
-        # configuration must not decide the test.
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
-        island = import_optional("loom.core.connections.aws.client", extra="dynamodb")
+        island = import_optional("loom.connections.aws.client", extra="aws")
         config = AwsClientConfig(
-            region="eu-west-1",
+            region=OTHER_REGION,
             url=Dsn("http://localhost:8000"),
             pool=AwsPool(size=4),
             connect_timeout=1,
@@ -61,7 +56,7 @@ class TestAwsConnectionIsland:
             max_attempts=2,
         )
 
-        client = island.build_aws_client("dynamodb", config)
+        client = island.build_aws_client(island.open_session(None), "dynamodb", config)
 
         assert client.meta.endpoint_url == "http://localhost:8000"
         botocore = client.meta.config
@@ -73,7 +68,7 @@ class TestAwsConnectionIsland:
 class TestMongoConnectionIsland:
     def test_pymongo_takes_the_mongo_options_in_its_units(self) -> None:
         pytest.importorskip("pymongo")
-        island = import_optional("loom.core.connections.mongo.client", extra="mongo")
+        island = import_optional("loom.connections.mongo.client", extra="mongo")
         connection = MongoConnection(
             url=Dsn("mongodb://h:27017"),
             database="app",
@@ -106,7 +101,7 @@ class TestClickHouseConnectionIsland:
         clickhouse_connect = pytest.importorskip("clickhouse_connect")
         from clickhouse_connect.driver.httpclient import HttpClient
 
-        island = import_optional("loom.core.connections.clickhouse.client", extra="clickhouse")
+        island = import_optional("loom.connections.clickhouse.client", extra="clickhouse")
         connection = ClickHouseConnection(
             url=Dsn("clickhouse://h:8123/db"),
             username="u",

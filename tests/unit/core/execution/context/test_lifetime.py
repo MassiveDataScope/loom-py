@@ -28,13 +28,16 @@ from loom.core.execution import (
     execution_identity,
     per_execution,
 )
+from loom.core.execution.context import ExecutionContextEvent, ExecutionContextKey
 from loom.core.identity import (
     Identity,
     IdentityFixed,
     current_caller,
     set_identity,
 )
-from tests.helpers.loggers import RecordingLogger
+from loom.core.identity.context import IdentityEvent, IdentityKey
+from loom.core.log_names import LogField
+from tests.helpers.loggers import CapturedLog, user_hash
 from tests.unit.core.execution.context.doubles import ACME_ALICE, ACME_BOB, AcmePerExecutionValue
 
 Outliving = Callable[..., Awaitable["asyncio.Task[object]"]]
@@ -83,7 +86,7 @@ class TestATaskOutlivingItsExecution:
             await task
 
     async def test_an_execution_scope_as_another_is_a_logged_switch(
-        self, outliving: Outliving, switches: RecordingLogger
+        self, outliving: Outliving, switches: CapturedLog
     ) -> None:
         def as_bob() -> Identity:
             with ExecutionScope(ACME_BOB):
@@ -92,10 +95,14 @@ class TestATaskOutlivingItsExecution:
         task = await outliving(as_bob)
 
         assert await task is ACME_BOB
-        [switch] = switches.named("identity_switched")
-        assert (switch["from_subject"], switch["to_subject"], switch["use_case"]) == (
-            ACME_ALICE.subject,
-            ACME_BOB.subject,
+        [switch] = switches.named(IdentityEvent.CALLER_SWITCHED)
+        assert (
+            switch[IdentityKey.PREVIOUS_USER_HASH],
+            switch[LogField.USER_HASH],
+            switch[LogField.USE_CASE],
+        ) == (
+            user_hash(ACME_ALICE.subject),
+            user_hash(ACME_BOB.subject),
             "ExecutionScope",
         )
 
@@ -116,7 +123,7 @@ class TestATaskOutlivingItsExecution:
     async def test_opening_an_execution_past_the_window_is_refused(
         self,
         outliving: Outliving,
-        recorded: RecordingLogger,
+        recorded: CapturedLog,
         past_the_window: Callable[[], None],
     ) -> None:
         def late() -> object:
@@ -127,8 +134,8 @@ class TestATaskOutlivingItsExecution:
 
         with pytest.raises(Unauthenticated, match="system identity"):
             await task
-        [(event, fields)] = recorded.calls
-        assert event == "delegation_expired"
+        [(event, fields)] = recorded.events
+        assert event == IdentityEvent.DELEGATION_EXPIRED
         assert ACME_ALICE.subject not in repr(fields)
 
     async def test_a_per_execution_value_built_before_the_end_raises_execution_closed(
@@ -173,18 +180,19 @@ class TestATaskOutlivingItsExecution:
         assert "they act as the same caller" in str(caught.value)
 
     async def test_each_refused_read_logs_the_guidance_once_without_the_caller(
-        self, outliving: Outliving, recorded: RecordingLogger
+        self, outliving: Outliving, recorded: CapturedLog
     ) -> None:
         task = await outliving(per_execution(AcmePerExecutionValue, AcmePerExecutionValue))
 
         with pytest.raises(ExecutionClosed):
             await task
 
-        [(event, fields)] = recorded.calls
-        assert (event, fields["read"]) == ("execution_closed", "per-execution value")
-        assert "dispatch a job" in fields["guidance"]
-        assert "executor.run(UseCase)" in fields["guidance"]
-        assert ACME_ALICE.subject not in repr(recorded.calls)
+        [(event, fields)] = recorded.events
+        assert (event, fields[ExecutionContextKey.READ]) == (
+            ExecutionContextEvent.CLOSED,
+            "per-execution value",
+        )
+        assert ACME_ALICE.subject not in repr(recorded.events)
 
     async def test_execution_closed_is_an_execution_required(self, outliving: Outliving) -> None:
         task = await outliving(per_execution(AcmePerExecutionValue, AcmePerExecutionValue))
@@ -352,24 +360,27 @@ class TestANestedExecutionEnding:
             assert execution_identity() is ACME_ALICE
 
     @pytest.mark.parametrize(
-        ("outer", "from_subject"),
-        [(ExecutionScope(ACME_ALICE), ACME_ALICE.subject), (NoExecution(), None)],
+        ("outer", "from_hash"),
+        [(ExecutionScope(ACME_ALICE), user_hash(ACME_ALICE.subject)), (NoExecution(), None)],
         ids=["inside-an-execution", "inside-no-execution"],
     )
     def test_another_identity_opened_inside_it_is_a_logged_switch(
         self,
-        switches: RecordingLogger,
+        switches: CapturedLog,
         outer: ExecutionScope | NoExecution,
-        from_subject: str | None,
+        from_hash: str | None,
     ) -> None:
         """One switch policy, as ``executor.run(identity=)``; singletons are built in the second."""
         with outer:
             with ExecutionScope(ACME_BOB):
                 assert execution_identity() is ACME_BOB
-            assert current_caller() is (None if from_subject is None else ACME_ALICE)
+            assert current_caller() is (None if from_hash is None else ACME_ALICE)
 
-        [switch] = switches.named("identity_switched")
-        assert (switch["from_subject"], switch["to_subject"]) == (from_subject, ACME_BOB.subject)
+        [switch] = switches.named(IdentityEvent.CALLER_SWITCHED)
+        assert (switch.get(IdentityKey.PREVIOUS_USER_HASH), switch[LogField.USER_HASH]) == (
+            from_hash,
+            user_hash(ACME_BOB.subject),
+        )
 
     def test_the_enclosing_execution_keeps_its_cache(self) -> None:
         session = per_execution(AcmePerExecutionValue, AcmePerExecutionValue)

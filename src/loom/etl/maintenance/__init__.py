@@ -87,6 +87,7 @@ appends the op to each :class:`MaintenanceSpec`::
 """
 
 from loom.etl.maintenance._builder import MaintainSchema, MaintainTable
+from loom.etl.maintenance._errors import MaintenanceError
 from loom.etl.maintenance._ops import CompactSpec, MaintenanceSpec, VacuumSpec, ZOrderSpec
 from loom.etl.maintenance._protocol import (
     DeltaTableMaintainer,
@@ -96,7 +97,7 @@ from loom.etl.maintenance._protocol import (
     TableMaintenanceResult,
     VacuumResult,
 )
-from loom.etl.maintenance._runner import MaintenanceError, MaintenanceReport, MaintenanceRunner
+from loom.etl.maintenance._runner import MaintenanceReport, MaintenanceRunner
 from loom.etl.maintenance._step import MaintenanceStep
 
 __all__ = [

@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Final
 
 INTERPOLATION = "${"
 
+FASTAPI_ENTRY: Final = "fastapi"
+"""Value of ``app.entry`` that serves the application over HTTP with FastAPI."""
 
-class ConfigKey(StrEnum):
+
+class ConfigSection(StrEnum):
     """Top-level YAML section keys consumed by :func:`~loom.core.config.loader.section`.
 
     Using ``StrEnum`` keeps references typo-proof while remaining compatible
@@ -15,15 +19,14 @@ class ConfigKey(StrEnum):
 
     Example::
 
-        cfg = section(raw, ConfigKey.CELERY, CeleryConfig)
+        cfg = section(raw, ConfigSection.CELERY, CeleryConfig)
     """
 
     APP = "app"
+    APP_REST = "app.rest"
     AI = "ai"
     AWS = "aws"
     CACHE = "cache"
-    PERSISTENCE = "persistence"
-    PERSISTENCE_CURSORS = "persistence.cursors"
     CELERY = "celery"
     KAFKA = "kafka"
     MONGO = "mongo"
@@ -31,6 +34,7 @@ class ConfigKey(StrEnum):
     SQS = "sqs"
     STORAGE = "storage"
     STORES = "stores"
+    STORES_SETTINGS = "stores.settings"
     STREAMING = "streaming"
     STREAMING_RUNTIME = "streaming.runtime"
     STREAMING_SINKS = "streaming.sinks"

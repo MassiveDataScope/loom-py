@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from loom.core.errors import Conflict, InvalidValue
 from loom.etl.declarative.target._history._enums import HistorifyInputMode
 
 
-class HistorifyKeyConflictError(ValueError):
+class HistorifyKeyConflictError(InvalidValue):
     """Raised when the incoming frame repeats an entity state vector or event.
 
     In SNAPSHOT mode each ``keys + track`` combination must be unique: duplicates
@@ -19,7 +20,7 @@ class HistorifyKeyConflictError(ValueError):
     tombstones flagged by ``delete_marker`` included.
 
     Args:
-        duplicates: Human-readable representation of the conflicting key tuples.
+        duplicates: The key columns whose combination repeats; never their values.
         mode: Input mode whose uniqueness rule was violated.
     """
 
@@ -30,18 +31,18 @@ class HistorifyKeyConflictError(ValueError):
             super().__init__(
                 f"IntoHistory (LOG mode): duplicate events found — each "
                 f"(keys + effective_date) combination must be unique, including "
-                f"delete_marker tombstones. Conflicting rows: {duplicates}."
+                f"delete_marker tombstones. Repeated on columns: {duplicates}."
             )
             return
         super().__init__(
             f"IntoHistory: duplicate entity state vectors found in snapshot — "
-            f"each (keys + track) combination must be unique. Conflicting rows: {duplicates}. "
+            f"each (keys + track) combination must be unique. Repeated on columns: {duplicates}. "
             f"If the same entity legitimately occupies multiple simultaneous states "
             f"(e.g. a player on loan), include the distinguishing column in 'track'."
         )
 
 
-class HistorifyDateCollisionError(ValueError):
+class HistorifyDateCollisionError(InvalidValue):
     """Raised in LOG mode when two events share the same ``(keys + track, effective_date)``.
 
     At DATE granularity, two events on the same calendar day for the same entity
@@ -52,7 +53,7 @@ class HistorifyDateCollisionError(ValueError):
     deduplicate events upstream before loading.
 
     Args:
-        collisions: Human-readable description of the colliding key/date pairs.
+        collisions: The key and date columns whose values collide; never the values.
     """
 
     def __init__(self, collisions: str) -> None:
@@ -60,11 +61,11 @@ class HistorifyDateCollisionError(ValueError):
             f"IntoHistory (LOG mode): same-date collisions detected — two events share "
             f"the same (keys + track, effective_date) value at DATE granularity. "
             f"Use date_type='timestamp' for sub-daily precision, or deduplicate upstream. "
-            f"Collisions: {collisions}"
+            f"Collisions on columns: {collisions}"
         )
 
 
-class HistorifyDeleteMarkerError(ValueError):
+class HistorifyDeleteMarkerError(InvalidValue):
     """Raised in LOG mode when the ``delete_marker`` column is missing or not boolean.
 
     Args:
@@ -79,7 +80,7 @@ class HistorifyDeleteMarkerError(ValueError):
         )
 
 
-class HistorifyTemporalConflictError(ValueError):
+class HistorifyTemporalConflictError(Conflict, ValueError):
     """Raised when the target contains future-open vectors and re-weave is disabled.
 
     A temporal conflict occurs when ``valid_from > effective_date``, meaning the

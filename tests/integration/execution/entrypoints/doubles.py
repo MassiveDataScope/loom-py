@@ -18,8 +18,10 @@ from loom.core.identity import (
     current_caller,
     current_identity,
 )
+from loom.core.job.callback import JobCallback
 from loom.core.job.job import Job
-from loom.core.repository.registration import classify_key
+from loom.core.stores.repository.registration import classify_key
+from loom.core.tracing import get_trace_id
 from loom.core.use_case.factory import UseCaseFactory, main_repository
 from loom.core.use_case.kinds import declare_kinds
 from loom.core.use_case.markers import Caller
@@ -54,6 +56,7 @@ class AcmeSession:
     def __init__(self, caller: Identity = Caller()) -> None:
         self.caller = caller
         self.execution = current_execution()
+        self.trace_id = get_trace_id()
 
 
 class AcmeProbe(UseCase[Any, "AcmeProbe"]):
@@ -187,7 +190,7 @@ class CallbackLog(list[tuple[str, Seen]]):
     """Each moment a callback recorded (``built``, ``on_success``, ``on_failure``)."""
 
 
-class AcmeCallback:
+class AcmeCallback(JobCallback):
     """A job callback built by the factory, recording what it saw when built and called."""
 
     def __init__(self, log: CallbackLog) -> None:
@@ -197,7 +200,7 @@ class AcmeCallback:
     def on_success(self, job_id: str, result: Any, **context: Any) -> None:
         self.log.append(("on_success", seen_now()))
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None:
+    def on_failure(self, job_id: str, exc_type: str, exc_code: str | None, **context: Any) -> None:
         self.log.append(("on_failure", seen_now()))
 
 
@@ -206,9 +209,20 @@ class AcmeAsyncCallback(AcmeCallback):
         self.log.append(("on_success", seen_now()))
 
     async def on_failure(  # type: ignore[override]
-        self, job_id: str, exc_type: str, exc_msg: str, **context: Any
+        self, job_id: str, exc_type: str, exc_code: str | None, **context: Any
     ) -> None:
         self.log.append(("on_failure", seen_now()))
+
+
+class AcmeSuccessOnlyCallback(JobCallback):
+    """A job callback overriding ``on_success`` alone: ``on_failure`` is the base's no-op."""
+
+    def __init__(self, log: CallbackLog) -> None:
+        self.log = log
+        log.append(("built", seen_now()))
+
+    def on_success(self, job_id: str, result: Any, **context: Any) -> None:
+        self.log.append(("on_success", seen_now()))
 
 
 CALLBACKS = pytest.mark.parametrize(
@@ -217,7 +231,7 @@ CALLBACKS = pytest.mark.parametrize(
 """Each test runs with a sync and an async callback."""
 
 
-class AcmeCallerCallback:
+class AcmeCallerCallback(JobCallback):
     """A job callback whose constructor declares ``Caller()``: its dispatcher's (D7)."""
 
     def __init__(self, log: CallbackLog, caller: Identity = Caller()) -> None:
@@ -226,7 +240,9 @@ class AcmeCallerCallback:
 
     def on_success(self, job_id: str, result: Any, **context: Any) -> None: ...
 
-    def on_failure(self, job_id: str, exc_type: str, exc_msg: str, **context: Any) -> None: ...
+    def on_failure(
+        self, job_id: str, exc_type: str, exc_code: str | None, **context: Any
+    ) -> None: ...
 
 
 class AcmeRecordingFactory:

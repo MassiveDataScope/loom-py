@@ -18,12 +18,17 @@ from typing import Any, cast
 
 import pytest
 
-import loom.core.uow.scope as scope_module
+import loom.core.stores.uow.scope as scope_module
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
-from loom.core.engine.post_commit import PostCommitChannel, active_channel, drain_after_failure
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.uow.coordinator import OrderedCommits
+from loom.core.engine.executor import UseCaseExecutor
+from loom.core.engine.post_commit import (
+    PostCommitChannel,
+    PostCommitEvent,
+    active_channel,
+    drain_after_failure,
+)
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.uow.coordinator import OrderedCommits
 from loom.core.use_case.use_case import UseCase
 
 from ._lifecycle_doubles import Log, StubUnitOfWorkFactory
@@ -93,7 +98,7 @@ class _DispatchStartsNestedExecution(UseCase[Any, str]):
     job-dispatch machinery.
     """
 
-    def __init__(self, executor: RuntimeExecutor, log: Log) -> None:
+    def __init__(self, executor: UseCaseExecutor, log: Log) -> None:
         self._executor = executor
         self._log = log
 
@@ -117,7 +122,7 @@ class TestPostCommitTeardownGuard:
     ) -> None:
         log = Log()
         factory = StubUnitOfWorkFactory(log)
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
         )
         monkeypatch.setattr(scope_module, "_scope", _FailingResetScopeVar(scope_module._scope))
@@ -145,7 +150,7 @@ class TestPostCommitTeardownGuard:
         """
         log = Log()
         factory = StubUnitOfWorkFactory(log)
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(), coordinator=OrderedCommits({DEFAULT_STORE: factory})
         )
         monkeypatch.setattr(scope_module, "_scope", _FailingResetScopeVar(scope_module._scope))
@@ -188,7 +193,7 @@ class TestDrainCommittedChannelLoggingFailure:
         with caplog.at_level("ERROR"):
             await drain_after_failure(cast(PostCommitChannel, channel))
 
-        assert "PostCommitDrainFailedDuringTeardown" in caplog.text
+        assert PostCommitEvent.DRAIN_FAILED_DURING_TEARDOWN in caplog.text
 
     async def test_a_cancellation_from_drain_is_not_swallowed(self) -> None:
         channel = cast(PostCommitChannel, _StubChannel(asyncio.CancelledError()))

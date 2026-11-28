@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Sequence
 from datetime import date, datetime
@@ -10,26 +11,29 @@ import msgspec
 import pytest
 
 from loom.core.cache import (
-    CacheBackend,
     CacheConfig,
     CachedRepository,
+    CacheStore,
     GenerationalDependencyResolver,
     cache_query,
     cached,
 )
+from loom.core.cache.event import CacheEvent
 from loom.core.cache.keys import entity_key
 from loom.core.cache.repository import _DELEGATED_METHODS
 from loom.core.engine.post_commit import PostCommitChannel, bind_channel, reset_channel
-from loom.core.errors import PostCommitError
+from loom.core.errors import InvalidType, PostCommitError
 from loom.core.model import BaseModel, Cardinality, ColumnField, ProjectionField, RelationField
-from loom.core.repository import FilterParams, PageParams, PageResult, Repository
-from loom.core.repository.abc.query import (
+from loom.core.stores.repository import FilterParams, OnConflict, PageParams, PageResult, Repository
+from loom.core.stores.repository.mutation import MutationEvent
+from loom.core.stores.repository.query import (
     CursorResult,
     PaginationMode,
     QuerySpec,
     build_page_result,
 )
-from loom.core.repository.mutation import MutationEvent
+from loom.testing import make
+from tests.helpers.loggers import CapturedLog
 from tests.unit.core.uow._coordinator_fakes import (
     NonTransactionalStore,
     StoreFactory,
@@ -40,7 +44,7 @@ from ._doubles import (
     AcmeCacheWidget,
     CachedEnv,
     CodeWidget,
-    CountingCacheBackend,
+    CountingCacheStore,
     CountingRepository,
     DateWidget,
     UuidWidget,
@@ -54,7 +58,7 @@ from ._doubles import (
 T = TypeVar("T")
 
 
-class _MemoryCacheBackend:
+class _MemoryCacheStore:
     def __init__(self) -> None:
         self.data: dict[str, Any] = {}
 
@@ -260,7 +264,7 @@ class _FakeRepository(Repository[_EntityOut, _Create, _Update, int]):
         if query.pagination == PaginationMode.CURSOR:
             values = tuple(list(self.storage.values())[: query.limit])
             return CursorResult(items=values, next_cursor=None, has_next=False)
-        page = PageParams(page=query.page, limit=query.limit)
+        page = make(PageParams, page=query.page, limit=query.limit)
         return await self.list_paginated(page, profile=profile)
 
     async def create(self, data: _Create) -> _EntityOut:
@@ -376,7 +380,7 @@ def wrapped_repository(
     cache_config: CacheConfig,
 ) -> CachedRepository[_EntityOut, _Create, _Update, int]:
     repository = _FakeRepository()
-    cache = _MemoryCacheBackend()
+    cache = _MemoryCacheStore()
     resolver = GenerationalDependencyResolver(cache)
     return CachedRepository(
         repository, config=cache_config, cache=cache, dependency_resolver=resolver
@@ -406,6 +410,45 @@ class TestCachedRepository:
         repo = wrapped_repository._repository
         assert isinstance(repo, _FakeRepository)
         assert repo.get_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_a_cached_read_logs_its_key_without_the_id(
+        self, cache_config: CacheConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        repository = _FakeRepository()
+        repository.storage[864209731] = make(_EntityOut, id=864209731)
+        wrapped, _ = _wrap(repository, cache_config)
+
+        await wrapped.get_by_id(864209731)
+        await wrapped.get_by_id(864209731)
+
+        assert CapturedLog(caplog).named(CacheEvent.ENTRY_HIT)
+        assert "864209731" not in CapturedLog(caplog).rendered_text
+
+    @pytest.mark.asyncio
+    async def test_a_load_that_fails_after_its_caller_left_is_logged(
+        self, cache_config: CacheConfig, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        started, gate = asyncio.Event(), asyncio.Event()
+
+        class _FailingLater(_FakeRepository):
+            async def get_by_id(self, obj_id: int, profile: str = "default") -> _EntityOut | None:
+                started.set()
+                await gate.wait()
+                raise RuntimeError("store down")
+
+        wrapped, _ = _wrap(_FailingLater(), cache_config)
+        caller = asyncio.ensure_future(wrapped.get_by_id(7))
+        await started.wait()
+
+        caller.cancel()
+        gate.set()
+        log = CapturedLog(caplog)
+        async with asyncio.timeout(1):
+            while not log.named(CacheEvent.LOAD_ABANDONED):
+                await asyncio.sleep(0)
+
+        assert log.exception_types(CacheEvent.LOAD_ABANDONED) == [RuntimeError]
 
     @pytest.mark.asyncio
     async def test_custom_method_cache_for_developer_function(
@@ -500,7 +543,7 @@ class TestCachedRepository:
     ) -> None:
         await wrapped_repository.create(_Create(name="a"))
         await wrapped_repository.create(_Create(name="b"))
-        query = QuerySpec(page=1, limit=1, pagination=PaginationMode.OFFSET)
+        query = make(QuerySpec, page=1, limit=1, pagination=PaginationMode.OFFSET)
 
         first = await wrapped_repository.list_with_query(query)
         second = await wrapped_repository.list_with_query(query)
@@ -518,8 +561,8 @@ class TestCachedRepository:
     ) -> None:
         await wrapped_repository.create(_Create(name="a"))
         await wrapped_repository.create(_Create(name="b"))
-        first_page = QuerySpec(limit=1, pagination=PaginationMode.CURSOR)
-        next_page = QuerySpec(limit=1, pagination=PaginationMode.CURSOR, cursor="cursor-2")
+        first_page = make(QuerySpec, limit=1, pagination=PaginationMode.CURSOR)
+        next_page = make(QuerySpec, limit=1, pagination=PaginationMode.CURSOR, cursor="cursor-2")
 
         _ = await wrapped_repository.list_with_query(first_page)
         _ = await wrapped_repository.list_with_query(first_page)
@@ -536,7 +579,7 @@ class TestDependencySpecs:
         self, cache_config: CacheConfig
     ) -> None:
         repository = _RepoWithModelDependsOn()
-        cache = _MemoryCacheBackend()
+        cache = _MemoryCacheStore()
         resolver = GenerationalDependencyResolver(cache)
         wrapped = CachedRepository(
             repository, config=cache_config, cache=cache, dependency_resolver=resolver
@@ -551,10 +594,10 @@ class TestDependencySpecs:
 
     def test_invalid_dependency_spec_fails_fast(self, cache_config: CacheConfig) -> None:
         repository = _RepoWithInvalidDependsOn()
-        cache = _MemoryCacheBackend()
+        cache = _MemoryCacheStore()
         resolver = GenerationalDependencyResolver(cache)
 
-        with pytest.raises(ValueError, match="Invalid dependency spec"):
+        with pytest.raises(ValueError, match="dependency spec"):
             CachedRepository(
                 repository, config=cache_config, cache=cache, dependency_resolver=resolver
             )
@@ -563,7 +606,7 @@ class TestDependencySpecs:
         self, cache_config: CacheConfig
     ) -> None:
         """ONE_TO_MANY relation without explicit depends_on → spec auto-inferred."""
-        cache = _MemoryCacheBackend()
+        cache = _MemoryCacheStore()
         resolver = GenerationalDependencyResolver(cache)
         wrapped = CachedRepository(
             _AutoProductRepo(), config=cache_config, cache=cache, dependency_resolver=resolver
@@ -574,7 +617,7 @@ class TestDependencySpecs:
 
     def test_projection_dep_auto_inferred_via_loader_model(self, cache_config: CacheConfig) -> None:
         """Projection with loader.model and no depends_on → auto-inferred from sibling relation."""
-        cache = _MemoryCacheBackend()
+        cache = _MemoryCacheStore()
         resolver = GenerationalDependencyResolver(cache)
         wrapped = CachedRepository(
             _AutoProductRepo(), config=cache_config, cache=cache, dependency_resolver=resolver
@@ -588,7 +631,7 @@ class TestDependencySpecs:
         self, cache_config: CacheConfig
     ) -> None:
         """Fully-qualified FK ``table.column`` is normalised to bare column name."""
-        cache = _MemoryCacheBackend()
+        cache = _MemoryCacheStore()
         resolver = GenerationalDependencyResolver(cache)
         wrapped = CachedRepository(
             _FqAutoParentRepo(), config=cache_config, cache=cache, dependency_resolver=resolver
@@ -599,7 +642,7 @@ class TestDependencySpecs:
 
     def test_explicit_depends_on_wins_over_auto_inference(self, cache_config: CacheConfig) -> None:
         """Explicit depends_on is used as-is; auto-inference is skipped for that field."""
-        cache = _MemoryCacheBackend()
+        cache = _MemoryCacheStore()
         resolver = GenerationalDependencyResolver(cache)
         wrapped = CachedRepository(
             _RepoWithModelDependsOn(),
@@ -621,13 +664,20 @@ class _CreateWithNote(msgspec.Struct):
 
 
 class _BulkFakeRepository(_FakeRepository):
-    async def create_many(self, data: Sequence[msgspec.Struct]) -> tuple[_EntityOut, ...]:
+    """Bulk double whose ``IGNORE`` skips the names it already holds."""
+
+    async def create_many(
+        self, data: Sequence[msgspec.Struct], *, on_conflict: OnConflict = OnConflict.ERROR
+    ) -> tuple[_EntityOut, ...]:
         names = [str(msgspec.to_builtins(item)["name"]) for item in data]
+        if on_conflict is OnConflict.IGNORE:
+            held = {row.name for row in self.storage.values()}
+            names = [name for name in names if name not in held]
         return tuple([await self.create(_Create(name=name)) for name in names])
 
 
 class _RecordingResolver(GenerationalDependencyResolver):
-    def __init__(self, cache: CacheBackend) -> None:
+    def __init__(self, cache: CacheStore) -> None:
         super().__init__(cache)
         self.events: list[MutationEvent] = []
 
@@ -639,7 +689,7 @@ class _RecordingResolver(GenerationalDependencyResolver):
 def _wrap(
     repository: _FakeRepository, cache_config: CacheConfig
 ) -> tuple[CachedRepository[_EntityOut, _Create, _Update, int], _RecordingResolver]:
-    cache = _MemoryCacheBackend()
+    cache = _MemoryCacheStore()
     resolver = _RecordingResolver(cache)
     wrapped = CachedRepository(
         repository, config=cache_config, cache=cache, dependency_resolver=resolver
@@ -675,6 +725,34 @@ class TestCreateMany:
         assert await wrapped.create_many([]) == ()
         assert resolver.events == []
 
+    @pytest.mark.asyncio
+    async def test_ignore_reaches_the_repository_and_the_event_lists_only_inserted_ids(
+        self, cache_config: CacheConfig
+    ) -> None:
+        wrapped, resolver = _wrap(_BulkFakeRepository(), cache_config)
+        await wrapped.create_many([_Create(name="a")])
+        resolver.events.clear()
+
+        created = await wrapped.create_many(
+            [_Create(name="a"), _Create(name="b")], on_conflict=OnConflict.IGNORE
+        )
+
+        assert [row.name for row in created] == ["b"]
+        assert [event.ids for event in resolver.events] == [(2,)]
+
+    @pytest.mark.asyncio
+    async def test_ignore_inserting_nothing_bumps_no_generation(
+        self, cache_config: CacheConfig
+    ) -> None:
+        wrapped, resolver = _wrap(_BulkFakeRepository(), cache_config)
+        await wrapped.create_many([_Create(name="a")])
+        resolver.events.clear()
+
+        created = await wrapped.create_many([_Create(name="a")], on_conflict=OnConflict.IGNORE)
+
+        assert created == ()
+        assert resolver.events == []
+
     def test_access_fails_when_the_wrapped_repository_has_no_create_many(
         self, cache_config: CacheConfig
     ) -> None:
@@ -698,7 +776,7 @@ def _generation(
     equivalent observation of whether the bump ran.
     """
     cache = wrapped._cache
-    assert isinstance(cache, _MemoryCacheBackend)
+    assert isinstance(cache, _MemoryCacheStore)
     return int(cache.data.get(resolver._tag_key(f"{wrapped.entity_name}:list")) or 0)
 
 
@@ -884,7 +962,7 @@ class TestPostCommitDeferral:
         assert resolver.events != []
 
     @pytest.mark.asyncio
-    async def test_a_failing_deferred_bump_logs_the_entity_and_ids_and_still_raises(
+    async def test_a_failing_deferred_bump_logs_the_entity_and_still_raises(
         self,
         cache_config: CacheConfig,
         caplog: pytest.LogCaptureFixture,
@@ -896,15 +974,15 @@ class TestPostCommitDeferral:
 
         resolver.bump_from_events = _boom  # type: ignore[method-assign]
         async with enlisted_write() as channel:
-            created = await wrapped.create(_Create(name="entity-1"))
+            await wrapped.create(make(_Create))
 
         with caplog.at_level("ERROR"), pytest.raises(PostCommitError) as excinfo:
             await channel.drain(committed=True)
 
         assert isinstance(excinfo.value.failures[0], RuntimeError)
-        assert "CachePostCommitBumpFailed" in caplog.text
-        assert wrapped.entity_name in caplog.text
-        assert str(created.id) in caplog.text
+        text = CapturedLog(caplog).rendered_text
+        assert CacheEvent.POST_COMMIT_BUMP_FAILED in text
+        assert wrapped.entity_name in text
 
 
 class TestPrimaryKeyByName:
@@ -913,7 +991,7 @@ class TestPrimaryKeyByName:
     @pytest.mark.asyncio
     async def test_create_event_ids_carry_the_declared_key(self, cache_config: CacheConfig) -> None:
         repository = WritableRepository([CodeWidget(code=1, name="a")], CodeWidget)
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         resolver = _RecordingResolver(backend)
         wrapped = CachedRepository(
             repository, config=cache_config, cache=backend, dependency_resolver=resolver
@@ -937,7 +1015,7 @@ class TestPrimaryKeyByName:
         keyless = CodeWidget(code=cast(int, None), name="b")
         env = wrap_with_cache(CountingRepository([keyless, keyed], CodeWidget), cache_config)
 
-        page = await env.wrapper.list_paginated(PageParams(page=1, limit=2))
+        page = await env.wrapper.list_paginated(make(PageParams, page=1, limit=2))
 
         assert list(page.items) == [keyless, keyed]
         fingerprint = await env.resolver.fingerprint(
@@ -951,7 +1029,7 @@ class TestPrimaryKeyByName:
     def test_a_repository_without_a_model_is_refused(self, cache_config: CacheConfig) -> None:
         repository = WritableRepository([AcmeCacheWidget(id=1, name="a")], AcmeCacheWidget)
         del repository.model
-        backend = CountingCacheBackend()
+        backend = CountingCacheStore()
         resolver = _RecordingResolver(backend)
 
         with pytest.raises(TypeError, match="has no model, so the store"):
@@ -1107,11 +1185,11 @@ class TestDelegationPrecondition:
     def test_refuses_a_repository_missing_delegated_methods(
         self, cache_config: CacheConfig
     ) -> None:
-        cache = _MemoryCacheBackend()
+        cache = _MemoryCacheStore()
         repository = cast(Any, _ReadOnlyRepository())
         dependency_resolver = GenerationalDependencyResolver(cache)
 
-        with pytest.raises(RuntimeError, match="_ReadOnlyRepository") as info:
+        with pytest.raises(InvalidType, match="_ReadOnlyRepository") as info:
             CachedRepository(
                 repository,
                 config=cache_config,

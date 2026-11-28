@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, TypeVar
 
 import polars as pl
 
-from loom.etl.backends.polars._writer import _require_boolean_flag_column
+from loom.core.errors import InvalidUse
 from loom.etl.declarative.target import TargetSpec
 from loom.etl.declarative.target._table import UpsertSpec
 from loom.etl.declarative.target._temp import TempFanInSpec, TempSpec
+from loom.etl.engines.polars._writer import _require_boolean_flag_column
 from loom.etl.schema._schema import LoomDtype
+from loom.etl.testing._model_rows import ModelRows, RowDifference
+
+ModelT = TypeVar("ModelT")
 
 
 @dataclass(frozen=True)
@@ -89,13 +94,13 @@ class StepResult:
         for that.
 
         Raises:
-            RuntimeError: When the target is not an upsert with ``delete_flag``.
+            InvalidUse: When the target is not an upsert with ``delete_flag``.
             UpsertDeleteFlagError: When the output has no flag column, or it
                 is not boolean.
         """
         flag = self.delete_flag
         if flag is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 "deletes needs a step whose target is IntoTable(...).upsert(delete_flag=...)."
             )
         _require_boolean_flag_column(self._frame.schema, flag)
@@ -106,12 +111,12 @@ class StepResult:
         """Rows the MERGE applied to the target table.
 
         Raises:
-            RuntimeError: When the runner has no ``delta_root``, the target is
+            InvalidUse: When the runner has no ``delta_root``, the target is
                 not an upsert or update, or the target table did not exist and
                 was created by this write instead of merged.
         """
         if self.merge_metrics is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 "merged is unavailable: no MERGE ran because the runner has no "
                 "delta_root, the target is not an upsert or update, "
                 "or the target table did not exist and was created by this write. "
@@ -123,22 +128,66 @@ class StepResult:
         """Assert that the output columns match the expected Loom schema.
 
         Args:
-            expected: Mapping of column name → :class:`~loom.etl._schema.LoomDtype`.
+            expected: Mapping of column name → :class:`~loom.etl.schema.LoomDtype`.
 
         Raises:
             AssertionError: When a column is missing or has a different dtype.
         """
-        from loom.etl.backends.polars._dtype import loom_type_to_polars
+        from loom.etl.engines.polars._dtype import frame_type_to_polars
 
         for col_name, loom_dtype in expected.items():
             actual = self._frame.schema.get(col_name)
             if actual is None:
                 raise AssertionError(f"Column '{col_name}' not found in result schema")
-            expected_polars = loom_type_to_polars(loom_dtype)
+            expected_polars = frame_type_to_polars(loom_dtype)
             if actual != expected_polars:
                 raise AssertionError(
                     f"Column '{col_name}': expected {expected_polars}, got {actual}"
                 )
+
+    def rows(self, model: type[ModelT]) -> list[ModelT]:
+        """Return the output rows as instances of *model*, cast to its lake types.
+
+        Capturing runners keep the frame the step produced, so the cast on read
+        is what makes its rows comparable to the model's.
+
+        Args:
+            model: A model with a table.
+
+        Returns:
+            One instance per row, in frame order.
+
+        Raises:
+            InvalidValue: When the output lacks a column of the model.
+        """
+        return ModelRows(model).instances_in(self._frame)
+
+    def assert_rows(self, *instances: Any) -> None:
+        """Assert the output holds exactly these rows of one model, in any order.
+
+        Every column of the model is compared.
+
+        Args:
+            *instances: Expected instances of one model, usually built with
+                ``loom.testing.make``.
+
+        Raises:
+            InvalidUse: When no instances or instances of several models come.
+            AssertionError: When a row is missing or unexpected.
+        """
+        models = {type(instance) for instance in instances}
+        if len(models) != 1:
+            raise InvalidUse(
+                "assert_rows needs the rows of exactly one model; use assert_count(0) for none."
+            )
+        (model,) = models
+        actual = self.rows(model)
+        difference = RowDifference.between(instances, actual)
+        if not difference.is_empty:
+            raise AssertionError(
+                f"{model.__name__} rows differ.\nmissing: {difference.missing}"
+                f"\nunexpected: {difference.unexpected}"
+            )
 
     def assert_count(self, n: int) -> None:
         """Assert the result contains exactly *n* rows.

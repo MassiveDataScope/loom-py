@@ -11,28 +11,37 @@ from typing import Any, cast
 import msgspec
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all, get_metadata, reset_registry
 from loom.core.cache import (
-    CacheBackend,
     CacheConfig,
     CachedRepository,
     CacheGateway,
+    CacheStore,
     GenerationalDependencyResolver,
 )
 from loom.core.command import Command
 from loom.core.errors import UnsupportedQuery
 from loom.core.model import BaseModel, ColumnField, DateTime
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository import Repository
-from loom.core.repository.abc import CursorCodec, CursorResult, PaginationMode, QuerySpec, SortSpec
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import (
+    CursorCodec,
+    CursorResult,
+    PaginationMode,
+    QuerySpec,
+    Repository,
+    SortSpec,
+)
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.schema import compile_all, get_metadata, reset_registry
+from loom.stores.sqlalchemy.session_manager import SessionManager
+from loom.testing import make
 
 pytestmark = pytest.mark.integration
 
 _tenant: ContextVar[str] = ContextVar("_tenant", default="")
 _START = datetime(2026, 9, 6, 12, 0)
-_QUERY = QuerySpec(sort=(SortSpec(field="taken_at"),), pagination=PaginationMode.CURSOR, limit=2)
+_QUERY = make(
+    QuerySpec, sort=(SortSpec(field="taken_at"),), pagination=PaginationMode.CURSOR, limit=2
+)
 
 
 class Reading(BaseModel):
@@ -51,7 +60,7 @@ def _scope_settings() -> Mapping[str, str]:
 
 
 @pytest.fixture
-async def repository(pg_admin_uri: str) -> AsyncIterator[RepositorySQLAlchemy[Reading, int]]:
+async def repository(pg_admin_uri: str) -> AsyncIterator[SQLAlchemyRepository[Reading, int]]:
     reset_registry()
     compile_all(Reading)
     manager = SessionManager(
@@ -65,7 +74,7 @@ async def repository(pg_admin_uri: str) -> AsyncIterator[RepositorySQLAlchemy[Re
     async with manager.engine.begin() as conn:
         await conn.run_sync(get_metadata().drop_all)
         await conn.run_sync(get_metadata().create_all)
-    repo: RepositorySQLAlchemy[Reading, int] = RepositorySQLAlchemy(
+    repo: SQLAlchemyRepository[Reading, int] = SQLAlchemyRepository(
         session_manager=manager, model=Reading, cursor_codec=CursorCodec(signing="ephemeral")
     )
     stamps = [_START + timedelta(minutes=minutes) for minutes in (5, 1, 3, 1, 4)]
@@ -75,15 +84,21 @@ async def repository(pg_admin_uri: str) -> AsyncIterator[RepositorySQLAlchemy[Re
     finally:
         async with manager.engine.begin() as conn:
             await conn.run_sync(get_metadata().drop_all)
-        await manager.dispose()
+        await manager.close()
         reset_registry()
 
 
 async def _page(
-    repository: RepositorySQLAlchemy[Reading, int], cursor: str | None
+    repository: SQLAlchemyRepository[Reading, int], cursor: str | None
 ) -> CursorResult[Reading]:
     page = await repository.list_with_query(
-        QuerySpec(sort=_QUERY.sort, pagination=_QUERY.pagination, limit=_QUERY.limit, cursor=cursor)
+        make(
+            QuerySpec,
+            sort=_QUERY.sort,
+            pagination=_QUERY.pagination,
+            limit=_QUERY.limit,
+            cursor=cursor,
+        )
     )
     assert isinstance(page, CursorResult)
     return page
@@ -94,7 +109,7 @@ _AT = {"type": "datetime", "v": "2026-09-06T12:01:00+00:00"}
 
 @pytest.fixture
 async def cached(
-    repository: RepositorySQLAlchemy[Reading, int],
+    repository: SQLAlchemyRepository[Reading, int],
 ) -> AsyncIterator[CachedRepository[Reading, Any, Any, int]]:
     CacheGateway.configure(
         {
@@ -125,8 +140,8 @@ async def cached(
         yield CachedRepository(
             repository=cast(Repository[Reading, Any, Any, int], repository),
             config=config,
-            cache=cast(CacheBackend, data),
-            dependency_resolver=GenerationalDependencyResolver(cast(CacheBackend, counters)),
+            cache=cast(CacheStore, data),
+            dependency_resolver=GenerationalDependencyResolver(cast(CacheStore, counters)),
         )
     finally:
         await data.clear()
@@ -138,7 +153,7 @@ async def cached(
 class TestCursorBinding:
     async def test_a_naive_timestamp_sort_walks_every_page(
         self,
-        repository: RepositorySQLAlchemy[Reading, int],
+        repository: SQLAlchemyRepository[Reading, int],
     ) -> None:
         seen: list[datetime] = []
         cursor: str | None = None
@@ -153,7 +168,7 @@ class TestCursorBinding:
 
     async def test_a_cursor_issued_for_one_tenant_is_refused_for_another(
         self,
-        repository: RepositorySQLAlchemy[Reading, int],
+        repository: SQLAlchemyRepository[Reading, int],
     ) -> None:
         issued = _tenant.set("tenant-a")
         try:
@@ -175,9 +190,9 @@ class TestCursorBinding:
         ids=["text-for-the-integer-key", "text-for-the-timestamp"],
     )
     async def test_a_forged_value_of_another_type_is_refused_before_the_query(
-        self, repository: RepositorySQLAlchemy[Reading, int], position: dict[str, object]
+        self, repository: SQLAlchemyRepository[Reading, int], position: dict[str, object]
     ) -> None:
-        unsigned: RepositorySQLAlchemy[Reading, int] = RepositorySQLAlchemy(
+        unsigned: SQLAlchemyRepository[Reading, int] = SQLAlchemyRepository(
             session_manager=repository.session_manager,
             model=Reading,
             cursor_codec=CursorCodec(signing="unsigned"),
@@ -187,17 +202,27 @@ class TestCursorBinding:
 
         with pytest.raises(UnsupportedQuery):
             await unsigned.list_with_query(
-                QuerySpec(sort=_QUERY.sort, pagination=_QUERY.pagination, limit=2, cursor=forged)
+                make(
+                    QuerySpec,
+                    sort=_QUERY.sort,
+                    pagination=_QUERY.pagination,
+                    limit=2,
+                    cursor=forged,
+                )
             )
 
     async def test_a_cursor_issued_for_one_sort_is_refused_for_another(
         self,
-        repository: RepositorySQLAlchemy[Reading, int],
+        repository: SQLAlchemyRepository[Reading, int],
     ) -> None:
         cursor = (await _page(repository, None)).next_cursor
         assert cursor is not None
-        by_id = QuerySpec(
-            sort=(SortSpec(field="id"),), pagination=PaginationMode.CURSOR, limit=2, cursor=cursor
+        by_id = make(
+            QuerySpec,
+            sort=(SortSpec(field="id"),),
+            pagination=PaginationMode.CURSOR,
+            limit=2,
+            cursor=cursor,
         )
 
         with pytest.raises(UnsupportedQuery):
@@ -221,7 +246,8 @@ class TestCursorBinding:
 
         try:
             second = await cached.list_with_query(
-                QuerySpec(
+                make(
+                    QuerySpec,
                     sort=_QUERY.sort,
                     pagination=_QUERY.pagination,
                     limit=_QUERY.limit,

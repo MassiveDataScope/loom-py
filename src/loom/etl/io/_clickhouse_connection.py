@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from loom.core.connections.clickhouse import ClickHouseConnection, clickhouse_island
+from loom.connections.clickhouse import clickhouse_island
+from loom.core.connections.clickhouse import ClickHouseConnection
+from loom.core.errors import InvalidValue
 from loom.core.model.redaction import Dsn
 
 
@@ -19,10 +21,10 @@ def resolve_connection(
     """Return the connection a component was given, building it from a bare DSN.
 
     Raises:
-        ValueError: When both a DSN and a connection are given.
+        InvalidValue: When both a DSN and a connection are given.
     """
     if url and connection is not None:
-        raise ValueError(f"{owner} takes 'url' or 'connection', not both")
+        raise InvalidValue(f"{owner} takes 'url' or 'connection', not both")
     if connection is not None:
         return connection
     return ClickHouseConnection(url=Dsn(url)) if url else None

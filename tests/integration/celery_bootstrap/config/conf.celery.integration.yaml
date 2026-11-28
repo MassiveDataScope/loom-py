@@ -6,11 +6,10 @@ celery:
   result_backend: cache+memory://
   task_always_eager: true
 
-persistence:
-  cursors:
-    signing: ephemeral
-
 stores:
+  settings:
+    cursors:
+      signing: ephemeral
   default:
     backend: sqlalchemy
     url: ${oc.env:LOOM_TEST_DATABASE_URL}
@@ -21,41 +20,41 @@ stores:
 jobs:
   _CreateRecordViaUseCaseJob:
     queue: tests.integration.celery_bootstrap.test_auto_create_app_integration
-    retries: 0
+    retry: {max_attempts: 1}
     countdown: 0
     priority: 0
   _GetRecordViaLoadByIdJob:
     queue: tests.integration.celery_bootstrap.test_auto_create_app_integration
-    retries: 0
+    retry: {max_attempts: 1}
     countdown: 0
     priority: 0
   _RenameRecordViaLoadByIdJob:
     queue: tests.integration.celery_bootstrap.test_auto_create_app_integration
-    retries: 0
+    retry: {max_attempts: 1}
     countdown: 0
     priority: 0
   _LoadRecordByNameJob:
     queue: tests.integration.celery_bootstrap.test_auto_create_app_integration
-    retries: 0
+    retry: {max_attempts: 1}
     countdown: 0
     priority: 0
   _ExistsRecordByNameJob:
     queue: tests.integration.celery_bootstrap.test_auto_create_app_integration
-    retries: 0
+    retry: {max_attempts: 1}
     countdown: 0
     priority: 0
   _CreateRecordInlineJob:
     queue: tests.integration.celery_bootstrap.test_auto_create_app_integration
-    retries: 0
+    retry: {max_attempts: 1}
     countdown: 0
     priority: 0
   _AlwaysFailJob:
     queue: tests.integration.celery_bootstrap.test_auto_create_app_integration
-    retries: 0
+    retry: {max_attempts: 1}
     countdown: 0
     priority: 0
   _DispatchChildJobOrchestratorJob:
     queue: tests.integration.celery_bootstrap.test_auto_create_app_integration
-    retries: 0
+    retry: {max_attempts: 1}
     countdown: 0
     priority: 0

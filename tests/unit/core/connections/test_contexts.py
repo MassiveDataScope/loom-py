@@ -15,16 +15,16 @@ import pytest
 from loom.core.config import ConfigContext, ConfigError
 from loom.core.config.convert import convert_config
 from loom.core.connections import AwsClientConfig, ClickHouseConnection, MongoConnection
-from loom.core.persistence.database import load_database_config
-from loom.core.persistence.stores import DEFAULT_STORE, StoreKey, load_catalog
-from loom.core.repository.dynamodb.backend import DynamoDBRepositoryConfig
-from loom.core.repository.mongo.backend import MongoRepositoryConfig
-from loom.core.sql.config import SqlConnectionConfig
+from loom.core.stores.catalog import DEFAULT_STORE, StoreKey, load_catalog
+from loom.core.stores.database import load_database_config
+from loom.core.stores.sql.config import SqlConnectionConfig
 from loom.etl.storage._config import (
     StorageConfig,
     convert_storage_config,
     normalise_storage_section,
 )
+from loom.stores.dynamodb.plugin import DynamoDBRepositoryConfig
+from loom.stores.mongo.plugin import MongoRepositoryConfig
 from loom.streaming.mongo import MongoSourceConfig
 
 _AWS = {"region": "eu-west-1", "url": "http://localhost:8000", "read_timeout": 9}
@@ -116,7 +116,7 @@ class TestUnknownConnectionKeys:
 
 class TestRetiredConnectionSections:
     def test_storage_dynamodb_enabled_names_its_replacement(self) -> None:
-        with pytest.raises(ValueError, match=r"storage\.dynamodb\.enabled was removed"):
+        with pytest.raises(ConfigError, match=r"storage\.dynamodb\.enabled was removed"):
             _storage(dynamodb={"enabled": True, "region": "eu-west-1"})
 
     @pytest.mark.parametrize(
@@ -204,11 +204,13 @@ class TestClickHouseSinkDatabase:
         assert _values(connection, _CLICKHOUSE) == _CLICKHOUSE
 
     def test_a_sink_database_with_http_url_names_its_new_key(self) -> None:
-        with pytest.raises(ValueError, match=r"stores\.warehouse\.http_url was renamed to url"):
+        with pytest.raises(ConfigError, match=r"stores\.warehouse\.http_url was renamed to url"):
             _sink_connection({"http_url": "http://h:8123"})
 
     def test_a_relational_database_behind_a_clickhouse_sink_names_the_engine(self) -> None:
-        with pytest.raises(ValueError, match=r"stores\.warehouse holds a 'postgresql\+asyncpg'"):
+        with pytest.raises(
+            ConfigError, match=r"stores\.warehouse holds a database of another engine"
+        ):
             _sink_connection({"url": "postgresql+asyncpg://h/db"})
 
 

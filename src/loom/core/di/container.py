@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import threading
 import warnings
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, TypeVar
@@ -46,6 +47,8 @@ from loom.core.di.introspection import (
     plain_key,
 )
 from loom.core.di.scope import Scope
+from loom.core.errors import InvalidUse, InvalidValue
+from loom.core.errors.summary import ErrorSummary
 from loom.core.execution import ExecutionKinds, Kind, NoExecution
 
 T = TypeVar("T")
@@ -69,6 +72,8 @@ class _Binding:
     instance: object = field(default=UNBUILT, repr=False)
     lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
     refused: str | None = field(default=None, repr=False)
+    target: object = field(default=None, repr=False)
+    overridden: list[object] = field(default_factory=list, repr=False)
 
     def build(self, make: Supplier) -> object:
         """Return the instance, built once by *make* under :attr:`lock`, outside any execution."""
@@ -147,7 +152,7 @@ class LoomContainer:
         built singleton is kept.
 
         Raises:
-            ValueError: When constructors are already read another way.
+            InvalidUse: When constructors are already read another way.
             ContainerSealed: When the container is sealed on the default reading.
         """
         with STRUCTURE_LOCK:
@@ -155,7 +160,7 @@ class LoomContainer:
             if reader.classify_key is classify_key and reader.implicit is implicit:
                 return False
             if reader != SignatureReader(self.kinds):
-                raise ValueError("the container already reads constructors another way")
+                raise InvalidUse("the container already reads constructors another way")
             self._refuse_if_sealed(DependencyGraph)
             self._install_reader(SignatureReader(self.kinds, classify_key, implicit))
             self._drop_compiled()
@@ -225,7 +230,7 @@ class LoomContainer:
         Example::
 
             container.register(JobService, MyJobService, scope=Scope.APPLICATION)
-            container.register_default(JobService, InlineJobService)
+            container.register_default(JobService, InlineJobTransport)
             assert isinstance(container.resolve(JobService), MyJobService)
         """
         with STRUCTURE_LOCK:
@@ -258,6 +263,99 @@ class LoomContainer:
         """
         with STRUCTURE_LOCK:
             self._bind(interface, lambda: instance, Scope.APPLICATION)
+
+    def register_alias(self, interface: BindingKey, target: BindingKey) -> None:
+        """Serve ``interface`` from whatever is bound under *target*.
+
+        The alias is served by *target*'s own supplier, so both keys return the
+        same instance, and a change of *target* reaches ``interface`` with it.
+        The alias has no scope of its own: it follows *target*'s.
+
+        Args:
+            interface: The key that resolves through *target*.
+            target: The key whose binding serves it.
+
+        Raises:
+            ContainerSealed: When the container is sealed.
+            ResolutionError: When *target* is unbound.
+        """
+        with STRUCTURE_LOCK:
+            served = self._bindings.get(target)
+            if served is None:
+                raise ResolutionError(
+                    f"{describe_key(interface)} aliases {describe_key(target)}, which is unbound"
+                )
+            self._bind(interface, served.provider, served.scope)
+            self._bindings[interface].target = target
+
+    def is_alias_of(self, interface: BindingKey, target: BindingKey) -> bool:
+        """Return ``True`` when ``interface`` is an alias of *target*."""
+        binding = self._bindings.get(interface)
+        return binding is not None and binding.target == target
+
+    @contextmanager
+    def overriding(self, interface: BindingKey, instance: Any) -> Iterator[None]:
+        """Serve *instance* for an ``APPLICATION`` binding until the block exits.
+
+        The bound singleton is swapped for *instance* and put back on exit,
+        also when the block raises. Nothing is registered again: every key
+        that resolves through ``interface``, and every class plan, is
+        compiled again at its next use. A singleton already built from the
+        old value keeps it.
+
+        Args:
+            interface: The key of an ``APPLICATION`` binding, not an alias.
+            instance: What it serves meanwhile.
+
+        Raises:
+            ResolutionError: When ``interface`` is unbound, is an alias of
+                another key, or is not ``APPLICATION`` scoped; or, on exit,
+                when another override of the same key was entered after this
+                one and has not exited. This one is removed all the same and
+                the original is back once every override has exited.
+        """
+        with STRUCTURE_LOCK:
+            binding = self._replaceable(interface)
+            if not binding.overridden:
+                binding.overridden.append(binding.instance)
+            binding.overridden.append(instance)
+            binding.instance = instance
+            self._drop_compiled()
+        try:
+            yield
+        finally:
+            with STRUCTURE_LOCK:
+                exited_in_order = binding.overridden[-1] is instance
+                last = max(i for i, held in enumerate(binding.overridden) if held is instance)
+                del binding.overridden[last]
+                binding.instance = binding.overridden[-1]
+                if len(binding.overridden) == 1:
+                    binding.overridden.clear()
+                self._drop_compiled()
+            if not exited_in_order:
+                raise ResolutionError(
+                    f"Overrides of {describe_key(interface)} exited out of order: exit the "
+                    "last one entered first. This one is removed; the others stay until they exit"
+                )
+
+    def _replaceable(self, interface: BindingKey) -> _Binding:
+        """The binding of *interface*, which :meth:`overriding` may swap."""
+        binding = self._bindings.get(interface)
+        if binding is None:
+            raise ResolutionError(
+                f"{describe_key(interface)} is unbound: there is nothing to override"
+            )
+        if binding.target is not None:
+            raise ResolutionError(
+                f"{describe_key(interface)} is an alias of {describe_key(binding.target)}: "
+                "override that key instead; for a repository, use Override.repository"
+            )
+        if binding.scope is not Scope.APPLICATION:
+            raise ResolutionError(
+                f"{describe_key(interface)} is bound per execution: only an APPLICATION "
+                "binding can be overridden"
+            )
+        return binding
 
     def resolve(self, interface: BindingKey) -> Any:
         """Return an instance bound to ``interface``.
@@ -310,8 +408,8 @@ class LoomContainer:
             ResolutionError: If an ``APPLICATION`` scope binding fails to
                 instantiate.
         """
-        for interface, binding in self._bindings.items():
-            if binding.scope is Scope.APPLICATION:
+        for interface in self._bindings:
+            if self._graph.scope(KeyNode(interface)) is Scope.APPLICATION:
                 self._instantiate(interface)
 
     def seal(
@@ -343,7 +441,7 @@ class LoomContainer:
         declaring a kind on :attr:`kinds` or binding its resolver.
 
         Raises:
-            ValueError: When *analysis* analysed another dependency graph
+            InvalidValue: When *analysis* analysed another dependency graph
                 than :attr:`graph`.
             DependencyGraphError: A reached singleton declaring an unbound
                 kind, with the path from its root.
@@ -370,7 +468,7 @@ class LoomContainer:
     def _reached(self, analysis: GraphAnalysis, deferred: Collection[Kind]) -> frozenset[Node]:
         """What *analysis* reaches from its roots once every kind is bound, *deferred* skipped."""
         if analysis.graph is not self._graph:
-            raise ValueError("seal() was given the analysis of another dependency graph")
+            raise InvalidValue("seal() was given the analysis of another dependency graph")
         self._graph.analyse(analysis.roots, (refuse_unbound(self.kinds, skip=deferred),))
         return analysis.reachable
 
@@ -395,7 +493,9 @@ class LoomContainer:
         A reached one is left unbuilt only for a deferred kind and keeps its
         binding; one no root reaches is refused for good (:attr:`_Binding.refused`).
         """
-        singletons = [k for k, b in self._bindings.items() if b.scope is Scope.APPLICATION]
+        singletons = [
+            k for k in self._bindings if self._graph.scope(KeyNode(k)) is Scope.APPLICATION
+        ]
         reached_refusals = (refuse_unbound(self.kinds),)
         buildable: list[BindingKey] = []
         unbuilt: list[str] = []
@@ -437,7 +537,7 @@ class LoomContainer:
         except Exception as exc:
             raise ResolutionError(
                 f"Failed to instantiate APPLICATION-scope binding "
-                f"for {describe_key(interface)}: {exc}"
+                f"for {describe_key(interface)}: {ErrorSummary.message_for(exc)}"
             ) from exc
 
     def _bind(self, interface: BindingKey, provider: Callable[..., Any], scope: Scope) -> None:

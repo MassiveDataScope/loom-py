@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import ClassVar
 
-from loom.core.errors.base import DomainError, SystemError
+from loom.core.errors.base import DomainError, InvalidType, InvalidValue, SystemError
 from loom.core.errors.codes import ErrorCode
 
 
@@ -48,11 +48,11 @@ class InsufficientAuthentication(Unauthenticated):
             in order of preference; empty when any will do.
 
     Raises:
-        ValueError: If ``message`` is not a ``str``, ``max_age`` is not a
-            non-negative ``int``, ``acr_values`` is a single ``str`` or
-            ``bytes``, or a value is not a ``str``, is empty, or holds a
+        InvalidType: If ``message`` is not a ``str``, ``max_age`` is not an
+            ``int``, ``acr_values`` is a single ``str`` or ``bytes``, or a
+            value is not a ``str``, or ``acr_values`` is not iterable.
+        InvalidValue: If ``max_age`` is negative, or a value is empty or holds a
             character outside visible ASCII, a double quote or a backslash.
-        TypeError: If ``acr_values`` is not iterable.
 
     Example::
 
@@ -69,22 +69,24 @@ class InsufficientAuthentication(Unauthenticated):
         acr_values: Iterable[str] = (),
     ) -> None:
         if not isinstance(message, str):
-            raise ValueError("InsufficientAuthentication.message must be a str")
-        if max_age is not None and (type(max_age) is not int or max_age < 0):
-            raise ValueError("InsufficientAuthentication.max_age must be a non-negative int")
+            raise InvalidType("InsufficientAuthentication.message must be a str")
+        if max_age is not None and type(max_age) is not int:
+            raise InvalidType("InsufficientAuthentication.max_age must be an int")
+        if max_age is not None and max_age < 0:
+            raise InvalidValue("InsufficientAuthentication.max_age must not be negative")
         if isinstance(acr_values, (str, bytes)):
-            raise ValueError(
+            raise InvalidType(
                 "InsufficientAuthentication.acr_values takes an iterable of str values, "
                 "not one str or bytes"
             )
         values = tuple(acr_values)
+        if not all(isinstance(value, str) for value in values):
+            raise InvalidType("InsufficientAuthentication.acr_values items must be str")
         if not all(
-            isinstance(value, str)
-            and value
-            and all("!" <= char <= "~" and char not in '"\\' for char in value)
+            value and all("!" <= char <= "~" and char not in '"\\' for char in value)
             for value in values
         ):
-            raise ValueError(
+            raise InvalidValue(
                 "InsufficientAuthentication.acr_values must be visible ASCII without "
                 "whitespace, double quotes or backslashes"
             )
@@ -151,8 +153,9 @@ class Forbidden(DomainError):
     leave them out where the refusal must not become an oracle for the policy.
 
     Raises:
-        ValueError: If ``reason`` is not a non-blank string, ``missing`` is a single
-            ``str`` or ``bytes``, or an item of ``missing`` is not a non-blank string.
+        InvalidType: If ``reason`` is not a string, ``missing`` is a single
+            ``str`` or ``bytes``, or an item of ``missing`` is not a string.
+        InvalidValue: If ``reason`` or an item of ``missing`` is blank.
     """
 
     def __init__(
@@ -162,15 +165,19 @@ class Forbidden(DomainError):
         reason: str | None = None,
         missing: Iterable[str] = (),
     ) -> None:
-        if reason is not None and (not isinstance(reason, str) or not reason.strip()):
-            raise ValueError("Forbidden.reason must be a non-blank string or None")
+        if reason is not None and not isinstance(reason, str):
+            raise InvalidType("Forbidden.reason must be a string or None")
+        if reason is not None and not reason.strip():
+            raise InvalidValue("Forbidden.reason must be non-blank when given")
         if isinstance(missing, (str, bytes)):
-            raise ValueError(
+            raise InvalidType(
                 "Forbidden.missing takes an iterable of permissions, not one str or bytes"
             )
         permissions = tuple(missing)
-        if any(not isinstance(item, str) or not item.strip() for item in permissions):
-            raise ValueError("Forbidden.missing items must be non-blank strings")
+        if not all(isinstance(item, str) for item in permissions):
+            raise InvalidType("Forbidden.missing items must be strings")
+        if any(not item.strip() for item in permissions):
+            raise InvalidValue("Forbidden.missing items must be non-blank")
         super().__init__(message, code=ErrorCode.FORBIDDEN)
         self.reason = reason
         self.missing: tuple[str, ...] = permissions
@@ -190,7 +197,7 @@ class IdentityFixed(SystemError):
         message: Description of the refusal, with the supported switches.
     """
 
-    retryable = False
+    is_retryable = False
     default_message: ClassVar[str] = (
         "The identity is fixed for the work in progress and every task it started: only an "
         "explicit switch changes it, executor.run(UseCase, identity=...), "

@@ -1,7 +1,7 @@
 """pydantic-ai engine adapter, behind the ``ai-pydantic`` extra.
 
 Importing this package requires ``pydantic-ai-slim``; nothing in ``loom.ai``
-imports it. The runtime reaches :class:`PydanticAIEngineProvider` through the
+imports it. The host reaches :class:`PydanticAIEnginePlugin` through the
 ``loom.ai.engines`` entry point named ``pydantic-ai``.
 
 The adapter is *native-inside*: an :class:`~loom.ai.compiler.AgentPlan` is
@@ -12,14 +12,14 @@ and classifying failures.
 
 :func:`create_a2a_client` is exported beside the provider because it is not
 part of the engine contract: it is the
-:data:`~loom.ai.runtime.A2AClientFactory` a composition root hands to
-:class:`~loom.ai.runtime.AgentRuntime`, so that an outbound grant is validated
+:data:`~loom.ai.execution.A2AClientFactory` a composition root hands to
+:class:`~loom.ai.execution.AgentHost`, so that an outbound grant is validated
 against the live remote at start-up rather than on its first use. The MCP
-counterpart is ``PydanticAIEngineProvider.mcp_client_factory`` rather than a
+counterpart is ``PydanticAIEnginePlugin.mcp_client_factory`` rather than a
 free function, because the session it opens is the very toolset the run path
 uses: one connection per server for the whole worker. :func:`create_mcp_client`
 opens a session of its own and is for diagnostics, never for wiring the
-runtime.
+host.
 
 :func:`native_agent` is the escape hatch out of loom: an async context
 manager over the agent this adapter built, handed to calling code so it can
@@ -37,11 +37,11 @@ from loom.ai.engines.pydantic_ai._a2a import create_a2a_client
 from loom.ai.engines.pydantic_ai._errors import as_run_error
 from loom.ai.engines.pydantic_ai._escape import NativeAgent, native_agent
 from loom.ai.engines.pydantic_ai._mcp import create_mcp_client
-from loom.ai.engines.pydantic_ai.provider import PydanticAIEngineProvider
+from loom.ai.engines.pydantic_ai.plugin import PydanticAIEnginePlugin
 
 __all__ = [
     "NativeAgent",
-    "PydanticAIEngineProvider",
+    "PydanticAIEnginePlugin",
     "as_run_error",
     "create_a2a_client",
     "create_mcp_client",

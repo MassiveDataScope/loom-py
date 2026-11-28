@@ -81,7 +81,7 @@ class TestPorts:
         kernel = invoicing_kernel()
 
         with pytest.raises(MissingCaller):
-            await kernel.app.invoke(IssueInvoice, params={"invoice_id": "INV-1"})
+            await kernel.invoker.invoke(IssueInvoice, params={"invoice_id": "INV-1"})
 
 
 class TestMarkers:
@@ -96,7 +96,7 @@ class TestMarkers:
             mcp_resolver=mcp,
         )
 
-        result = await kernel.app.for_identity(ada).invoke(
+        result = await kernel.invoker.for_identity(ada).invoke(
             TriageTicket, params={"email": "ada@acme.test", "text": "printer down"}
         )
 

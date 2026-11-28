@@ -14,7 +14,7 @@ from loom.composition import Application
 from loom.core.di import ContainerSealed
 from loom.core.di.container import LoomContainer
 from loom.core.di.scope import Scope
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.job.service import JobService
 from tests.unit.composition.phases.components import AcmeRecord, AcmeUnregistered
 from tests.unit.composition.phases.snapshot import application_singletons
@@ -66,7 +66,7 @@ class TestStartedApplicationContainer:
             container.register(JobService, AcmeOtherJobs, scope=Scope.APPLICATION)
 
         after = application_singletons(container)
-        assert container.resolve(RuntimeExecutor) is application.kernel.executor
+        assert container.resolve(UseCaseExecutor) is application.kernel.executor
         assert not isinstance(after[JobService], AcmeOtherJobs)
         assert all(after[key] is instance for key, instance in before.items())
 

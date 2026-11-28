@@ -5,6 +5,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar, cast
 
+from loom.core.errors import InvalidType
+
 T = TypeVar("T", bound=type[object])
 F = TypeVar("F", bound=Callable[..., object])
 
@@ -130,14 +132,14 @@ def cache_call(
         The decorator that marks the coroutine.
 
     Raises:
-        TypeError: The decorated object is not a coroutine function. A cached
+        InvalidType: The decorated object is not a coroutine function. A cached
             call is awaited once and its single result is stored, which a
             plain function, a generator and an async generator cannot honour.
     """
 
     def decorator(func: F) -> F:
         if not inspect.iscoroutinefunction(func):
-            raise TypeError(
+            raise InvalidType(
                 f"@cache_call requires a coroutine function; {func.__qualname__} is not one"
             )
         func.__cache_call__ = _CallPolicy(ttl_key, unless, version)  # type: ignore[attr-defined]

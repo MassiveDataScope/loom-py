@@ -21,10 +21,11 @@ rotation takes effect on the next run without redeployment.
 
 Built-in resolvers
 ------------------
-:class:`~loom.core.config.ssm.SsmResolver` is the bundled implementation
+:class:`~loom.connections.aws.ssm.SsmResolver` is the bundled implementation
 for AWS SSM Parameter Store.  Install ``loom-kernel[config-ssm]`` to use it::
 
-    from loom.core.config import load_config, SsmResolver
+    from loom.connections.aws import SsmResolver
+    from loom.core.config import load_config
 
     cfg = load_config("config/prod.yaml", resolvers=[SsmResolver()])
 """
@@ -36,7 +37,8 @@ from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 from loom.core.config._interpolations import referenced
-from loom.core.config._resolver_utils import _split_resolver_key
+from loom.core.config.event import ConfigEvent, ConfigKey
+from loom.core.config.resolution import _split_resolver_key
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,7 @@ class ConfigResolver(Protocol):
     Implementors provide a *name* (used as the OmegaConf placeholder prefix)
     and a *resolve* callable that fetches the actual value at parse time.
 
-    See :class:`~loom.core.config.ssm.SsmResolver` for the bundled AWS SSM
+    See :class:`~loom.connections.aws.ssm.SsmResolver` for the bundled AWS SSM
     implementation.  Custom resolvers only need to satisfy this two-member
     protocol::
 
@@ -94,24 +96,17 @@ class ConfigResolver(Protocol):
 
 
 def default_resolvers() -> tuple[ConfigResolver, ...]:
-    """Return loom's built-in resolvers: ``secrets``, ``ssm`` and ``file``.
+    """Return the core's own resolvers, which need no technology: ``file``.
 
-    The one list of built-ins: a new one is a :class:`ConfigResolver` added
-    here, and every loader that uses the defaults gains it. The AWS resolvers
-    build their client lazily on the first resolution from the ``aws:``
-    section of the configuration they resolve, as written, and the AWS SDK's
-    default credential chain.
+    The AWS ``secrets`` and ``ssm`` resolvers belong to :mod:`loom.connections.aws`;
+    :func:`loom.connections.resolvers.built_in_resolvers` adds them to these.
 
     Returns:
-        A :class:`~loom.core.config.secrets.SecretsManagerResolver`, a
-        :class:`~loom.core.config.ssm.SsmResolver` and a
-        :class:`~loom.core.config.file.FileResolver`, freshly built.
+        A :class:`~loom.core.config.file.FileResolver`, freshly built.
     """
     from loom.core.config.file import FileResolver
-    from loom.core.config.secrets import SecretsManagerResolver
-    from loom.core.config.ssm import SsmResolver
 
-    return (SecretsManagerResolver(), SsmResolver(), FileResolver())
+    return (FileResolver(),)
 
 
 def merge_resolvers(
@@ -141,7 +136,7 @@ def merge_resolvers(
             continue
         if OmegaConf.has_resolver(resolver.name):
             logger.debug(
-                "config resolver %r already registered; loom default skipped", resolver.name
+                ConfigEvent.RESOLVER_DEFAULT_SKIPPED, extra={ConfigKey.RESOLVER: resolver.name}
             )
             continue
         kept.append(resolver)
@@ -149,10 +144,11 @@ def merge_resolvers(
 
 
 def with_default_resolvers(explicit: Sequence[ConfigResolver] = ()) -> tuple[ConfigResolver, ...]:
-    """Return *explicit* followed by loom's built-in resolvers whose names are free.
+    """Return *explicit* followed by the core's default resolvers whose names are free.
 
-    Equivalent to ``merge_resolvers(explicit, default_resolvers())``; the
-    factories use it to register ``secrets`` and ``ssm`` behind user resolvers.
+    Equivalent to ``merge_resolvers(explicit, default_resolvers())``; the factories
+    register the AWS resolvers too, through
+    :func:`loom.connections.resolvers.with_built_in_resolvers`.
 
     Args:
         explicit: User resolvers that keep their position and always win

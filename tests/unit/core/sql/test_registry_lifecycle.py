@@ -6,8 +6,8 @@ import pytest
 from clickhouse_connect.driver.exceptions import DatabaseError
 
 from loom.core.config.errors import ConfigError
-from loom.core.sql.clickhouse import ClickHouseConnectionRegistry
-from loom.core.sql.config import SqlConnectionConfig
+from loom.core.stores.sql.config import SqlConnectionConfig
+from loom.stores.clickhouse import ClickHouseConnectionRegistry
 from tests.unit.core.sql._fakes import (
     FakeClickHouseClient,
     RecordingClientFactory,
@@ -80,9 +80,10 @@ class TestSqlRegistryLifecycle:
         error = DatabaseError("Code: 241. DB::Exception: Memory limit exceeded: would use 511 MiB")
         factory = RecordingClientFactory(FakeClickHouseClient(error=error))
         registry = _registry(factory, analytics=make_connection_config())
-        with pytest.raises(ConfigError, match="probe failed unexpectedly"):
+        with pytest.raises(ConfigError, match="probe failed unexpectedly") as caught:
             async with registry:
                 pass
+        assert str(caught.value).endswith("probe failed unexpectedly: ClickHouse error 241")
 
     async def test_startup_probe_sends_a_sentinel_role_in_settings(self) -> None:
         """The startup probe runs a query carrying a nonexistent sentinel role."""

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from loom.core.repository.abc import PageParams
+from loom.core.stores.repository import PageParams
+from loom.testing import make
 
 
 @pytest.fixture
 def page_params() -> PageParams:
-    return PageParams(page=2, limit=10)
+    return make(PageParams, page=2, limit=10)

@@ -1,11 +1,11 @@
 """Shielding one in-flight call from its own caller's cancellation.
 
-An MCP session — wrapped in :class:`~loom.ai.runtime.SharedMcpSession` or
+An MCP session — wrapped in :class:`~loom.ai.execution.SharedMcpSession` or
 already declaring :class:`~loom.ai.abc.ConcurrentMcpSession` — makes the same
 promise to every caller sharing it: a call already running finishes even if
 the caller waiting on it is cancelled, so the session stays consistent for
 whoever else is using it. :func:`shield_and_drain` is that promise, kept in
-one place so neither the runtime's own lock nor a session that declares
+one place so neither the host's own lock nor a session that declares
 itself already concurrency-safe has to restate it.
 """
 
@@ -16,7 +16,8 @@ import logging
 from collections.abc import Coroutine
 from typing import Any, TypeVar
 
-from loom.core._async import discard_outcome
+from loom.ai.event import AiEvent, AiKey
+from loom.core.concurrency import discard_outcome
 
 _logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ async def shield_and_drain(call: Coroutine[Any, Any, _T], *, label: str) -> _T:
     try:
         return await asyncio.shield(in_flight)
     except asyncio.CancelledError:
-        _logger.debug("%r: draining a cancelled call", label)
+        _logger.debug(AiEvent.CANCELLED_CALL_DRAINED, extra={AiKey.TOOL: label})
         await asyncio.wait([in_flight])
         discard_outcome(in_flight)
         raise

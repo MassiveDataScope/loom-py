@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, TypeVar, runtime_checkable
 
+from loom.core.errors import InvalidType
 from loom.etl.testing._result import StepResult
 from loom.etl.testing._runners import PolarsStepRunner, SeedSchema, TempData
 
@@ -14,7 +15,7 @@ from loom.etl.testing._runners import PolarsStepRunner, SeedSchema, TempData
 class StepRunnerProto(Protocol):
     """Protocol satisfied by both :class:`PolarsStepRunner` and :class:`SparkStepRunner`.
 
-    Any object implementing :meth:`seed`, :meth:`seed_temp` and :meth:`run`
+    Any object implementing :meth:`seed`, :meth:`seed_rows`, :meth:`seed_temp` and :meth:`run`
     is compatible with :class:`ETLScenario`.
     """
 
@@ -27,6 +28,10 @@ class StepRunnerProto(Protocol):
         schema: SeedSchema | None = None,
     ) -> object:
         """Register raw data under the logical table reference *ref*."""
+        ...
+
+    def seed_rows(self, *instances: Any) -> object:
+        """Seed the table of each model with its instances, typed by the model."""
         ...
 
     def seed_temp(
@@ -117,7 +122,7 @@ class _AfterStep:
             upstream = ETLScenario(self._prefix).apply(PolarsStepRunner())
             result = upstream.run(self._step_cls, self._params)
             if result.temp_name is None:
-                raise TypeError(
+                raise InvalidType(
                     f"ETLScenario.after() needs a step whose target is IntoTemp; "
                     f"{self.name} writes a table."
                 )
@@ -226,7 +231,7 @@ class ETLScenario:
             A new :class:`ETLScenario`.
 
         Raises:
-            TypeError: On first application, when the step does not write a temp.
+            InvalidType: On first application, when the step does not write a temp.
         """
         return self._with(_AfterStep(self._ops, step_cls, params))
 

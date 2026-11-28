@@ -1,6 +1,6 @@
-"""Span handles for the observability runtime.
+"""Span handles for observability.
 
-:meth:`~loom.core.observability.runtime.ObservabilityRuntime.span` covers the
+:meth:`~loom.core.observability.observability.Observability.span` covers the
 common case: a span that opens and closes inside one lexical scope, and can
 therefore be made *current* for its whole body.
 
@@ -31,10 +31,10 @@ from opentelemetry.trace import (
     SpanContext,
     StatusCode,
     Tracer,
-    get_current_span,
     use_span,
 )
 
+from loom.core.log_names import LogField
 from loom.core.observability.event import EventKind, LifecycleEvent, Scope
 
 
@@ -48,7 +48,7 @@ class SpanIdentity:
     """Everything the START and closing events of one span have in common.
 
     Internal to the observability package: it exists so that
-    ``ObservabilityRuntime.span`` and :class:`LoomSpan` cannot drift in the
+    ``Observability.span`` and :class:`LoomSpan` cannot drift in the
     events they emit for the same span.
     """
 
@@ -123,8 +123,8 @@ class SpanIdentity:
             correlation_id=self.correlation_id,
             id=self.event_id,
             duration_ms=duration_ms,
-            error=str(exc),
-            meta={**self.meta, "error_type": type(exc).__name__},
+            error=exc,
+            meta=self.meta,
         )
 
 
@@ -140,7 +140,11 @@ def apply_terminal_state(span: Span, event: LifecycleEvent) -> None:
     if event.duration_ms is not None:
         span.set_attribute("duration_ms", event.duration_ms)
     if event.kind is EventKind.ERROR:
-        span.set_status(StatusCode.ERROR, event.error or "")
+        if event.failure is None:
+            span.set_status(StatusCode.ERROR)
+            return
+        span.set_status(StatusCode.ERROR, event.failure.describe())
+        span.add_event("exception", dict(event.failure.fields(LogField.EXCEPTION_TYPE)))
         return
     span.set_status(StatusCode.OK)
 
@@ -155,7 +159,7 @@ class LoomSpan:
 
     Use :meth:`as_current` for an inner region that *is* lexically safe.
 
-    Prefer :meth:`~loom.core.observability.runtime.ObservabilityRuntime.span`
+    Prefer :meth:`~loom.core.observability.observability.Observability.span`
     whenever the span opens and closes in one scope.
 
     Example::
@@ -331,7 +335,6 @@ class LoomSpan:
         """
         if self._closed:
             return
-        self._span.record_exception(exc)
         self._close(
             self._closing_identity().error_event(exc, self._duration(duration_ms)),
             end_time_ns=end_time_ns,
@@ -368,13 +371,4 @@ class LoomSpan:
         self._on_closed()
 
 
-def annotate_current_span(attributes: Mapping[str, str]) -> None:
-    """Set *attributes* on the span current in this context, if any.
-
-    The one way a layer under observability (the acting identity) marks the
-    span it runs in without importing OpenTelemetry itself.
-    """
-    get_current_span().set_attributes(attributes)
-
-
-__all__ = ["LoomSpan", "annotate_current_span"]
+__all__ = ["LoomSpan"]

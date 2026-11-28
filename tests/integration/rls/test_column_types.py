@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all, reset_registry
 from loom.core.identity import Identity, reset_identity, set_identity
-from loom.core.persistence.stores import DEFAULT_STORE
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.rls import create_schema, rls_session_settings
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.catalog import DEFAULT_STORE
+from loom.core.stores.repository import CursorCodec
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.rls import create_schema, rls_session_settings
+from loom.stores.sqlalchemy.schema import compile_all, reset_registry
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.integration.agnosticism import devices
 from tests.integration.rls.conftest import BootstrapFactory, application_for, scalar
 
@@ -35,7 +35,7 @@ class TestColumnTypes:
         manager = SessionManager(
             database.write, session_settings=rls_session_settings(application), store=DEFAULT_STORE
         )
-        repository: RepositorySQLAlchemy[devices.Device, tuple[int, str]] = RepositorySQLAlchemy(
+        repository: SQLAlchemyRepository[devices.Device, tuple[int, str]] = SQLAlchemyRepository(
             session_manager=manager,
             model=devices.Device,
             cursor_codec=CursorCodec(signing="ephemeral"),
@@ -57,7 +57,7 @@ class TestColumnTypes:
             hidden = await repository.get_by_id((host.id, OWNER))
         finally:
             reset_identity(other)
-            await manager.dispose()
+            await manager.close()
             reset_registry()
 
         assert (host.fingerprint, host.address) == (FINGERPRINT, "10.1.2.3")

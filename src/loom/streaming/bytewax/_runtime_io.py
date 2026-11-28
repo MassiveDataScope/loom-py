@@ -14,8 +14,10 @@ from bytewax.outputs import DynamicSink, StatelessSinkPartition
 from confluent_kafka import OFFSET_BEGINNING, OFFSET_END, KafkaError
 from confluent_kafka.admin import AdminClient
 
+from loom.core.errors import InvalidValue
+from loom.core.errors.summary import ErrorSummary
 from loom.core.observability.event import Scope, TerminalReason
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
 from loom.core.observability.span import LoomSpan
 from loom.core.plugins.optional import import_optional
 from loom.core.tracing import generate_trace_id
@@ -32,6 +34,7 @@ from loom.streaming.core._errors import ErrorEnvelope, ErrorKind
 from loom.streaming.core._message import Message, MessageMeta
 from loom.streaming.core._tracing import open_terminal_span
 from loom.streaming.core._typing import StreamPayload
+from loom.streaming.event import StreamingEvent, StreamingKey
 from loom.streaming.kafka._codec import MsgspecCodec
 from loom.streaming.kafka._config import ConsumerSettings
 from loom.streaming.kafka._errors import KafkaDeliveryError, KafkaPollError
@@ -121,7 +124,8 @@ def _write_kafka_batch(
     except KafkaDeliveryError as exc:
         if sink.dlq_topic is None:
             raise
-        dlq_error = str(exc).encode("utf-8")
+        sink_error = ErrorSummary.message_for(exc)
+        dlq_error = sink_error.encode("utf-8")
         try:
             for item in items:
                 request = item_to_send(item)
@@ -133,7 +137,7 @@ def _write_kafka_batch(
         except KafkaDeliveryError as dlq_exc:
             raise KafkaDeliveryError(
                 f"delivery failed after diverting the batch to DLQ topic {sink.dlq_topic!r} "
-                f"(sink delivery error: {exc})"
+                f"(sink delivery error: {sink_error})"
             ) from dlq_exc
         _commit_runtime_items(items, item_to_commit, commit_tracker)
         return _BatchOutcome(error=exc, dlq_topic=sink.dlq_topic)
@@ -224,14 +228,13 @@ def _warn_on_stale_resume_state(
     if resume_state is None or committed is None or resume_state >= committed:
         return
     logger.warning(
-        "resume state %d is behind the committed group offset %d for %s:%d "
-        "(distance %d): replaying from the recovery snapshot; commits below "
-        "the floor are suppressed",
-        resume_state,
-        committed,
-        topic,
-        partition,
-        committed - resume_state,
+        StreamingEvent.RESUME_STATE_BEHIND,
+        extra={
+            StreamingKey.TOPIC: topic,
+            StreamingKey.PARTITION: partition,
+            StreamingKey.OFFSET: committed,
+            StreamingKey.REPLAYED_OFFSETS: committed - resume_state,
+        },
     )
 
 
@@ -253,7 +256,7 @@ class KafkaPartitionedSource(FixedPartitionedSource[KafkaRecord[bytes], "int | N
         self,
         source: _CompiledKafkaSource,
         commit_tracker: KafkaCommitTracker | None = None,
-        observability: ObservabilityRuntime | None = None,
+        observability: Observability | None = None,
     ) -> None:
         self._source = source
         self._commit_tracker = commit_tracker
@@ -299,13 +302,7 @@ class KafkaPartitionedSource(FixedPartitionedSource[KafkaRecord[bytes], "int | N
                     f"{_METADATA_VISIBILITY_TIMEOUT_S:g}s: {reason}"
                 )
             if not warned:
-                logger.warning(
-                    "kafka topic '%s' is not visible in cluster metadata yet: %s; "
-                    "retrying until %gs elapse",
-                    topic,
-                    reason,
-                    _METADATA_VISIBILITY_TIMEOUT_S,
-                )
+                logger.warning(StreamingEvent.TOPIC_NOT_VISIBLE, extra={StreamingKey.TOPIC: topic})
                 warned = True
             sleep(_METADATA_RETRY_INTERVAL_S)
 
@@ -339,13 +336,13 @@ class KafkaPartitionedSource(FixedPartitionedSource[KafkaRecord[bytes], "int | N
         """Split a ``"{topic}:{index}"`` recovery key and reject foreign topics.
 
         Raises:
-            ValueError: If the key names a topic this flow does not read.
+            InvalidValue: If the key names a topic this flow does not read.
         """
         topic, _, raw_index = for_part.rpartition(":")
         if topic not in self._source.topics:
-            raise ValueError(
-                f"partition key '{for_part}' does not belong to this flow's topics "
-                f"{self._source.topics}; cannot resume from a different topic set"
+            raise InvalidValue(
+                f"partition key does not belong to this flow's topics {self._source.topics}; "
+                "cannot resume from a different topic set"
             )
         return topic, int(raw_index)
 
@@ -511,7 +508,7 @@ class _TerminalTracing:
         flow_run_id: Identifier of the flow run the spans belong to.
     """
 
-    observer: ObservabilityRuntime
+    observer: Observability
     flow: str
     flow_run_id: str
 
@@ -702,7 +699,7 @@ class _KafkaMessageSink(_KafkaDynamicSinkBase, DynamicSink[Message[StreamPayload
 
     def bind_terminal_tracing(
         self,
-        observer: ObservabilityRuntime,
+        observer: Observability,
         flow: str,
         flow_run_id: str,
     ) -> None:

@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Protocol, runtime_checkable
 
 from loom.core.engine.compilable import Compilable
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.identity import Identity
 from loom.core.use_case.factory import UseCaseFactory
 from loom.core.use_case.registry import UseCaseRegistry, model_entity_key
@@ -103,12 +103,12 @@ class AppInvoker:
 
     Binding an identity with :meth:`for_identity` is an explicit switch: an
     invocation acting as someone other than the identity acting where it is
-    called is logged by the executor (``identity_switched``) and never joins
+    called is logged by the executor (``loom.identity.caller_switched``) and never joins
     the unit of work of the execution around it.
     """
 
     factory: UseCaseFactory
-    executor: RuntimeExecutor
+    executor: UseCaseExecutor
     registry: UseCaseRegistry
     identity: Identity | None = None
 

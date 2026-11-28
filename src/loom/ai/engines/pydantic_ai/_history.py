@@ -20,6 +20,7 @@ from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 
 from loom.ai.abc import Conversation
 from loom.ai.errors import CONVERSATION_LOAD_FAILED_MESSAGE, AgentRunError, AgentRunErrorCode
+from loom.ai.event import AiEvent, AiKey
 
 _logger = logging.getLogger(__name__)
 
@@ -58,12 +59,7 @@ def decode_conversation(conversation: Conversation | None) -> RunConversation | 
     try:
         history = ModelMessagesTypeAdapter.validate_json(conversation.history)
     except pydantic.ValidationError as error:
-        _logger.exception(
-            "the history of conversation %r is not a pydantic-ai message list: %d error(s) %s",
-            conversation.conversation_id,
-            error.error_count(),
-            sorted({item["type"] for item in error.errors(include_input=False)}),
-        )
+        _logger.error(AiEvent.HISTORY_INVALID, exc_info=error)
         raise AgentRunError(
             AgentRunErrorCode.CONVERSATION_LOAD_FAILED, CONVERSATION_LOAD_FAILED_MESSAGE
         ) from error
@@ -100,12 +96,6 @@ def new_messages(
     """
     encoded = result.new_messages_json()
     if len(encoded) > max_history_bytes:
-        _logger.warning(
-            "agent %r produced %d bytes of new messages, above max_history_bytes "
-            "(%d); the run's hook receives none",
-            agent,
-            len(encoded),
-            max_history_bytes,
-        )
+        _logger.warning(AiEvent.HISTORY_TOO_LARGE, extra={AiKey.AGENT: agent})
         return None
     return encoded

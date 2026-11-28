@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 
+import pydantic
 import pytest
 from pydantic_ai.messages import (
     ModelMessage,
@@ -24,7 +25,9 @@ from loom.ai.abc import AgentEngine, AgentEvent, Conversation, ErrorEvent, Final
 from loom.ai.declarative import PolicySpec
 from loom.ai.declarative._v1 import MAX_HISTORY_BYTES_MIN
 from loom.ai.errors import CONVERSATION_LOAD_FAILED_MESSAGE, AgentRunError, AgentRunErrorCode
+from loom.ai.event import AiEvent, AiKey
 from loom.core.identity import Identity
+from tests.helpers.loggers import CapturedLog
 from tests.helpers.pydantic_ai_engine import (
     build_engine,
     encode,
@@ -181,7 +184,7 @@ class TestSingleShot:
 
 
 class TestOverBound:
-    async def test_gives_none_and_logs_the_agent_size_and_bound_when_messages_exceed_it(
+    async def test_gives_none_and_logs_the_agent_when_messages_exceed_the_bound(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """L19: over ``max_history_bytes`` the hook gets ``None`` and the run logs why (T901)."""
@@ -195,9 +198,9 @@ class TestOverBound:
             result = await engine.run(_PROMPT, identity=_IDENTITY, conversation=None)
 
         assert result.messages is None
-        [record] = caplog.records
-        assert "contract" in record.message
-        assert str(MAX_HISTORY_BYTES_MIN) in record.message
+        assert CapturedLog(caplog).events == [
+            (AiEvent.HISTORY_TOO_LARGE, {AiKey.AGENT: "contract"})
+        ]
 
     async def test_gives_none_when_the_stream_carries_messages_over_the_bound(self) -> None:
         """The streamed terminal event is bounded the same way as the non-streaming run."""
@@ -213,7 +216,9 @@ class TestOverBound:
 
 
 class TestMalformedHistory:
-    async def test_run_fails_without_calling_the_model_when_the_history_is_not_json(self) -> None:
+    async def test_run_fails_without_calling_the_model_when_the_history_is_not_json(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         seen: list[list[ModelMessage]] = []
         engine = _engine(seen)
 
@@ -226,6 +231,9 @@ class TestMalformedHistory:
         assert str(failure.value) == CONVERSATION_LOAD_FAILED_MESSAGE
         assert failure.value.usage is None
         assert seen == []
+        assert CapturedLog(caplog).exception_types(AiEvent.HISTORY_INVALID) == [
+            pydantic.ValidationError
+        ]
 
     async def test_the_stream_emits_an_error_without_calling_the_model_when_the_history_is_not_json(
         self,

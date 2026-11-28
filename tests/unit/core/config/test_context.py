@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import pytest
 from omegaconf import OmegaConf
@@ -54,34 +55,34 @@ class TestConfigContextSection:
             ctx.section("missing.key", AcmeDbConfig)
 
 
-class TestConfigContextBind:
-    def test_bind_with_path(self, ctx: ConfigContext) -> None:
-        worker = ctx.bind(AcmeQueueWorker, path="worker")
+class TestConfigContextConvert:
+    def test_convert_with_path(self, ctx: ConfigContext) -> None:
+        worker = ctx.convert(AcmeQueueWorker, path="worker")
         assert worker.queue == "orders"
         assert worker.concurrency == 8
 
-    def test_bind_overrides_win_over_yaml(self, ctx: ConfigContext) -> None:
-        worker = ctx.bind(AcmeQueueWorker, path="worker", concurrency=2)
+    def test_convert_overrides_win_over_yaml(self, ctx: ConfigContext) -> None:
+        worker = ctx.convert(AcmeQueueWorker, path="worker", concurrency=2)
         assert worker.concurrency == 2
         assert worker.queue == "orders"
 
-    def test_bind_no_path_uses_overrides_only(self, ctx: ConfigContext) -> None:
-        worker = ctx.bind(AcmeQueueWorker, queue="events")
+    def test_convert_no_path_uses_overrides_only(self, ctx: ConfigContext) -> None:
+        worker = ctx.convert(AcmeQueueWorker, queue="events")
         assert worker.queue == "events"
         assert worker.concurrency == 4
 
-    def test_bind_struct_field_converted_from_dict(self, ctx: ConfigContext) -> None:
-        client = ctx.bind(_Client, db={"host": "replica", "port": 5433})
+    def test_convert_struct_field_converted_from_dict(self, ctx: ConfigContext) -> None:
+        client = ctx.convert(_Client, db={"host": "replica", "port": 5433})
         assert isinstance(client.db, AcmeDbConfig)
         assert client.db.port == 5433
 
-    def test_bind_raises_on_missing_required(self, ctx: ConfigContext) -> None:
+    def test_convert_raises_on_missing_required(self, ctx: ConfigContext) -> None:
         with pytest.raises(ConfigError, match="requires config field 'queue'"):
-            ctx.bind(AcmeQueueWorker)
+            ctx.convert(AcmeQueueWorker)
 
-    def test_bind_raises_on_bad_section(self, ctx: ConfigContext) -> None:
+    def test_convert_raises_on_bad_section(self, ctx: ConfigContext) -> None:
         with pytest.raises(ConfigError):
-            ctx.bind(AcmeQueueWorker, path="missing.section")
+            ctx.convert(AcmeQueueWorker, path="missing.section")
 
 
 class TestConfigContextResolve:
@@ -110,7 +111,7 @@ class TestConfigContextCustomBinder:
         cfg = OmegaConf.create({"worker": {"queue": "q", "concurrency": "not-an-int"}})
         strict_ctx = ConfigContext(cfg, binder=StructBinder(strict=True))
         with pytest.raises(ConfigError):
-            strict_ctx.bind(AcmeQueueWorker, path="worker")
+            strict_ctx.convert(AcmeQueueWorker, path="worker")
 
 
 class TestConfigContextRaw:
@@ -154,13 +155,16 @@ class TestConfigContextPositiveSeconds:
         "seconds", [0, -1, math.inf, math.nan], ids=["zero", "negative", "infinite", "nan"]
     )
     @pytest.mark.parametrize(
-        "key", ["identity.max_delegation_seconds", "persistence.rollback_timeout"]
+        "key", ["identity.max_delegation_seconds", "stores.settings.rollback_timeout"]
     )
     def test_refuses_anything_but_a_finite_number_above_zero(
         self, key: str, seconds: float
     ) -> None:
-        section, name = key.split(".")
-        ctx = ConfigContext.from_dict({section: {name: seconds}})
+        *parents, name = key.split(".")
+        raw: dict[str, Any] = {name: seconds}
+        for parent in reversed(parents):
+            raw = {parent: raw}
+        ctx = ConfigContext.from_dict(raw)
 
         with pytest.raises(ConfigError, match=rf"{key} must be a finite number above zero"):
             ctx.positive_seconds(key, 30.0)

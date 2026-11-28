@@ -6,6 +6,7 @@ from typing import Any, Protocol, TypeGuard, TypeVar
 
 import msgspec
 
+from loom.core.errors import InvalidType
 from loom.core.model.introspection import (
     extract_model_from_hint,
     get_relations,
@@ -18,9 +19,7 @@ _MISSING = object()
 def _related_values(obj: Any, relation: str) -> list[Any]:
     related = getattr(obj, relation, _MISSING)
     if related is _MISSING:
-        raise RuntimeError(
-            f"Relation loader requires relation '{relation}' on {type(obj).__name__}"
-        )
+        raise InvalidType(f"Relation loader requires relation '{relation}' on {type(obj).__name__}")
     if related is msgspec.UNSET:
         return []
     if related is None:
@@ -268,7 +267,7 @@ class _MemoryJoinFieldsLoader:
         ]
 
 
-def make_memory_loader(loader: Any, rel_name: str) -> Any:
+def build_memory_loader(loader: Any, rel_name: str) -> Any:
     """Convert a public loader descriptor to its memory-path counterpart.
 
     Args:

@@ -32,6 +32,8 @@ from typing import Any
 
 import pytest
 
+from tests.helpers.aws_island import FakeAwsIsland
+
 # fastmcp lives in the optional 'mcp-tests' group; skip before anything that imports it.
 pytest.importorskip("fastmcp", reason="fastmcp is not installed: uv sync --group mcp-tests")
 
@@ -39,23 +41,22 @@ import yaml  # noqa: E402
 from httpcore2._backends.auto import AutoBackend  # noqa: E402
 
 from loom.ai import registry  # noqa: E402
-from loom.ai.engines.pydantic_ai import PydanticAIEngineProvider, _mcp  # noqa: E402
+from loom.ai.engines.pydantic_ai import PydanticAIEnginePlugin, _mcp  # noqa: E402
 from loom.ai.engines.pydantic_ai import _transport as _transport  # noqa: E402
 from loom.ai.errors import AgentRunErrorCode  # noqa: E402
 from loom.composition import create_app  # noqa: E402
-from loom.serverless.aws.lambda_ import LambdaAdapter, LambdaHandler  # noqa: E402
+from loom.serverless.aws.lambda_ import LambdaHandler, LambdaRuntime  # noqa: E402
 from loom.testing import LambdaTestClient  # noqa: E402
 from tests.integration.ai.freeze import measure, probe  # noqa: E402
 from tests.integration.ai.freeze.server import Era, LiveMcpServer, serving  # noqa: E402
+from tests.integration.ai.freeze.t06_app.shared import AGENT, RAISED  # noqa: E402
 
 # The T06 function and its fixtures: importing the fixtures registers them here.
 from tests.integration.ai.freeze.test_lambda import (  # noqa: E402
-    _AGENT,
     _ERAS,
     _HANDSHAKE,
     _PATHS,
     _POST_CONNECTS,
-    _RAISED,
     _TOKEN_KIND,
     _TRIGGERS,
     FetchedToken,
@@ -69,7 +70,6 @@ from tests.integration.ai.freeze.test_lambda import (  # noqa: E402
     _write_project,
 )
 from tests.integration.ai.freeze.test_lambda import _isolated as _isolated  # noqa: E402
-from tests.integration.ai.freeze.test_lambda import _no_proxy as _no_proxy  # noqa: E402
 from tests.integration.ai.freeze.test_lambda import world as world  # noqa: E402
 
 pytestmark = [
@@ -195,7 +195,13 @@ class TestRowThawSessionStillValid:
 
 
 class TestRowThawLegacySessionExpired:
-    """First call after a thaw, legacy session expired: the 404 call, a renewal, the retry."""
+    """First call after a thaw, legacy session expired: the 404 call, a renewal, the retry.
+
+    The eviction cuts the replaced session's event stream, which the mcp client
+    reopens after its reconnection delay (DEFAULT_RECONNECTION_DELAY_MS) unless
+    the session closes first: a background +1 TCP, either as a GET of the
+    replaced session or as a connection that carried no request.
+    """
 
     @_PATHS
     @_TRIGGERS
@@ -209,10 +215,15 @@ class TestRowThawLegacySessionExpired:
         built.freeze(6.0)
 
         assert built.by(path)
-        built.settle(streams=2)  # the new session's stream, opened within the invocation
+        replaced, renewed = built.sessions("tools/call")
+        built.settle_stream(renewed)
+        reopened = built.streams_of(replaced)
+        silent = built.silent_connects()
 
         assert built.methods() == ["tools/call", *_RENEWAL, "tools/call"]
-        assert built.connects() == _LEGACY_RENEWAL_CONNECTS
+        assert replaced != renewed
+        assert reopened + silent in (0, 1)
+        assert built.connects() == _LEGACY_RENEWAL_CONNECTS + reopened + silent
         assert built.runs()["echo"] == 1
         assert FetchedToken.fetches - fetched == 0
         assert (built.evictions(), built.rebuilds()) == (1, 1)
@@ -242,7 +253,7 @@ class TestRowExpiredSessionSafeRetry:
         assert built.runs()["echo"] == 1
         assert FetchedToken.fetches - fetched == 0
         assert (built.evictions(), built.rebuilds()) == (0, 1)
-        assert _RAISED == []
+        assert RAISED == []
 
 
 class TestRowMidCallFailure:
@@ -261,7 +272,7 @@ class TestRowMidCallFailure:
 
         assert built.methods() == ["tools/call"]
         assert built.runs()["book"] == 1
-        assert _RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
+        assert RAISED == [AgentRunErrorCode.MCP_CALL_INTERRUPTED]
         fetched = FetchedToken.fetches
 
         assert built.by(path)
@@ -291,7 +302,11 @@ class TestRowColdInit:
 
     @_TRIGGERS
     def test_a_server_only_an_unreachable_agent_uses_gets_no_request(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trigger: Trigger
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        trigger: Trigger,
+        island: FakeAwsIsland,
     ) -> None:
         with serving("modern") as server, serving("modern") as spare:
             handler = _function_with_a_spare_server(tmp_path, monkeypatch, server, spare, trigger)
@@ -312,20 +327,20 @@ def _function_with_a_spare_server(
 ) -> LambdaHandler:
     """T06's function, plus an agent no use case or job reaches, granted a second server."""
     monkeypatch.setattr(_transport, "time", _WallClock())
-    provider = PydanticAIEngineProvider(model_resolver=_Model().model)
-    monkeypatch.setattr(registry, "resolve_engine_provider", lambda name: provider)
+    provider = PydanticAIEnginePlugin(model_resolver=_Model().model)
+    monkeypatch.setattr(registry, "resolve_engine_plugin", lambda name: provider)
     path = Path(_write_project(tmp_path, server.url, trigger, agents=True))
     config = yaml.safe_load(path.read_text(encoding="utf-8"))
     spare_server = {"url": spare.url, "timeout_ms": 5000, "auth": {"kind": _TOKEN_KIND}}
     config["ai"]["mcp_servers"]["spare"] = spare_server
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
     agents = tmp_path / "agents"
-    spec = yaml.safe_load((agents / f"{_AGENT}.yaml").read_text(encoding="utf-8"))
+    spec = yaml.safe_load((agents / f"{AGENT}.yaml").read_text(encoding="utf-8"))
     grant = {"kind": "mcp", "server": "spare", "include": ["echo"]}
     spec |= {"name": "idle", "capabilities": [grant]}
     (agents / "idle.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
     function = "worker" if trigger == "jobs" else None
-    return create_app(str(path), adapter=LambdaAdapter(function=function), environment="test")
+    return create_app(str(path), runtime=LambdaRuntime(function=function), environment="test")
 
 
 # ---------------------------------------------------------------------------
@@ -388,7 +403,7 @@ def probe_function(
             monkeypatch.setenv(probe.CURSOR_KEY_VARIABLE, _CURSOR_KEY)
             monkeypatch.setenv("A3_JWT_SECRET", _PROBE_SECRET)
             config = probe.project(tmp_path, server.url)
-            handler = create_app(str(config), adapter=LambdaAdapter(), environment="test")
+            handler = create_app(str(config), runtime=LambdaRuntime(), environment="test")
             stack.callback(handler.close)
             return _ProbeFunction(server, handler, clock, capsys)
 

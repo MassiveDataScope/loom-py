@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum, unique
 
+from loom.core.config import ConfigError
 from loom.core.errors import SystemError
 
 
@@ -13,24 +14,26 @@ class SQSErrorCode(StrEnum):
 
     SEND_FAILED = "sqs_send_failed"
     BATCH_PARTIAL_FAILURE = "sqs_batch_partial_failure"
-    BATCH_FAILED = "sqs_batch_failed"
     CALLBACKS = "sqs_callbacks"
     PRIORITY = "sqs_priority"
     QUEUE_UNKNOWN = "sqs_queue_unknown"
     INVALID_CHARACTER = "sqs_invalid_character"
     MESSAGE_TOO_LARGE = "sqs_message_too_large"
-    DELAY_TOO_LONG = "sqs_delay_too_long"
     FIFO_DELAY = "sqs_fifo_delay"
     GROUP_MISSING = "sqs_group_missing"
+
+
+class SQSQueueConfigError(ConfigError):
+    """A job's queue has no URL, its FIFO queue no ``__group_by__``, or its DLQ is missing."""
 
 
 class SQSDispatchError(SystemError):
     """A message SQS cannot carry, or a send that failed; ``code`` names which."""
 
-    retryable = False
+    is_retryable = False
 
     def __init__(self, message: str, *, code: SQSErrorCode) -> None:
         super().__init__(message, code=code)
 
 
-__all__ = ["SQSDispatchError", "SQSErrorCode"]
+__all__ = ["SQSDispatchError", "SQSErrorCode", "SQSQueueConfigError"]

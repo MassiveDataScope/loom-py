@@ -16,12 +16,13 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from loom.ai.runtime import A2AClientFactory, McpClientFactory
+    from loom.ai.execution import A2AClientFactory, McpClientFactory
 
 from types import ModuleType
 
-from loom.ai.abc import AgentEngineProvider, NativeToolSupport
+from loom.ai.abc import AgentEnginePlugin, NativeToolSupport
 from loom.ai.errors import AgentCompilationError, AgentErrorCode
+from loom.ai.event import AiEvent, AiKey
 from loom.ai.inference import InferenceTarget
 from loom.core.plugins.entrypoints import (
     ApiVersionMismatchError,
@@ -50,7 +51,7 @@ _ENGINE_API_REQUIREMENT = ApiVersionRequirement(
 )
 
 
-def resolve_engine_provider(name: str) -> AgentEngineProvider:
+def resolve_engine_plugin(name: str) -> AgentEnginePlugin:
     """Resolve the engine provider registered under ``name``.
 
     Loads the entry point in group ``loom.ai.engines`` with duplicates
@@ -82,7 +83,7 @@ def resolve_engine_provider(name: str) -> AgentEngineProvider:
         ) from exc
     provider = loaded() if isinstance(loaded, type) else loaded
     _verify_engine_api(name, provider)
-    return cast(AgentEngineProvider, provider)
+    return cast(AgentEnginePlugin, provider)
 
 
 def require_provider_sdk(provider: str, module: str, extra: str) -> ModuleType:
@@ -163,13 +164,9 @@ def engine_supported_kinds(provider: object, engine: str) -> frozenset[str]:
     Returns:
         The kinds the compiler may accept.
     """
-    kinds = cast("AgentEngineProvider", provider).supported_capability_kinds()
+    kinds = cast("AgentEnginePlugin", provider).supported_capability_kinds()
     if "native" in kinds and engine_native_tool_support(provider) is None:
-        _logger.warning(
-            "engine %r serves 'native' grants but supplies no native_tool_support: "
-            "the kind is refused until it does.",
-            engine,
-        )
+        _logger.warning(AiEvent.ENGINE_NATIVE_SUPPORT_MISSING, extra={AiKey.ENGINE: engine})
         return kinds - {"native"}
     return kinds
 
@@ -189,7 +186,7 @@ def engine_native_tool_support(provider: object) -> NativeToolSupport | None:
 
     Example::
 
-        support = engine_native_tool_support(resolve_engine_provider("pydantic-ai"))
+        support = engine_native_tool_support(resolve_engine_plugin("pydantic-ai"))
     """
     return cast("NativeToolSupport | None", getattr(provider, "native_tool_support", None))
 
@@ -240,7 +237,7 @@ def engine_client_factories(
 
     Example::
 
-        mcp, a2a = engine_client_factories(resolve_engine_provider("pydantic-ai"))
+        mcp, a2a = engine_client_factories(resolve_engine_plugin("pydantic-ai"))
     """
     mcp = cast("McpClientFactory | None", getattr(provider, "mcp_client_factory", None))
     a2a = cast("A2AClientFactory | None", getattr(provider, "a2a_client_factory", None))
@@ -253,7 +250,7 @@ def configure_engine_mcp_connect_timeout(provider: object, seconds: float) -> No
     Read structurally with ``getattr``, the same optional shape as
     ``engine_client_factories``: an engine that declares no
     ``configure_mcp_connect_timeout`` method is silently left at its own
-    default. :func:`resolve_engine_provider` constructs every provider with
+    default. :func:`resolve_engine_plugin` constructs every provider with
     no arguments, so ``ai.startup_timeout_ms`` can only reach the engine
     after resolution, through this call.
 

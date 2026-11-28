@@ -9,8 +9,10 @@ from contextlib import asynccontextmanager, suppress
 import pytest
 
 from loom.composition import LoopHost
-from loom.composition.resources import Resource, ResourceKind
+from loom.core.job.job import Job
+from loom.core.resources import Resource, ResourceKind
 from tests.helpers.composition import application_of
+from tests.helpers.jobs import InlineServiceFixture, JobActivity, JobKernel
 from tests.helpers.loops import RecordedLoops
 
 
@@ -34,6 +36,17 @@ class _Store:
         self.events.append("close")
         if self._fail_close:
             raise RuntimeError("store failed to close")
+
+
+class _RecordedJob(Job[None]):
+    """Records each run in the activity, after some I/O."""
+
+    def __init__(self, activity: JobActivity) -> None:
+        self._activity = activity
+
+    async def execute(self) -> None:
+        await asyncio.sleep(0.01)
+        self._activity.record("ran")
 
 
 class TestLoopHost:
@@ -92,6 +105,29 @@ class TestLoopHost:
 
         assert event_loops.made_current[-1] is event_loops.created[0]
         stray.close()
+
+    @pytest.fixture
+    def inline_jobs(self, activity: JobActivity) -> InlineServiceFixture:
+        kernel = JobKernel()
+        kernel.container.register_instance(JobActivity, activity)
+        return kernel.serve_inline(_RecordedJob)
+
+    @pytest.fixture
+    def started_inline_host(self, inline_jobs: InlineServiceFixture) -> Iterator[LoopHost]:
+        host = LoopHost(application_of(jobs=inline_jobs))
+        host.start()
+        yield host
+        host.close()
+
+    def test_run_returns_once_the_inline_jobs_the_coroutine_dispatched_have_run(
+        self,
+        started_inline_host: LoopHost,
+        inline_jobs: InlineServiceFixture,
+        activity: JobActivity,
+    ) -> None:
+        started_inline_host.run(inline_jobs.dispatch_now(_RecordedJob))
+
+        assert activity.entries == ["ran"]
 
     def test_close_closes_the_application(self, host_of: Callable[[_Store], LoopHost]) -> None:
         store = _Store()

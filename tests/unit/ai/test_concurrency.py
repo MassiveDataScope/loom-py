@@ -18,11 +18,13 @@ import gc
 import pytest
 
 from loom.ai._concurrency import shield_and_drain
+from tests.helpers.gates import CallGate, await_cancelled
+from tests.helpers.loggers import CapturedLog
 
 
-async def _delayed(delay_s: float = 0.05) -> str:
-    """A call bounded to complete on its own -- never cancelled from inside."""
-    await asyncio.sleep(delay_s)
+async def _finish_when_released(gate: CallGate) -> str:
+    """Return once ``gate`` releases the call."""
+    await gate.enter()
     return "finished"
 
 
@@ -36,11 +38,17 @@ class TestShieldAndDrainCompletesSuccessfully:
 
 class TestShieldAndDrainDrainsOnCancel:
     async def test_reraises_cancelled_error_to_the_caller_after_draining(self) -> None:
-        task = asyncio.create_task(shield_and_drain(_delayed(), label="crm"))
-        await asyncio.sleep(0)
+        """Cancellation reaches the caller only after the shielded call has finished."""
+        gate = CallGate()
+        task = asyncio.create_task(shield_and_drain(_finish_when_released(gate), label="crm"))
+        await gate.wait_all_entered(1)
+
         task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        await gate.let_pending_calls_enter()
+
+        assert not task.done()
+        gate.release()
+        await await_cancelled(task)
 
     async def test_a_second_cancellation_abandons_a_hung_call(self) -> None:
         """An external call may hang: a second cancellation must escape the
@@ -70,13 +78,19 @@ class TestShieldAndDrainDrainsOnCancel:
         one log line a drained cancellation produces, which is the only
         place H5 asks it to matter."""
         caplog.set_level("DEBUG", logger="loom.ai._concurrency")
-        task = asyncio.create_task(shield_and_drain(_delayed(), label="inventory-mcp"))
-        await asyncio.sleep(0)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        gate = CallGate()
+        task = asyncio.create_task(
+            shield_and_drain(_finish_when_released(gate), label="inventory-mcp")
+        )
+        await gate.wait_all_entered(1)
 
-        assert any("inventory-mcp" in record.message for record in caplog.records)
+        task.cancel()
+        await gate.let_pending_calls_enter()
+        assert not task.done()
+        gate.release()
+        await await_cancelled(task)
+
+        assert "inventory-mcp" in CapturedLog(caplog).rendered_text
 
 
 class TestTheDrainedResultIsNotLeftUnretrieved:
@@ -89,8 +103,9 @@ class TestTheDrainedResultIsNotLeftUnretrieved:
     la reportaria si nadie la hubiese consumido."""
 
     async def test_a_raising_call_is_not_reported_as_unretrieved(self) -> None:
-        async def _raising() -> None:
-            await asyncio.sleep(0.02)
+        async def _raising(gate: CallGate) -> None:
+            """Raise once ``gate`` releases a call that is already in flight."""
+            await gate.enter()
             raise ValueError("boom")
 
         reported: list[str] = []
@@ -99,16 +114,15 @@ class TestTheDrainedResultIsNotLeftUnretrieved:
         loop.set_exception_handler(
             lambda _loop, context: reported.append(str(context.get("message", "")))
         )
+        gate = CallGate()
         try:
-            task = asyncio.create_task(shield_and_drain(_raising(), label="crm"))
-            await asyncio.sleep(0)
+            task = asyncio.create_task(shield_and_drain(_raising(gate), label="crm"))
+            await gate.wait_all_entered(1)
             task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            else:
-                raise AssertionError("expected the cancelled call to re-raise")
+            await gate.let_pending_calls_enter()
+            assert not task.done()
+            gate.release()
+            await await_cancelled(task)
             # ``pytest.raises`` would keep the caught exception's traceback --
             # and, through it, the drained future's own frame -- alive past
             # this point, hiding the leak a plain ``except`` lets the garbage

@@ -17,6 +17,8 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
+from loom.core.plugins.optional import MissingExtraError
+
 try:
     from boto3.dynamodb import types as _ddb_types  # type: ignore[import-untyped]
 except ImportError:  # pragma: no cover
@@ -39,13 +41,10 @@ def normalize_dynamo_item(item: dict[str, Any]) -> dict[str, Any]:
         New dict safe to pass to ``pl.from_dicts()``.
 
     Raises:
-        RuntimeError: When boto3 is not installed.
+        MissingExtraError: When boto3 is not installed.
     """
     if _DESERIALIZER is None:
-        raise RuntimeError(
-            "normalize_dynamo_item requires boto3. "
-            "Install it with: pip install 'loom-kernel[dynamodb]'"
-        )
+        raise MissingExtraError(__name__, "aws", "boto3")
     return {str(k): _normalize(_DESERIALIZER.deserialize(v)) for k, v in item.items()}
 
 

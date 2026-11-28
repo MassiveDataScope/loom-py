@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import msgspec
 import pytest
+from msgspec import UnsetType
 
-from loom.core.config import ConfigError
-from loom.core.model import BaseModel, Cardinality, ColumnField, ProjectionField, RelationField
+from loom.core.model import (
+    BaseModel,
+    Cardinality,
+    ColumnField,
+    CreatedAtField,
+    ProjectionField,
+    RelationField,
+    UpdatedAtField,
+)
 from loom.core.projection.loaders import CountLoader
 from loom.testing.in_memory import InMemoryRepository
 
@@ -17,9 +27,11 @@ from loom.testing.in_memory import InMemoryRepository
 # ---------------------------------------------------------------------------
 
 
-class Widget(msgspec.Struct):
-    id: int
-    name: str
+class Widget(BaseModel):
+    __tablename__ = "in_memory_widgets"
+
+    id: int = ColumnField(primary_key=True, autoincrement=True)
+    name: str = ColumnField(length=64)
 
 
 class CreateWidgetCmd(msgspec.Struct):
@@ -53,19 +65,59 @@ class _Product(BaseModel):
     )
 
 
-class _Line(BaseModel):
-    __tablename__ = "in_memory_lines"
+class _Attempt(BaseModel):
+    __tablename__ = "in_memory_attempts"
 
-    order_id: int = ColumnField(primary_key=True)
-    id: int = ColumnField(primary_key=True)
+    run_id: str = ColumnField(primary_key=True, length=32)
+    key: str = ColumnField(primary_key=True, length=32)
+    attempt: int = ColumnField(primary_key=True)
+    outcome: str = ColumnField(length=16)
+
+
+class _Ticket(BaseModel):
+    __tablename__ = "in_memory_tickets"
+
+    number: int = ColumnField(primary_key=True, autoincrement=True)
+    title: str = ColumnField(length=64)
+
+
+class _CreateTicketCmd(msgspec.Struct):
+    title: str
+
+
+class TestDeclaredPrimaryKey:
+    @pytest.mark.asyncio
+    async def test_a_single_key_not_named_id_keys_the_store(self) -> None:
+        repo: InMemoryRepository[_Ticket] = InMemoryRepository(_Ticket)
+        repo.seed(_Ticket(number=7, title="seeded"))
+
+        created = await repo.create(_CreateTicketCmd(title="created"))
+
+        assert created == _Ticket(number=8, title="created")
+        assert await repo.get_by_id(7) == _Ticket(number=7, title="seeded")
+
+    def test_a_model_without_a_declared_primary_key_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="No primary key field found on _Review"):
+            InMemoryRepository(_Review)
 
 
 class TestCompositePrimaryKey:
-    def test_a_composite_primary_key_is_refused(self) -> None:
-        with pytest.raises(
-            ConfigError, match=r"_Line has the composite primary key \(order_id, id\)"
-        ):
-            InMemoryRepository(_Line)
+    @pytest.mark.asyncio
+    async def test_a_seeded_row_is_read_by_its_key_tuple(self) -> None:
+        repo: InMemoryRepository[_Attempt] = InMemoryRepository(_Attempt)
+        row = _Attempt(run_id="r", key="k", attempt=2, outcome="failed")
+        repo.seed(row)
+
+        assert await repo.get_by_id(("r", "k", 2)) == row
+        assert await repo.get_by_id(("r", "k", 1)) is None
+
+    @pytest.mark.asyncio
+    async def test_a_command_without_an_id_field_is_created(self) -> None:
+        repo: InMemoryRepository[_Attempt] = InMemoryRepository(_Attempt)
+
+        created = await repo.create(_Attempt(run_id="r", key="k", attempt=1, outcome="ok"))
+
+        assert await repo.get_by_id(("r", "k", 1)) == created
 
 
 # ---------------------------------------------------------------------------
@@ -281,3 +333,102 @@ class TestProjectionProfiles:
         payload = msgspec.to_builtins(loaded)
         assert isinstance(payload, dict)
         assert payload["reviewCount"] == 0
+
+
+class _Stamped(BaseModel):
+    __tablename__ = "in_memory_stamped"
+
+    key: str = ColumnField(primary_key=True, length=16)
+    note: str = ColumnField(length=16)
+    created_at: datetime | UnsetType = CreatedAtField()
+    updated_at: datetime | UnsetType = UpdatedAtField()
+
+
+class _NoteCmd(msgspec.Struct):
+    note: str | UnsetType = msgspec.UNSET
+
+
+_LONG_AGO = datetime(2020, 1, 1, tzinfo=UTC)
+
+_Create = Callable[[InMemoryRepository[_Stamped], _Stamped], Awaitable[_Stamped]]
+
+
+async def _create_one(repo: InMemoryRepository[_Stamped], row: _Stamped) -> _Stamped:
+    return await repo.create(row)
+
+
+async def _create_in_batch(repo: InMemoryRepository[_Stamped], row: _Stamped) -> _Stamped:
+    (created,) = await repo.create_many([row])
+    return created
+
+
+def _note_creator(cmd: _NoteCmd, next_id: int) -> _Stamped:
+    return _Stamped(key=f"k{next_id}", note=str(cmd.note))
+
+
+class TestServerStamps:
+    @pytest.fixture
+    def repo(self) -> InMemoryRepository[_Stamped]:
+        return InMemoryRepository(_Stamped)
+
+    async def test_a_creator_entity_is_stamped_like_a_command_one(self) -> None:
+        repo = InMemoryRepository(_Stamped, creator=_note_creator)
+        before = datetime.now(UTC)
+
+        created = await repo.create(_NoteCmd(note="new"))
+
+        assert created.key == "k1"
+        assert isinstance(created.created_at, datetime)
+        assert before <= created.created_at <= datetime.now(UTC)
+        assert created.updated_at == created.created_at
+
+    @pytest.fixture(params=[_create_one, _create_in_batch], ids=["create", "create_many"])
+    def create(self, request: pytest.FixtureRequest) -> _Create:
+        return request.param
+
+    async def test_a_create_stamps_the_unset_server_defaults_with_one_current_time(
+        self, repo: InMemoryRepository[_Stamped], create: _Create
+    ) -> None:
+        before = datetime.now(UTC)
+
+        created = await create(repo, _Stamped(key="a", note="new"))
+
+        assert isinstance(created.created_at, datetime)
+        assert before <= created.created_at <= datetime.now(UTC)
+        assert created.updated_at == created.created_at
+        assert await repo.get_by_id("a") == created
+
+    async def test_a_create_keeps_the_stamps_it_is_given(
+        self, repo: InMemoryRepository[_Stamped], create: _Create
+    ) -> None:
+        row = _Stamped(key="a", note="new", created_at=_LONG_AGO, updated_at=_LONG_AGO)
+
+        created = await create(repo, row)
+
+        assert created == row
+
+    async def test_an_update_restamps_the_update_field_and_keeps_the_creation_one(
+        self, repo: InMemoryRepository[_Stamped]
+    ) -> None:
+        repo.seed(_Stamped(key="a", note="old", created_at=_LONG_AGO, updated_at=_LONG_AGO))
+        before = datetime.now(UTC)
+
+        updated = await repo.update("a", _NoteCmd(note="new"))
+
+        assert updated is not None
+        assert updated.note == "new"
+        assert updated.created_at == _LONG_AGO
+        assert isinstance(updated.updated_at, datetime)
+        assert before <= updated.updated_at <= datetime.now(UTC)
+        assert await repo.get_by_id("a") == updated
+
+    async def test_an_update_leaves_a_field_the_command_sends_unset(
+        self, repo: InMemoryRepository[_Stamped]
+    ) -> None:
+        repo.seed(_Stamped(key="a", note="old", created_at=_LONG_AGO, updated_at=_LONG_AGO))
+
+        updated = await repo.update("a", _NoteCmd())
+
+        assert updated is not None
+        assert updated.note == "old"
+        assert updated.updated_at != _LONG_AGO

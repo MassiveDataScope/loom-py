@@ -1,6 +1,6 @@
 """``output_check`` (spec 011 L17 / spec 018): a declared predicate over the answer.
 
-Drives the real engine adapter — :class:`~loom.ai.engines.pydantic_ai.PydanticAIEngineProvider`
+Drives the real engine adapter — :class:`~loom.ai.engines.pydantic_ai.PydanticAIEnginePlugin`
 and :class:`~loom.ai.engines.pydantic_ai._engine.PydanticAIEngine` — against a
 ``FunctionModel``, no network. Pins three claims:
 
@@ -226,7 +226,7 @@ class TestARunLevelShapeOverrideSurvivesAnArtefactsOwnOutputCheck:
     """Regression: pydantic-ai refuses a run ``output_type`` on an agent that
     holds an output validator (``UserError: Cannot set a custom run
     'output_type' when the agent has output validators``). The engine's own
-    ``AgentRuntime.run`` docstring already promises that an overridden shape
+    ``AgentHost.run`` docstring already promises that an overridden shape
     skips the plan's own output check; this class pins that the *engine*
     itself never reaches pydantic-ai's refusal in the first place.
     """
@@ -267,7 +267,7 @@ class TestAnArtefactWithNoOutputCheckBuildsOneAgent:
         plan = make_plan()
 
         with patch(
-            "loom.ai.engines.pydantic_ai.provider.Agent.from_spec", wraps=Agent.from_spec
+            "loom.ai.engines.pydantic_ai.plugin.Agent.from_spec", wraps=Agent.from_spec
         ) as spy:
             build_engine(plan, answering_model(_GOOD))
 

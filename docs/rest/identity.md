@@ -19,11 +19,11 @@ from loom.core.identity import Identity, current_identity
 
 identity = current_identity()
 
-identity.is_authenticated          # False for the anonymous caller
-identity.subject                   # stable caller id, "" when anonymous
-identity.has_role("role_admin")    # exact match, never a prefix
-identity.attribute("email")        # verified string attribute, or None
-identity.mechanism                 # "jwt", "api-key", ... — audit only
+identity.is_authenticated  # False for the anonymous caller
+identity.subject  # stable caller id, "" when anonymous
+identity.has_role("role_admin")  # exact match, never a prefix
+identity.attribute("email")  # verified string attribute, or None
+identity.mechanism  # "jwt", "api-key", ... — audit only
 ```
 
 Two accessors fail closed instead of returning `None`:
@@ -105,7 +105,7 @@ explicitly — the framework never substitutes it.
 The most common use of the caller is not a role check but a data boundary:
 
 ```python
-from loom.core.repository.abc.query import FilterGroup, FilterOp, FilterSpec, QuerySpec
+from loom.core.stores.repository.query import FilterGroup, FilterOp, FilterSpec, QuerySpec
 
 
 def owned_by(query: QuerySpec, subject: str) -> QuerySpec:
@@ -139,14 +139,14 @@ in every use case:
 ```python
 class ReportsInterface(RestInterface[Report]):
     prefix = "/reports"
-    requires_roles = ("report_reader",)          # default for every route
+    requires_roles = ("report_reader",)  # default for every route
     routes = (
         RestRoute(use_case=ListReportsUseCase, method="GET", path="/"),
         RestRoute(
             use_case=PurgeReportsUseCase,
             method="DELETE",
             path="/",
-            requires_roles=("report_admin",),    # route wins over the interface
+            requires_roles=("report_admin",),  # route wins over the interface
         ),
     )
 ```
@@ -325,7 +325,7 @@ class ApiKeyAuthenticator:
         key = credentials.header("x-api-key")
         owner = await self._keys.owner_of(key) if key else None
         if owner is None:
-            return None                      # a refusal, with no reason attached
+            return None  # a refusal, with no reason attached
         return Identity(
             subject=owner.id,
             roles=owner.roles,
@@ -357,7 +357,7 @@ without `custom: true`, `custom: true` without an `authenticator`, and
   exception's message and its chained cause go to the server log at `WARNING`, never
   to the caller. Raised outside an authenticator — from a use case, for instance —
   {class}`~loom.rest.errors.HttpErrorMapper` answers `503` with a fixed message and
-  logs the exception's, like any `5xx` `LoomError`. Any other exception from an authenticator keeps
+  logs the exception's, like any `5xx` `CodedError`. Any other exception from an authenticator keeps
   answering `500`.
 
   ```python
@@ -426,18 +426,21 @@ app:
   `[A-Za-z0-9._-]{1,128}`; anything else is replaced by a generated one, because the
   value is echoed back and reaches every log line.
 
-Fields of your own — an audit `request_id`, a tenant — join every log line the same
-way through `loom.core.logger.log_context`, without importing the logging backend.
+Fields of your own — an audit `request_id`, a tenant — join every log record the same
+way through `loom.core.logger.log_context`, whoever emits it (see the
+[logging guide](../guides/logging.md)).
 The values belong to the current task, so concurrent requests never see each other's,
 and each key regains its previous value when the block exits, even by exception:
 
 ```python
-from loom.core.logger import get_logger, log_context
+import logging
 
-logger = get_logger(__name__)
+from loom.core.logger import log_context
+
+logger = logging.getLogger(__name__)
 
 with log_context(request_id=audit_request_id):
-    logger.info("audit.recorded")  # carries request_id; stdlib records too, once configure_logging has run
+    logger.info("audit.recorded")  # carries request_id
 ```
 
 ---
@@ -450,10 +453,10 @@ envelope:
 ```python
 class ExportUseCase(UseCase[Export, None]):
     async def execute(self, jobs: JobService = ..., caller: Identity = Caller()) -> None:
-        jobs.dispatch(BuildExportJob, payload={"format": "csv"})
+        jobs.dispatch_after_commit(BuildExportJob, payload={"format": "csv"})
 ```
 
-`dispatch` captures the caller at registration time, the worker republishes it for the
+`dispatch_after_commit` captures the caller at registration time, the worker republishes it for the
 whole task and hands it to the executor, and a job dispatching another job propagates
 the same caller onward.
 

@@ -19,17 +19,18 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from loom.core.checks import DeployCheckError, run_deploy_checks
+from loom.core.checks import ChecksEvent, DeployCheckError, run_deploy_checks
 from loom.core.config import ConfigContext
 from loom.core.config.errors import ConfigError
 from loom.core.config.overrides import load_application_config
 from loom.core.environment import ENVIRONMENT_VARIABLE
 from loom.core.identity import Identity
-from loom.core.repository.abc import CURSOR_SIGNING_CHECK
+from loom.core.stores.repository import CURSOR_SIGNING_CHECK
 from loom.rest.auth import RequestCredentials
 from loom.rest.checks import AUTHENTICATION_CHECK, SCHEMA_CHECK
 from loom.rest.fastapi.auto import create_app
 from tests.helpers.deploy_checks import write_failing_check_module
+from tests.helpers.loggers import CapturedLog
 from tests.unit.rest._fixture_app import write_project
 
 _NO_DOCS: dict[str, Any] = {"docs_url": None, "redoc_url": None, "openapi_url": None}
@@ -51,7 +52,7 @@ class AcmeCodeHeaderAuthenticator:
 
 
 def _signed_cursors(tmp_path: Path) -> dict[str, Any]:
-    """A ``persistence`` section signing cursors with a mounted key, as a deployment does."""
+    """A ``stores.settings`` section signing cursors with a mounted key, as a deployment does."""
     key = tmp_path / "cursor.key"
     key.write_text(base64.b64encode(secrets.token_bytes(32)).decode(), encoding="utf-8")
     keys = {"k1": {"path": str(key)}}
@@ -170,7 +171,7 @@ class TestCreateAppInADeployedEnvironment:
         assert app.title == "Loom API"
 
     def test_an_authenticator_declared_as_custom_starts_in_production(self, tmp_path: Path) -> None:
-        config = write_project(tmp_path, rest=_CUSTOM_AUTH, persistence=_signed_cursors(tmp_path))
+        config = write_project(tmp_path, rest=_CUSTOM_AUTH, settings=_signed_cursors(tmp_path))
 
         app = create_app(
             config, environment=_PRODUCTION, authenticator=AcmeCodeHeaderAuthenticator()
@@ -182,27 +183,25 @@ class TestCreateAppInADeployedEnvironment:
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         config = write_project(
-            tmp_path, rest={"auth": {"custom": True}}, persistence=_signed_cursors(tmp_path)
+            tmp_path, rest={"auth": {"custom": True}}, settings=_signed_cursors(tmp_path)
         )
 
         with caplog.at_level(logging.WARNING, logger=_CHECKS_LOGGER):
             create_app(config, environment="staging", authenticator=AcmeCodeHeaderAuthenticator())
 
-        assert any(SCHEMA_CHECK in r.getMessage() for r in caplog.records)
+        assert any(SCHEMA_CHECK in text for text in CapturedLog(caplog).rendered())
 
     def test_a_silenced_error_lets_the_app_start_and_is_logged(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        config = write_project(tmp_path, rest=_NO_DOCS, persistence=_signed_cursors(tmp_path))
+        config = write_project(tmp_path, rest=_NO_DOCS, settings=_signed_cursors(tmp_path))
         _merge_yaml(Path(config), {"checks": {"silenced": [AUTHENTICATION_CHECK]}})
 
         with caplog.at_level(logging.WARNING, logger=_CHECKS_LOGGER):
             create_app(config, environment=_PRODUCTION)
 
-        assert any(
-            "silenced" in r.getMessage() and AUTHENTICATION_CHECK in r.getMessage()
-            for r in caplog.records
-        )
+        silenced = CapturedLog(caplog).rendered(ChecksEvent.DEPLOY_SILENCED)
+        assert any(AUTHENTICATION_CHECK in text for text in silenced)
 
 
 class TestCursorSigningCheck:
@@ -227,10 +226,8 @@ class TestCursorSigningCheck:
         with caplog.at_level(logging.WARNING, logger=_CHECKS_LOGGER):
             create_app(config, environment=_PRODUCTION, authenticator=AcmeCodeHeaderAuthenticator())
 
-        assert any(
-            "silenced" in r.getMessage() and CURSOR_SIGNING_CHECK in r.getMessage()
-            for r in caplog.records
-        )
+        silenced = CapturedLog(caplog).rendered(ChecksEvent.DEPLOY_SILENCED)
+        assert any(CURSOR_SIGNING_CHECK in text for text in silenced)
 
 
 class TestAuthenticationSuppliedInCode:
@@ -304,7 +301,7 @@ class TestOverridesFromVariables:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config = write_project(tmp_path)
-        monkeypatch.setenv("LOOM__OBSERVABILITY__LOG__CONFIG__LEVLE", "DEBUG")
+        monkeypatch.setenv("LOOM__OBSERVABILITY__LOG__LEVLE", "DEBUG")
 
         with pytest.raises(ConfigError, match="levle"):
             create_app(config, environment="development")
@@ -335,8 +332,13 @@ class TestCreateAppFromAConfigDirectory:
         with pytest.raises(ConfigError, match="config_dir"):
             create_app(base, config_dir=str(config_dir))
 
-    def test_no_configuration_at_all_is_refused(self) -> None:
-        with pytest.raises(ConfigError, match="config_dir"):
+    def test_no_configuration_at_all_names_the_default_sources(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("LOOM_CONFIG_DIR", raising=False)
+        monkeypatch.chdir(tmp_path)
+
+        with pytest.raises(ConfigError, match="LOOM_CONFIG_DIR"):
             create_app()
 
 
@@ -406,7 +408,7 @@ class TestApplicationModuleChecks:
 
 class TestUnknownConfigurationKeys:
     def test_a_removed_logger_key_stops_startup(self, tmp_path: Path) -> None:
-        observability = {"log": {"config": {"environment": "dev"}}}
+        observability = {"log": {"environment": "dev"}}
         config = write_project(tmp_path, observability=observability)
 
         with pytest.raises(ConfigError, match="environment"):
@@ -423,7 +425,9 @@ class TestUnknownConfigurationKeys:
 class TestUseCaseReceivesTheResolvedEnvironment:
     def test_a_use_case_injects_the_resolved_environment(self, tmp_path: Path) -> None:
         module = "loom_environment_fixture_app"
-        (tmp_path / f"{module}.py").write_text(_ENVIRONMENT_APP, encoding="utf-8")
+        package = tmp_path / module
+        package.mkdir()
+        (package / "__init__.py").write_text(_ENVIRONMENT_APP, encoding="utf-8")
         config = tmp_path / "app.yaml"
         config.write_text(
             yaml.safe_dump(
@@ -431,15 +435,14 @@ class TestUseCaseReceivesTheResolvedEnvironment:
                     "app": {
                         "name": "environment-demo",
                         "code_path": ".",
-                        "discovery": {
-                            "mode": "interfaces",
-                            "interfaces": {"modules": [module], "warn_recommended": False},
-                        },
+                        "packages": [module],
                     },
-                    "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
+                    "stores": {
+                        "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+                        "settings": {"cursors": {"signing": "ephemeral"}},
+                    },
                     # The default "signed" needs a key; in development no deploy
                     # check runs.
-                    "persistence": {"cursors": {"signing": "ephemeral"}},
                 }
             ),
             encoding="utf-8",

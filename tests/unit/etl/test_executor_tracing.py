@@ -16,11 +16,13 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import StatusCode
 
-from loom.core.observability.runtime import ObservabilityRuntime
+from loom.core.observability.observability import Observability
+from loom.core.observability.observer.log import LogLifecycleObserver
 from loom.etl import ETLParams, ETLPipeline, ETLProcess, ETLStep, FromTable, IntoTable
 from loom.etl.compiler import ETLCompiler
 from loom.etl.executor import ETLExecutor
-from loom.etl.testing import StubSourceReader, StubTargetWriter
+from loom.etl.testing import InMemorySourceReader, InMemoryTargetWriter
+from tests.helpers.loggers import CapturedLog
 
 
 class TracingParams(ETLParams):  # type: ignore[misc]
@@ -80,9 +82,9 @@ def _executor() -> tuple[ETLExecutor, InMemorySpanExporter]:
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     executor = ETLExecutor(
-        StubSourceReader({"orders": object()}),
-        StubTargetWriter(),
-        observability=ObservabilityRuntime([], tracer=provider.get_tracer("loom.etl")),
+        InMemorySourceReader({"orders": object()}),
+        InMemoryTargetWriter(),
+        observability=Observability([], tracer=provider.get_tracer("loom.etl")),
     )
     return executor, exporter
 
@@ -160,7 +162,22 @@ class TestExecutorTracing:
         }
         for span in spans:
             assert span.status.status_code is StatusCode.ERROR
-            assert span.status.description == "intentional failure"
+            assert span.status.description == "ValueError"
         assert _parent_span_id(_by_name(spans, "step:FailingLoad")) == _span_id(
             _by_name(spans, "process:FailingStaging")
         )
+
+
+class TestExecutorLog:
+    def test_a_run_logs_no_value_of_its_parameters(self, caplog: pytest.LogCaptureFixture) -> None:
+        executor = ETLExecutor(
+            InMemorySourceReader({"orders": object()}),
+            InMemoryTargetWriter(),
+            observability=Observability([LogLifecycleObserver()]),
+        )
+
+        executor.run_pipeline(
+            ETLCompiler().compile(DailySales), TracingParams(run_date=date(1987, 6, 5))
+        )
+
+        assert "1987-06-05" not in CapturedLog(caplog).rendered_text

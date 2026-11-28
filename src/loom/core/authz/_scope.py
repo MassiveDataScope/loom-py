@@ -16,11 +16,9 @@ def _segments_of(path: Iterable[str]) -> tuple[str, ...]:
 
 def _segment(value: object) -> str:
     if not isinstance(value, str):
-        raise TypeError(f"A scope segment must be a string: {value!r}.")
+        raise TypeError("A scope segment must be a string.")
     if not value or _SEPARATOR in value:
-        raise ValueError(
-            f"A scope segment must be non-empty and free of {_SEPARATOR!r}: {value!r}."
-        )
+        raise ValueError(f"A scope segment must be non-empty and free of {_SEPARATOR!r}.")
     return value
 
 
@@ -30,8 +28,8 @@ class Scope:
 
     loom gives the segments no meaning: the product decides what each level
     is.  A scope covers itself and everything below it, so a grant on
-    ``Scope.of("acme")`` reaches ``Scope.of("acme", "sales", "orders")`` but
-    never ``Scope.of("globex")`` nor the root.
+    ``Scope.from_segments("acme")`` reaches ``Scope.from_segments("acme", "sales", "orders")`` but
+    never ``Scope.from_segments("globex")`` nor the root.
 
     ``str(scope)`` and :meth:`parse` are inverse and stable, so the text form
     is safe to store.
@@ -41,7 +39,7 @@ class Scope:
 
     Example::
 
-        workspace = Scope.of("acme")
+        workspace = Scope.from_segments("acme")
         table = workspace.child("sales", "orders")
         assert workspace.covers(table)
         assert Scope.parse(str(table)) == table
@@ -71,7 +69,7 @@ class Scope:
         return cls(())
 
     @classmethod
-    def of(cls, *segments: str) -> Scope:
+    def from_segments(cls, *segments: str) -> Scope:
         """Build the scope at *segments* below the root.
 
         Args:
@@ -86,7 +84,7 @@ class Scope:
         """
         if not segments:
             raise ValueError(
-                "Scope.of() needs at least one segment; use Scope.root() for the root."
+                "Scope.from_segments() needs at least one segment; use Scope.root() for the root."
             )
         return cls(segments)
 
@@ -105,7 +103,7 @@ class Scope:
                 (other than the root) or holds an empty segment.
         """
         if not text.startswith(_SEPARATOR):
-            raise ValueError(f"A scope text starts with {_SEPARATOR!r}: {text!r}.")
+            raise ValueError(f"A scope text starts with {_SEPARATOR!r}.")
         if text == _SEPARATOR:
             return cls.root()
         return cls(text[1:].split(_SEPARATOR))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 
 import pytest
@@ -10,18 +11,17 @@ import pytest
 from loom.core.execution import ExecutionContext, context
 from loom.core.identity import Identity
 from loom.core.identity import context as identity_context
-from tests.helpers.loggers import RecordingLogger
+from tests.helpers.loggers import CapturedLog
 from tests.helpers.outliving import outlive
 from tests.unit.core.execution.context.doubles import ACME_ALICE
 
 
 @pytest.fixture
-def recorded(monkeypatch: pytest.MonkeyPatch) -> RecordingLogger:
+def recorded(caplog: pytest.LogCaptureFixture) -> CapturedLog:
     """What the execution context logs during the test, its delegation refusal included."""
-    logger = RecordingLogger()
-    monkeypatch.setattr(context, "_log", logger)
-    monkeypatch.setattr(identity_context, "_log", logger)
-    return logger
+    for module in (context, identity_context):
+        caplog.set_level(logging.DEBUG, logger=module.__name__)
+    return CapturedLog(caplog)
 
 
 @pytest.fixture

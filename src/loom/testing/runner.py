@@ -19,11 +19,12 @@ from loom.ai.abc import (
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
 from loom.core.di import LoomContainer
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.engine.plan import ExecutionPlan
+from loom.core.errors import InvalidUse
 from loom.core.execution import current_execution, execution_identity
 from loom.core.identity import Identity
-from loom.core.repository.abc import RepoFor
+from loom.core.stores.repository import RepoFor
 from loom.core.use_case.use_case import UseCase
 
 ResultT = TypeVar("ResultT")
@@ -597,7 +598,7 @@ class _Doubles(Generic[_DoubleT]):
             execution_identity()
         double = self._doubles.get(key)
         if double is None:
-            raise RuntimeError(
+            raise InvalidUse(
                 f"{self._declarer} declares {spelling} but no double was registered; "
                 f"call {self._harness}.{method}({key!r}, ...) before running it."
             )
@@ -834,7 +835,7 @@ class UseCaseTest(Generic[ResultT]):
             The result produced by the UseCase.
 
         Raises:
-            loom.core.errors.RuleViolations: If one or more rule steps fail.
+            loom.core.errors.RuleViolationsError: If one or more rule steps fail.
             NotFound: If a Load step finds no entity.
             loom.core.errors.Unauthenticated: If the UseCase declares
                 ``Caller()``, ``Agent(name)`` or ``Mcp(server, ...)`` and
@@ -848,7 +849,7 @@ class UseCaseTest(Generic[ResultT]):
         """
         declarer = f"{type(self._use_case).__qualname__}.execute"
         harness = type(self).__name__
-        executor = RuntimeExecutor(
+        executor = UseCaseExecutor(
             UseCaseCompiler(),
             agent_resolver=_AgentDoubles(declarer, harness, self._agent_doubles),
             mcp_resolver=_McpDoubles(declarer, harness, self._mcp_doubles),

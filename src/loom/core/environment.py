@@ -12,7 +12,8 @@ the selector, the ``LOOM__SECTION__KEY`` configuration overrides (see
 :mod:`loom.core.config.overrides`) and every other ``LOOM_*`` variable, which
 the rest of loom reads through :func:`loom_variable`. It also reads, through
 :func:`configured_variable`, a variable a configuration names to hold a
-value. A containment test enforces it. Every other module receives the
+value, and the two variables the AWS Lambda runtime sets about the function.
+A containment test enforces it. Every other module receives the
 resolved :class:`Environment` through configuration or the container; the
 entry points resolve it once and pass it on.
 
@@ -30,6 +31,7 @@ from pathlib import Path
 from typing import Final
 
 from loom.core.config.errors import ConfigError
+from loom.core.errors import InvalidValue
 
 ENVIRONMENT_VARIABLE: Final = "LOOM_ENV"
 """Name of the variable selecting the environment."""
@@ -37,8 +39,8 @@ ENVIRONMENT_VARIABLE: Final = "LOOM_ENV"
 OVERRIDE_PREFIX: Final = "LOOM__"
 """Prefix of the variables overriding configuration keys."""
 
-CONFIG_VARIABLE: Final = "LOOM_CONFIG"
-"""Configuration file or directory the migration locator loads."""
+CONFIG_DIR_VARIABLE: Final = "LOOM_CONFIG_DIR"
+"""Directory every entry point loads its configuration from when no path is given."""
 
 STORAGE_CONFIG_VARIABLE: Final = "LOOM_STORAGE_CONFIG_PATH"
 """Storage configuration file or directory a Prefect flow run loads."""
@@ -55,6 +57,9 @@ SPARK_IVY_DIR_VARIABLE: Final = "LOOM_SPARK_IVY_DIR"
 SPARK_OFFLINE_VARIABLE: Final = "LOOM_SPARK_OFFLINE"
 """``1`` makes the Spark test session use only cached jars."""
 
+LAMBDA_FUNCTION_VARIABLE: Final = "AWS_LAMBDA_FUNCTION_NAME"
+LAMBDA_LOG_FORMAT_VARIABLE: Final = "AWS_LAMBDA_LOG_FORMAT"
+
 SUPERUSER_URL_VARIABLE: Final = "LOOM_SUPERUSER_URL"
 """Database URL ``loom schema bootstrap`` installs the guard with."""
 
@@ -68,6 +73,8 @@ DB_PASSWORD_PREFIX: Final = "LOOM_DB_PASSWORD_"
 """Prefix of the variables holding a database login's password, by upper-case login."""
 
 _BASE_CONFIG_FILE: Final = "base.yaml"
+
+_DEFAULT_CONFIG_DIR: Final = Path("config")
 
 
 class Environment(StrEnum):
@@ -171,10 +178,20 @@ def loom_variable(name: str) -> str | None:
     """Return the value of the ``LOOM_*`` variable *name*, or ``None`` when unset.
 
     Raises:
-        ValueError: When *name* is not a ``LOOM_*`` variable.
+        InvalidValue: When *name* is not a ``LOOM_*`` variable.
     """
     _require_loom_variable(name)
     return os.environ.get(name)
+
+
+def is_inside_lambda() -> bool:
+    """Whether the process runs as an AWS Lambda function."""
+    return os.environ.get(LAMBDA_FUNCTION_VARIABLE) is not None
+
+
+def lambda_writes_json_logs() -> bool:
+    """Whether the Lambda function's log format is JSON; it is ``Text`` when unset."""
+    return os.environ.get(LAMBDA_LOG_FORMAT_VARIABLE, "").upper() == "JSON"
 
 
 def configured_variable(name: str) -> str | None:
@@ -199,7 +216,7 @@ def scoped_loom_variable(name: str, value: str) -> Iterator[None]:
     Not thread-safe: the process environment is shared.
 
     Raises:
-        ValueError: When *name* is not a ``LOOM_*`` variable.
+        InvalidValue: When *name* is not a ``LOOM_*`` variable.
     """
     _require_loom_variable(name)
     previous = os.environ.get(name)
@@ -215,7 +232,7 @@ def scoped_loom_variable(name: str, value: str) -> Iterator[None]:
 
 def _require_loom_variable(name: str) -> None:
     if not name.startswith("LOOM_"):
-        raise ValueError(f"{name!r} is not a loom variable")
+        raise InvalidValue("the name is not a loom variable")
 
 
 def override_variables() -> dict[str, str]:
@@ -268,6 +285,32 @@ def config_source_paths(
     return (str(source),)
 
 
+def resolve_config_dir() -> Path:
+    """Return the directory an entry point loads when no path is given.
+
+    ``LOOM_CONFIG_DIR`` when set, else ``./config``.
+
+    Returns:
+        The existing configuration directory.
+
+    Raises:
+        ConfigError: When that directory does not exist; the message names the
+            path tried, and both sources when the variable is unset.
+    """
+    configured = loom_variable(CONFIG_DIR_VARIABLE)
+    directory = Path(configured or _DEFAULT_CONFIG_DIR)
+    if directory.is_dir():
+        return directory
+    if configured:
+        raise ConfigError(
+            f"{CONFIG_DIR_VARIABLE} names {str(directory)!r}, which is not a directory"
+        )
+    raise ConfigError(
+        f"config directory {str(directory)!r} not found: "
+        f"{CONFIG_DIR_VARIABLE} is not set and ./config does not exist"
+    )
+
+
 def select_config_paths(
     config_paths: Sequence[str],
     config_dir: str | os.PathLike[str] | None,
@@ -276,6 +319,8 @@ def select_config_paths(
     caller: str,
 ) -> tuple[str, ...]:
     """Return the files an application factory loads: explicit files or a directory.
+
+    With neither, the directory comes from :func:`resolve_config_dir`.
 
     Args:
         config_paths: Explicit files, merged left to right as given.
@@ -287,20 +332,20 @@ def select_config_paths(
         The paths to load, in merge order.
 
     Raises:
-        ConfigError: When both or neither of *config_paths* and *config_dir*
-            are given, or *config_dir* has no ``base.yaml``.
+        ConfigError: When both *config_paths* and *config_dir* are given, the
+            default directory is missing, or the directory has no ``base.yaml``.
     """
     if config_paths and config_dir is not None:
         raise ConfigError(f"{caller} takes config files or config_dir, not both.")
-    if config_dir is not None:
-        return environment_config_paths(config_dir, environment)
-    if not config_paths:
-        raise ConfigError(f"{caller} requires config files or a config_dir.")
-    return tuple(config_paths)
+    if config_paths:
+        return tuple(config_paths)
+    return environment_config_paths(
+        resolve_config_dir() if config_dir is None else config_dir, environment
+    )
 
 
 __all__ = [
-    "CONFIG_VARIABLE",
+    "CONFIG_DIR_VARIABLE",
     "DB_PASSWORD_PREFIX",
     "ENVIRONMENT_VARIABLE",
     "ETL_CONFIG_VARIABLE",
@@ -320,6 +365,7 @@ __all__ = [
     "loom_variable",
     "override_variables",
     "parse_environment",
+    "resolve_config_dir",
     "resolve_environment",
     "scoped_loom_variable",
     "select_config_paths",

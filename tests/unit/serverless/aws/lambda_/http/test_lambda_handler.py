@@ -4,15 +4,23 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
-from loom.composition import Application, build_application
-from loom.serverless.aws.lambda_ import LambdaAdapter
+from loom.composition import Application, Project
+from loom.core.job.job import Job
+from loom.serverless.aws.lambda_ import LambdaRuntime
 from loom.serverless.aws.lambda_.triggers.http import LambdaHTTPHandler
+from loom.testing import LambdaTestClient
+from tests.helpers.composition import application_of
+from tests.helpers.jobs import InlineServiceFixture, JobActivity, JobKernel
 from tests.helpers.loops import RecordedLoops
 from tests.unit.serverless.aws.lambda_.http._clients import LambdaProject, Reply, lambda_client
 from tests.unit.serverless.aws.lambda_.http._contract_app import PUBLIC_PATH, bearer, seen_by
@@ -69,10 +77,10 @@ def opened_on(monkeypatch: pytest.MonkeyPatch) -> list[asyncio.AbstractEventLoop
 
 
 @pytest.fixture
-def unreachable(contract_project: ProjectFactory) -> tuple[LambdaAdapter, Application]:
+def unreachable(contract_project: ProjectFactory) -> tuple[LambdaRuntime, Application]:
     """A composed application whose database is unreachable when it opens."""
-    adapter = LambdaAdapter()
-    application = build_application(contract_project(), adapter=adapter, environment="test")
+    adapter = LambdaRuntime()
+    application = Project.load(contract_project(), environment="test").compose(adapter)
 
     async def refuse() -> None:
         raise ConnectionError("database unreachable")
@@ -120,11 +128,11 @@ class TestLambdaHandler:
     def test_warm_invocations_run_the_startup_checks_once(
         self, contract_project: ProjectFactory
     ) -> None:
-        adapter = LambdaAdapter()
-        application = build_application(contract_project(), adapter=adapter, environment="test")
+        adapter = LambdaRuntime()
+        application = Project.load(contract_project(), environment="test").compose(adapter)
         checks = CountedChecks()
         checks.wrap(application)
-        handler = adapter.bind(application)
+        handler = adapter.mount(application)
         try:
             _invoke_warm(handler, _WARM_INVOCATIONS)
         finally:
@@ -202,27 +210,66 @@ class TestLambdaHandler:
 
     def test_a_failure_to_open_fails_the_init(
         self,
-        unreachable: tuple[LambdaAdapter, Application],
+        unreachable: tuple[LambdaRuntime, Application],
     ) -> None:
         adapter, application = unreachable
 
         with pytest.raises(ConnectionError, match="database unreachable"):
-            adapter.bind(application)
+            adapter.mount(application)
 
     def test_a_failure_to_open_closes_its_loop(
-        self, event_loops: RecordedLoops, unreachable: tuple[LambdaAdapter, Application]
+        self, event_loops: RecordedLoops, unreachable: tuple[LambdaRuntime, Application]
     ) -> None:
         adapter, application = unreachable
 
         with pytest.raises(ConnectionError):
-            adapter.bind(application)
+            adapter.mount(application)
         assert event_loops.created[0].is_closed()
 
     def test_a_failure_to_open_unsets_its_loop(
-        self, event_loops: RecordedLoops, unreachable: tuple[LambdaAdapter, Application]
+        self, event_loops: RecordedLoops, unreachable: tuple[LambdaRuntime, Application]
     ) -> None:
         adapter, application = unreachable
 
         with pytest.raises(ConnectionError):
-            adapter.bind(application)
+            adapter.mount(application)
         assert event_loops.made_current[-1] is None
+
+
+class RestockedJob(Job[None]):
+    """Records each run in the activity, after some I/O."""
+
+    def __init__(self, activity: JobActivity) -> None:
+        self._activity = activity
+
+    async def execute(self) -> None:
+        await asyncio.sleep(0.01)
+        self._activity.record("restocked")
+
+
+class TestInlineJobsOfAnInvocation:
+    @pytest.fixture
+    def inline_jobs(self, activity: JobActivity) -> InlineServiceFixture:
+        kernel = JobKernel()
+        kernel.container.register_instance(JobActivity, activity)
+        return kernel.serve_inline(RestockedJob)
+
+    @pytest.fixture
+    def client(
+        self, inline_jobs: InlineServiceFixture, activity: JobActivity
+    ) -> Iterator[LambdaTestClient]:
+        async def restock(request: Request) -> JSONResponse:
+            await inline_jobs.dispatch_now(RestockedJob)
+            return JSONResponse({"ran": list(activity.entries)})
+
+        app = Starlette(routes=[Route("/restock", restock, methods=["POST"])])
+        handler = LambdaHTTPHandler(app, application_of(jobs=inline_jobs))
+        yield LambdaTestClient(handler)
+        handler.close()
+
+    def test_an_invocation_returns_once_the_inline_job_its_route_dispatched_ran(
+        self, client: LambdaTestClient, activity: JobActivity
+    ) -> None:
+        response = client.post("/restock")
+
+        assert (response.json(), activity.entries) == ({"ran": []}, ["restocked"])

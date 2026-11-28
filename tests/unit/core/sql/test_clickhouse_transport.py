@@ -4,7 +4,7 @@ ClickHouse only accepts several roles as REPEATED HTTP parameters
 (``role=a&role=b``); a comma-joined value is parsed as a single role name and
 rejected with code 511. ``clickhouse-connect`` 0.15.1 builds the request URL
 with ``urlencode(final_params)`` — without ``doseq=True`` — so a sequence value
-would travel as its ``repr``. ``loom.core.sql.clickhouse._client`` fixes that at
+would travel as its ``repr``. ``loom.stores.clickhouse._client`` fixes that at
 the driver boundary, only when the registry asks for it; these tests pin the
 patch point so a future driver version can never degrade the workaround
 silently.
@@ -21,8 +21,8 @@ import pytest
 from clickhouse_connect.driver import httpclient
 
 from loom.core.config.errors import ConfigError
-from loom.core.sql.clickhouse import ClickHouseConnectionRegistry
-from loom.core.sql.clickhouse._client import (
+from loom.stores.clickhouse import ClickHouseConnectionRegistry
+from loom.stores.clickhouse._client import (
     enable_repeated_query_params,
     supports_repeated_query_params,
 )
@@ -42,7 +42,7 @@ from urllib.parse import urlencode
 
 from clickhouse_connect.driver import httpclient
 
-import loom.core.sql.clickhouse._client  # noqa: F401
+import loom.stores.clickhouse._client  # noqa: F401
 
 params = {"role": ("a", "b")}
 print("stock" if httpclient.urlencode(params) == urlencode(params) else "patched")

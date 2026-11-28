@@ -25,11 +25,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from loom.ai.abc import AgentHandle
 from loom.ai.declarative import PolicySpec
-from loom.ai.engines.pydantic_ai import NativeAgent, PydanticAIEngineProvider, native_agent
+from loom.ai.engines.pydantic_ai import NativeAgent, PydanticAIEnginePlugin, native_agent
 from loom.ai.engines.pydantic_ai._engine import PydanticAIEngine
 from loom.ai.errors import AgentRunError, AgentRunErrorCode
-from loom.ai.runtime import AgentRuntime
-from loom.ai.runtime._chain import current_chain
+from loom.ai.execution import AgentHost
+from loom.ai.execution._chain import current_chain
 from loom.core.di import LoomContainer
 from loom.core.execution import ExecutionScope
 from loom.core.identity import Identity
@@ -109,7 +109,7 @@ def _silent_model() -> Model:
 
 def _engine(*, output_check: Any = None) -> PydanticAIEngine:
     model = _silent_model()
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model)
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model)
     engine = provider.create_engine(
         make_plan(output_check=output_check),
         deps=_RecordingDeps(),
@@ -224,36 +224,36 @@ class TestTheTypedAccessor:
             assert access.deps.state == {"a": 1}
 
 
-def _native_runtime() -> AgentRuntime:
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: _silent_model())
-    return AgentRuntime(
+def _native_runtime() -> AgentHost:
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: _silent_model())
+    return AgentHost(
         plans=[make_plan()],
         config=make_ai_config(),
-        engine_provider=provider,
+        engine_plugin=provider,
         deps=_RecordingDeps(),
         container=LoomContainer(),
     )
 
 
 class _RuntimeHandle:
-    """A handle over the real runtime, standing in for a resolved marker."""
+    """A handle over the real host, standing in for a resolved marker."""
 
-    def __init__(self, runtime: AgentRuntime, name: str, identity: Identity) -> None:
-        self._runtime = runtime
+    def __init__(self, host: AgentHost, name: str, identity: Identity) -> None:
+        self._host = host
         self._name = name
         self._identity = identity
 
     def native(self, *, state: object | None = None) -> object:
-        """Return the runtime's native form for this handle's agent and caller."""
-        return self._runtime.native(self._name, identity=self._identity, state=state)
+        """Return the host's native form for this handle's agent and caller."""
+        return self._host.native(self._name, identity=self._identity, state=state)
 
 
 class TestTheAccessorRejoinsTheGuard:
-    """``native_agent`` enters the runtime's own guard, not a no-op body."""
+    """``native_agent`` enters the host's own guard, not a no-op body."""
 
     async def test_the_chain_records_this_run_only_inside_the_block(self) -> None:
-        async with _native_runtime() as runtime:
-            handle = _as_handle(_RuntimeHandle(runtime, "contract", _IDENTITY))
+        async with _native_runtime() as host:
+            handle = _as_handle(_RuntimeHandle(host, "contract", _IDENTITY))
 
             assert current_chain() == ()
             with ExecutionScope(_IDENTITY):
@@ -274,8 +274,8 @@ class TestTheBodysExceptionsAreNeverReclassified:
     async def test_a_raw_exception_escapes_unchanged(self) -> None:
         original = TimeoutError("the vendor call timed out")
 
-        async with _native_runtime() as runtime:
-            handle = _as_handle(_RuntimeHandle(runtime, "contract", _IDENTITY))
+        async with _native_runtime() as host:
+            handle = _as_handle(_RuntimeHandle(host, "contract", _IDENTITY))
             with ExecutionScope(_IDENTITY), pytest.raises(TimeoutError) as excinfo:
                 async with native_agent(handle):
                     raise original
@@ -285,8 +285,8 @@ class TestTheBodysExceptionsAreNeverReclassified:
     async def test_an_agent_run_error_escapes_unchanged(self) -> None:
         original = AgentRunError(AgentRunErrorCode.UNAUTHORIZED, "denied")
 
-        async with _native_runtime() as runtime:
-            handle = _as_handle(_RuntimeHandle(runtime, "contract", _IDENTITY))
+        async with _native_runtime() as host:
+            handle = _as_handle(_RuntimeHandle(host, "contract", _IDENTITY))
             with ExecutionScope(_IDENTITY), pytest.raises(AgentRunError) as excinfo:
                 async with native_agent(handle):
                     raise original
@@ -296,7 +296,7 @@ class TestTheBodysExceptionsAreNeverReclassified:
 
 def _engine_with_policies(policies: PolicySpec) -> PydanticAIEngine:
     model = _silent_model()
-    provider = PydanticAIEngineProvider(model_resolver=lambda target: model)
+    provider = PydanticAIEnginePlugin(model_resolver=lambda target: model)
     engine = provider.create_engine(
         make_plan(policies=policies), deps=_RecordingDeps(), container=LoomContainer()
     )

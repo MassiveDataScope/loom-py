@@ -150,7 +150,7 @@ by the caller's own entitlements. It has no `roles` parameter in any form:
 
 ```python
 from loom.core.identity import Identity
-from loom.core.sql import CallerBoundSql
+from loom.core.stores.sql import CallerBoundSql
 from loom.core.use_case.markers import Caller
 from loom.core.use_case.use_case import UseCase
 
@@ -278,12 +278,12 @@ Errors use the standard framework body (`detail.code`, `detail.message`,
 | 401 | Missing, expired or otherwise invalid token (emitted by the JWT middleware, before the endpoint) |
 | 404 | Unknown connection name |
 | 403 | The verified identity grants no allowed role, the body asks for a role the identity does not hold, or the role is outside the allowlist |
-| 422 | SQL rejected by the backend (sanitized first line, no host/DSN), well-formed body that does not fit the schema, or SQL larger than `max_sql_bytes` |
+| 422 | SQL rejected by the backend (its error code only), well-formed body that does not fit the schema, or SQL larger than `max_sql_bytes` |
 | 500 | Backend unreachable — generic message, no URL leaked |
 
 Every 403 caused by identity binding carries the same generic message on purpose (no
 oracle telling an attacker which part of their token failed); the precise reason —
-connection, subject and cause — is logged server-side at WARNING.
+connection, subject, mechanism and cause — is logged server-side at WARNING.
 
 ---
 
@@ -357,7 +357,7 @@ comma-joined value is read as a single role name and rejected with code 511.
 `clickhouse-connect` 0.15.1 (and upstream `main`) builds the request URL with
 `urlencode(params)` without `doseq=True`, so a sequence value would be sent as its
 Python repr. The driver boundary
-(`loom.core.sql.clickhouse._client`) rebinds that encoder to the `doseq=True` variant:
+(`loom.stores.clickhouse._client`) rebinds that encoder to the `doseq=True` variant:
 output is byte-identical for the scalar settings the driver builds today and only
 sequences change — and their current encoding is invalid anyway. A startup check
 (`ConfigError`) and a unit test pinning the patch point make sure the workaround can
@@ -400,9 +400,10 @@ key — including one minted for a different service, carrying its own idea of a
 claim — would be accepted and could name your ClickHouse roles.
 
 **4. Auditability.** Each request emits a span labelled with the effective `roles` and
-the caller `subject`; denials are logged at WARNING with connection, subject and cause.
+the `mechanism`; denials are security events, logged at WARNING with connection, subject,
+mechanism and cause (per OWASP). The spans are operational and never name the subject.
 `CallerBoundSql` opens a span of its own for every query it accepts, carrying the same
-`roles`, `subject` and `mechanism` labels. It is a different span from the endpoint's,
+`roles` and `mechanism` labels. It is a different span from the endpoint's,
 under a narrower scope and its own name, so a use case acting on behalf of a caller is
 auditable on the same terms rather than through the same record.
 
@@ -493,8 +494,8 @@ unchanged in an application that also serves a multi-role one.
   emits a startup warning, and the driver runs with `query_retries=0` to avoid
   re-executing non-idempotent statements.
 - **Credentials via `${oc.env:...}` / SSM / Secrets Manager** — never inline. The
-  password is redacted from logs, reprs and errors; SQL is logged only at DEBUG
-  (truncated), parameters never.
+  password is redacted from logs, reprs and errors; SQL is never logged, nor
+  its parameters.
 - **Rate limiting is the operator's responsibility** (reverse proxy / API gateway).
 - Minimum versions: ClickHouse ≥ 24.4 and `clickhouse-connect` ≥ 0.9.2 — older
   combinations fail the startup probe.

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pytest
 
 from loom.core.command import Command
-from loom.core.engine.compiler import CompilationError, UseCaseCompiler
+from loom.core.engine.compiler import CompilationError, CompilerEvent, CompilerKey, UseCaseCompiler
 from loom.core.engine.plan import ExecutionPlan
 from loom.core.use_case.markers import Exists, Input, Load, LoadById, SourceKind
 from loom.core.use_case.use_case import UseCase
+from tests.helpers.loggers import CapturedLog
 
 # ---------------------------------------------------------------------------
 # Test domain fixtures
@@ -25,38 +27,6 @@ class User:
 
 class Product:
     pass
-
-
-# ---------------------------------------------------------------------------
-# Recording logger
-# ---------------------------------------------------------------------------
-
-
-class _RecordingLogger:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-
-    @property
-    def messages(self) -> list[str]:
-        return [event for event, _ in self.calls]
-
-    def bind(self, **fields: Any) -> _RecordingLogger:
-        return self
-
-    def debug(self, event: str, **fields: Any) -> None:
-        self.calls.append((event, fields))
-
-    def info(self, event: str, **fields: Any) -> None:
-        self.calls.append((event, fields))
-
-    def warning(self, event: str, **fields: Any) -> None:
-        self.calls.append((event, fields))
-
-    def error(self, event: str, **fields: Any) -> None:
-        self.calls.append((event, fields))
-
-    def exception(self, event: str, **fields: Any) -> None:
-        self.calls.append((event, fields))
 
 
 # ---------------------------------------------------------------------------
@@ -406,14 +376,19 @@ class TestCompilationErrors:
 # ---------------------------------------------------------------------------
 
 
-class TestCompilerLogging:
-    """Compiling a use case logs one ``[BOOT] Compiled UseCase`` line with what it found."""
+@pytest.fixture
+def log(caplog: pytest.LogCaptureFixture) -> CapturedLog:
+    caplog.set_level(logging.DEBUG, logger="loom.core.engine.compiler")
+    return CapturedLog(caplog, "loom.core.engine.compiler")
 
-    def test_logs_one_line_naming_the_use_case(self) -> None:
-        log = _RecordingLogger()
-        UseCaseCompiler(logger=log).compile(_NoMarkersUseCase)
-        assert log.messages == ["[BOOT] Compiled UseCase"]
-        assert log.calls[0][1]["usecase"] == "_NoMarkersUseCase"
+
+class TestCompilerLogging:
+    """Compiling a use case logs ``loom.compiler.use_case_compiled`` once, with what it found."""
+
+    def test_logs_one_line_naming_the_use_case(self, log: CapturedLog) -> None:
+        UseCaseCompiler().compile(_NoMarkersUseCase)
+        assert log.messages == [CompilerEvent.USE_CASE_COMPILED]
+        assert log.events[0][1]["loom.use_case.name"] == "_NoMarkersUseCase"
 
     @pytest.mark.parametrize(
         ("use_case", "detected"),
@@ -422,21 +397,24 @@ class TestCompilerLogging:
             pytest.param(_WithLoadUseCase, "LoadById: User by user_id", id="load-by-id"),
         ],
     )
-    def test_lists_each_detected_marker(self, use_case: type[Any], detected: str) -> None:
-        log = _RecordingLogger()
-        UseCaseCompiler(logger=log).compile(use_case)
-        [(_, fields)] = log.calls
-        assert detected in fields["detected"]
+    def test_lists_each_detected_marker(
+        self, log: CapturedLog, use_case: type[Any], detected: str
+    ) -> None:
+        UseCaseCompiler().compile(use_case)
+        [(_, fields)] = log.events
+        assert detected in fields[CompilerKey.DETECTED]
 
-    def test_counts_the_computes_rules_and_steps(self) -> None:
-        log = _RecordingLogger()
-        UseCaseCompiler(logger=log).compile(_WithAllUseCase)
-        [(_, fields)] = log.calls
-        assert (fields["computes"], fields["rules"], fields["steps"]) == (1, 1, 3)
+    def test_counts_the_computes_rules_and_steps(self, log: CapturedLog) -> None:
+        UseCaseCompiler().compile(_WithAllUseCase)
+        [(_, fields)] = log.events
+        assert (
+            fields[CompilerKey.COMPUTES],
+            fields[CompilerKey.RULES],
+            fields[CompilerKey.STEPS],
+        ) == (1, 1, 3)
 
-    def test_no_logs_on_cache_hit(self) -> None:
-        log = _RecordingLogger()
-        compiler = UseCaseCompiler(logger=log)
+    def test_no_logs_on_cache_hit(self, log: CapturedLog) -> None:
+        compiler = UseCaseCompiler()
         compiler.compile(_NoMarkersUseCase)
         count_before = len(log.messages)
         compiler.compile(_NoMarkersUseCase)  # cache hit — no re-inspection

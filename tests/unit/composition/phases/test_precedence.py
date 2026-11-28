@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from loom.ai.errors import AgentCompilationError
-from loom.composition import JobBackendError
+from loom.composition import JobTransportError
 from loom.composition.errors import ReservedBindingError
 from loom.core.checks import DeployCheckError
 from loom.core.config import ConfigError
@@ -49,7 +49,7 @@ _INVALID_SQL = {
 }
 _UNKNOWN_BACKEND = {"app": {"job_service": "rabbit"}}
 _INVALID_JOB_SECTION = {"jobs": {AcmeJob.__name__: {"unknown": 1}}}
-_INVALID_CURSORS = {"persistence": {"cursors": {"signing": "unknown"}}}
+_INVALID_CURSORS = {"stores": {"settings": {"cursors": {"signing": "unknown"}}}}
 _UNCOMPOSED_LEDGER = {"stores": {"ledger": {"backend": "none"}}}
 
 
@@ -94,18 +94,18 @@ _SCENARIOS: dict[str, _Precedence] = {
         ),
         DependencyGraphError,
     ),
-    # configure_job_service's JobBackendError before resolve_sql's ConfigError.
-    "job-backend-and-sql-section": _Precedence(
+    # configure_job_service's JobTransportError before resolve_sql's ConfigError.
+    "job-transport-and-sql-section": _Precedence(
         paths.Composition(config={**_UNKNOWN_BACKEND, **_INVALID_SQL}),
-        JobBackendError,
+        JobTransportError,
         # The HTTP adapters validate the sql section in their recipe, during plan.
         {"fastapi": ConfigError, "lambda_http": ConfigError},
         {"http": paths.HTTP},
     ),
     # A caller module's ReservedBindingError (create_kernel) before configure_job_service's
-    # JobBackendError.
-    "reserved-binding-and-job-backend": _Precedence(
-        paths.Composition(modules=(binds_sql_service,), config=_UNKNOWN_BACKEND),
+    # JobTransportError.
+    "reserved-binding-and-job-transport": _Precedence(
+        paths.Composition(overrides=(binds_sql_service,), config=_UNKNOWN_BACKEND),
         ReservedBindingError,
     ),
     # plan's DeployCheckError before build_stores's ConfigError (the cursor codec).
@@ -124,9 +124,9 @@ _SCENARIOS: dict[str, _Precedence] = {
 
 
 _VALIDATED_AT_SEAL_AFTER = (
-    "job-backend",
-    "job-backend-celery-extra",
-    "job-backend-celery-section",
+    "job-transport",
+    "job-transport-celery-extra",
+    "job-transport-celery-section",
     "sqs-queue",
     "sql-invalid-section",
     "agent-marker",
@@ -182,7 +182,7 @@ class TestRefusalPrecedence:
     ) -> None:
         refusal = REFUSALS[family]
         composition = replace(
-            refusal.composition, modules=(*refusal.composition.modules, binds_unbuildable)
+            refusal.composition, overrides=(*refusal.composition.overrides, binds_unbuildable)
         )
         caught = {
             path: paths.refusal(paths.COMPOSED, path, composition, tmp_path, refusal.prepare)

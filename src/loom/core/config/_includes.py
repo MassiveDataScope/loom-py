@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from loom.core.config.errors import ConfigError
+from loom.core.config.keys import INTERPOLATION
 
 _CLOUD_SCHEMES = frozenset({"s3", "gs", "gcs", "abfss", "abfs", "az", "r2", "memory"})
 _CONFIG_SUFFIXES = frozenset({".yaml", ".yml"})
@@ -104,7 +105,7 @@ def failure_detail(exc: BaseException, label: str) -> str:
     Returns:
         ``str(exc)`` for a plain label, the exception class name otherwise.
     """
-    return type(exc).__name__ if "${" in label else str(exc)
+    return type(exc).__name__ if INTERPOLATION in label else str(exc)
 
 
 def expand_include(pattern: str, label: str) -> list[str]:

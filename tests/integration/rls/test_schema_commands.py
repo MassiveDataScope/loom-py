@@ -11,7 +11,7 @@ import yaml
 from typer.testing import CliRunner
 
 from loom.cli.app import app
-from loom.core.repository.sqlalchemy.rls import create_schema
+from loom.stores.sqlalchemy.rls import create_schema
 from tests.integration.agnosticism import bookkeeping
 from tests.integration.rls.conftest import (
     FIXTURE_USERS,

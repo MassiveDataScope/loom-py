@@ -9,8 +9,8 @@ from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.engine import Dialect
 from sqlalchemy.schema import CreateTable
 
-from loom.core.backend.sqlalchemy import compile_all
 from loom.core.model import BaseModel, ColumnField, Integer
+from loom.stores.sqlalchemy.schema import compile_all
 
 
 class Ticket(BaseModel):

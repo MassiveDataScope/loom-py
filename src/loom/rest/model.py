@@ -3,7 +3,7 @@
 Defines the data structures that describe how UseCases are exposed over HTTP.
 No FastAPI or transport-specific code lives here — this module is the
 declaration layer; :mod:`loom.rest.compiler` validates and compiles it at
-startup and :mod:`loom.rest.router_runtime` binds it to FastAPI.
+startup and :mod:`loom.rest.fastapi.router` binds it to FastAPI.
 
 Usage::
 
@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar, Generic, Literal, TypeAlias, TypeVar, get_args, get_origin
 
-from loom.core.repository.abc.query import PaginationMode
+from loom.core.stores.repository.query import PaginationMode
 from loom.core.use_case.field_ref import FieldRef
 from loom.core.use_case.use_case import UseCase
 

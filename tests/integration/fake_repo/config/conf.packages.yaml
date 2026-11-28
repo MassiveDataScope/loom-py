@@ -1,0 +1,6 @@
+includes:
+  - conf.yaml
+
+app:
+  packages:
+    - tests.integration.fake_repo.product

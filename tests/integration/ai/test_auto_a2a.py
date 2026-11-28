@@ -1,6 +1,6 @@
 """The composition root mounts the inbound A2A surface (T183, FR-041).
 
-``bind_a2a_endpoints`` had no caller in ``src/``: the whole inbound transport
+``mount_a2a_endpoints`` had no caller in ``src/``: the whole inbound transport
 was implemented, tested in isolation, and unreachable in any application
 ``create_app`` builds. These tests drive the real ``create_app`` over a
 temporary project and speak A2A to the app it returns, so the card, one
@@ -75,7 +75,8 @@ def _write_project(tmp_path: Path, *, ai_extra: dict[str, Any]) -> str:
     Returns:
         Path of the written configuration file.
     """
-    (tmp_path / f"{_APP_MODULE}.py").write_text(_APP_SOURCE, encoding="utf-8")
+    (tmp_path / _APP_MODULE).mkdir()
+    (tmp_path / _APP_MODULE / "__init__.py").write_text(_APP_SOURCE, encoding="utf-8")
     agent_dir = tmp_path / "ai" / "agents" / _AGENT
     agent_dir.mkdir(parents=True)
     (agent_dir / "agent.yaml").write_text(yaml.safe_dump(_AGENT_SPEC), encoding="utf-8")
@@ -83,13 +84,12 @@ def _write_project(tmp_path: Path, *, ai_extra: dict[str, Any]) -> str:
         "app": {
             "name": "a2a-wiring-demo",
             "code_path": str(tmp_path),
-            "discovery": {
-                "mode": "interfaces",
-                "interfaces": {"modules": [_APP_MODULE], "warn_recommended": False},
-            },
+            "packages": [_APP_MODULE],
         },
-        "stores": {"default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"}},
-        "persistence": {"cursors": {"signing": "ephemeral"}},
+        "stores": {
+            "default": {"backend": "sqlalchemy", "url": "sqlite+aiosqlite:///"},
+            "settings": {"cursors": {"signing": "ephemeral"}},
+        },
         "ai": {
             "engine": _ENGINE_NAME,
             "specs": ["ai/agents/*/agent.yaml"],

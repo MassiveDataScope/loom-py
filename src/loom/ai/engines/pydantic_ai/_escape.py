@@ -19,6 +19,7 @@ from pydantic_ai.usage import UsageLimits
 
 from loom.ai.abc import AgentHandle
 from loom.ai.engines.pydantic_ai._errors import as_run_error
+from loom.core.errors import InvalidType
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +96,7 @@ async def native_agent(
             ``AGENT_CALL_CYCLE`` or ``AGENT_CALL_TOO_DEEP`` when entering the
             guard refuses this run; with ``TOO_MANY_RUNS`` when no admission
             permit is free.
-        RuntimeError: When the runtime serving *handle* was never entered.
+        RuntimeError: When the host serving *handle* was never entered.
 
     Example::
 
@@ -110,7 +111,7 @@ async def native_agent(
     """
     access = handle.native(state=state)
     if not isinstance(access, _NativeAccess):
-        raise TypeError(
+        raise InvalidType(
             "this agent is not served by the pydantic-ai engine: its native form is "
             f"{type(access).__name__}, not the pydantic-ai engine's own carrier"
         )

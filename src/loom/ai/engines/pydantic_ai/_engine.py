@@ -58,8 +58,10 @@ from loom.ai.engines.pydantic_ai._history import (
 )
 from loom.ai.engines.pydantic_ai._output import decode_output
 from loom.ai.errors import AgentRunError, AgentRunErrorCode, is_retriable
+from loom.ai.event import AiEvent, AiKey
 from loom.core.di import LoomContainer
 from loom.core.identity import Identity
+from loom.core.log_names import LogField
 
 _logger = logging.getLogger(__name__)
 
@@ -69,9 +71,6 @@ RETRY_BACKOFF_MS = 200
 A constant rather than a policy field: ``policies`` describes what the agent
 is allowed to spend, and no requirement asks the artifact to tune the wait.
 """
-
-MAX_LOGGED_CAUSE_CHARS = 500
-"""Cap on a logged failure cause: it is model-authored text, unbounded at the source."""
 
 _HEALTHY = HealthStatus(status=HealthState.OK)
 
@@ -126,7 +125,7 @@ class PydanticAIEngine:
             registered. Defaults to *agent* when not given, which is
             correct whenever the plan declares no ``output_check``: the
             two agents would behave identically, so
-            :class:`~loom.ai.engines.pydantic_ai.provider.PydanticAIEngineProvider`
+            :class:`~loom.ai.engines.pydantic_ai.plugin.PydanticAIEnginePlugin`
             builds only one and passes it for both.
         deps: Per-invocation dependency factory; singleton services are
             captured here, at build, and the caller's identity is supplied per
@@ -187,7 +186,7 @@ class PydanticAIEngine:
             conversation: The conversation this run continues, or ``None``
                 for a single shot.
             state: This run's state, already resolved against the plan's
-                declared shape by :class:`~loom.ai.runtime.AgentRuntime`;
+                declared shape by :class:`~loom.ai.execution.AgentHost`;
                 forwarded to :attr:`_deps` unchanged.
 
         Returns:
@@ -262,7 +261,7 @@ class PydanticAIEngine:
         """Run the agent, streaming events decoded into *output_type* for this call only.
 
         An optional engine capability, read with ``getattr`` by
-        :func:`~loom.ai.runtime._lifecycle._open_engine_stream`. pydantic-ai
+        :func:`~loom.ai.execution._lifecycle._open_engine_stream`. pydantic-ai
         validates the answer against *output_type*; loom's own output check
         of a ``msgspec.Struct`` plan is skipped.
 
@@ -311,7 +310,7 @@ class PydanticAIEngine:
         """Return this engine's own objects, for a caller driving the run itself.
 
         Serves :meth:`~loom.ai.abc.AgentHandle.native` through
-        :meth:`~loom.ai.runtime.AgentRuntime.native`; the accessor that names
+        :meth:`~loom.ai.execution.AgentHost.native`; the accessor that names
         the returned type for calling code is
         :func:`~loom.ai.engines.pydantic_ai.native_agent`. What a driver keeps
         and loses is stated once, on :meth:`~loom.ai.abc.AgentHandle.native`.
@@ -319,11 +318,11 @@ class PydanticAIEngine:
         Args:
             identity: Verified caller the dependency bundle is built for.
             state: This run's state, already resolved against the plan's
-                declared shape by :class:`~loom.ai.runtime.AgentRuntime`.
+                declared shape by :class:`~loom.ai.execution.AgentHost`.
             guard: Zero-argument factory of the async context manager a
-                driven run enters to rejoin this runtime's chain and
+                driven run enters to rejoin this host's chain and
                 admission bounds; built by
-                :meth:`~loom.ai.runtime.AgentRuntime.native` and carried on
+                :meth:`~loom.ai.execution.AgentHost.native` and carried on
                 the returned carrier unchanged.
 
         Returns:
@@ -439,14 +438,12 @@ class PydanticAIEngine:
         return error, not emitted and self._may_retry(error.code, attempt)
 
     def _log_cause(self, error: AgentRunError, exc: Exception) -> None:
-        """Log what the published failure cannot carry: the answer that caused it, truncated."""
+        """Log the cause the published failure cannot carry, as the record's exception."""
         if exc.__cause__ is not None:
-            cause = str(exc.__cause__)[:MAX_LOGGED_CAUSE_CHARS]
             _logger.warning(
-                "agent %s failed with %s, raised from: %s",
-                self._plan.name,
-                error.code.value,
-                cause,
+                AiEvent.RUN_FAILED_FROM_CAUSE,
+                extra={AiKey.AGENT: self._plan.name, LogField.ERROR_CODE: error.code.value},
+                exc_info=exc.__cause__,
             )
 
     def _apply_unpriced_spend_policy(self, result: AgentRunResult[Any]) -> int:

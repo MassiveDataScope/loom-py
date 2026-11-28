@@ -1,0 +1,246 @@
+"""Load one store schema from its configuration file for Alembic and the schema tools.
+
+``load_store_schema`` is the single entry point the Alembic environment, the
+command line and the schema tools share: it reads the file or
+directory given, else the default config directory, discovers the models the same way the
+server does, compiles them into a ``MetaData`` owned by the returned
+``StoreSchema`` and builds the bootstrap declaration from one store's
+section, ``stores.default`` unless another is named. Only that store's models
+are compiled. A missing key raises ``ConfigError`` naming it; nothing is defaulted.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import get_args
+
+import msgspec
+from sqlalchemy import MetaData
+
+from loom.core.config import ConfigError, ConfigSection
+from loom.core.config.entry_points import EntryPointGroup
+from loom.core.config.overrides import load_application_config
+from loom.core.discovery.scanner import PackageScanner
+from loom.core.environment import (
+    config_source_paths,
+    resolve_config_dir,
+    resolve_environment,
+)
+from loom.core.locator import DEFAULT_CODE_PATH, add_code_path
+from loom.core.model.audited import AuditedTables
+from loom.core.model.scoped import ScopedTables, declared_scopes
+from loom.core.schema_names import SchemaNames, schema_identifier
+from loom.core.stores.catalog import (
+    DEFAULT_STORE,
+    SQLALCHEMY_BACKEND,
+    StoreKey,
+    load_catalog,
+)
+from loom.core.stores.database import (
+    DatabaseConfig,
+    SchemaConfig,
+    SchemaUser,
+    require_schema_key,
+)
+from loom.core.stores.event import StoresKey
+from loom.stores.sqlalchemy.event import SqlalchemyEvent, SqlalchemyKey
+from loom.stores.sqlalchemy.rls.config import (
+    Access,
+    BootstrapConfig,
+    DatabaseRoles,
+    DatabaseUser,
+)
+from loom.stores.sqlalchemy.schema import (
+    audited_tables,
+    compile_all,
+    configured_naming_convention,
+    scoped_tables,
+)
+from loom.stores.sqlalchemy.scoped_ddl import SCHEMA_KEY
+
+_log = logging.getLogger(__name__)
+
+_SCOPE_SOURCE = re.compile(r"^(identity|request)\.[A-Za-z_]\w*$")
+
+
+class _AppSection(msgspec.Struct, kw_only=True):
+    name: str
+    code_path: str = DEFAULT_CODE_PATH
+    packages: list[str] = msgspec.field(default_factory=list)
+    entry_points: list[EntryPointGroup] = msgspec.field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class StoreSchema:
+    """One store schema: its models compiled into their own metadata and its declarations.
+
+    Attributes:
+        store: The store whose models and declarations these are.
+    """
+
+    models: tuple[type, ...]
+    metadata: MetaData
+    database: DatabaseConfig
+    bootstrap: BootstrapConfig | None
+    scoped: ScopedTables
+    scope_sources: Mapping[str, str]
+    store: StoreKey = DEFAULT_STORE
+    audited: AuditedTables = field(default_factory=dict)
+
+    @property
+    def is_guarded(self) -> bool:
+        """Whether the store needs the guard: it declares scoped or audited tables."""
+        return bool(self.scoped or self.audited)
+
+    @property
+    def recording_audit_tables(self) -> AuditedTables:
+        """The audited tables that record rows: the marked ones while ``schema.audit.enabled``."""
+        return self.audited if self.database.schema.audit.enabled else {}
+
+    @property
+    def path(self) -> str:
+        """Dotted path of the store section the declarations were read from, which messages name."""
+        return f"{ConfigSection.STORES}.{self.store}"
+
+    def require_bootstrap(self, purpose: str) -> BootstrapConfig:
+        """Return the bootstrap declaration, which *purpose* (``"migrations"``, ...) needs.
+
+        Raises:
+            ConfigError: When the store declares no schema name, roles or
+                database users, naming its section.
+        """
+        if self.bootstrap is None:
+            raise ConfigError(
+                f"{purpose} need {self.path}.schema.name, roles and database_users "
+                "in the configuration"
+            )
+        return self.bootstrap
+
+
+def load_store_schema(
+    config_path: str | None = None, *, store: StoreKey = DEFAULT_STORE
+) -> StoreSchema:
+    """Load, discover and compile the models of one store of ``config_path``'s application.
+
+    ``config_path``, else the directory :func:`~loom.core.environment.resolve_config_dir`
+    returns, is a file or a config directory:
+    a directory loads ``base.yaml`` then the overlay of the environment
+    ``LOOM_ENV`` selects, as the application factories do, and the
+    ``LOOM__*`` variables merge last. The models of other stores are left
+    out, and a log line names those stores.
+
+    Raises:
+        ConfigError: When the path is missing, a required key is absent or a
+            value has the wrong shape; the message names the key.
+    """
+    path = config_path or resolve_config_dir()
+    environment = resolve_environment()
+    paths = config_source_paths(path, environment)
+    context = load_application_config(*paths, environment=environment)
+    app = context.section(ConfigSection.APP, _AppSection)
+    catalog = load_catalog(context)
+    spec = catalog.require(store, backend=SQLALCHEMY_BACKEND, purpose="the application's schema")
+    database = spec.decode(DatabaseConfig)
+    add_code_path(app.code_path, Path(paths[0]).resolve().parent)
+    stores = catalog.models_by_store(
+        PackageScanner(app.packages, entry_points=app.entry_points).discover().models
+    )
+    models = stores.get(store, ())
+    skipped = sorted(key for key, held in stores.items() if held and key != store)
+    if skipped:
+        _log.info(
+            SqlalchemyEvent.STORES_NOT_LOADED,
+            extra={StoresKey.STORE: store, SqlalchemyKey.SKIPPED_STORES: skipped},
+        )
+    schema = database.schema
+    metadata = _compiled_metadata(models, schema, spec.path)
+    scoped = scoped_tables(metadata)
+    audited = audited_tables(metadata)
+    bootstrap = _bootstrap(schema, spec.path) if scoped or audited else None
+    scope_sources = _scope_sources(schema, scoped, spec.path) if scoped else {}
+    return StoreSchema(
+        models=tuple(models),
+        metadata=metadata,
+        database=database,
+        bootstrap=bootstrap,
+        scoped=scoped,
+        scope_sources=scope_sources,
+        store=store,
+        audited=audited,
+    )
+
+
+def _compiled_metadata(models: Sequence[type], schema: SchemaConfig, path: str) -> MetaData:
+    """A metadata holding *models* compiled under the store's naming convention and schema."""
+    metadata = MetaData(
+        naming_convention=configured_naming_convention(schema.naming_convention, path=path)
+    )
+    if schema.name is not None:
+        metadata.info[SCHEMA_KEY] = _schema_name(schema.name, path)
+    compile_all(*models, metadata=metadata)
+    return metadata
+
+
+def _schema_name(name: str, path: str) -> str:
+    try:
+        return schema_identifier(name)
+    except ValueError as exc:
+        raise ConfigError(f"{path}.schema.name: {exc}") from exc
+
+
+def _bootstrap(schema: SchemaConfig, path: str) -> BootstrapConfig:
+    name = require_schema_key(schema.name, path, "name")
+    roles = require_schema_key(schema.roles, path, "roles")
+    users = require_schema_key(schema.database_users, path, "database_users")
+    groups = require_schema_key(schema.groups, path, "groups")
+    version_tables = require_schema_key(schema.version_tables, path, "version_tables")
+    config = BootstrapConfig(
+        schema=name,
+        roles=DatabaseRoles(owner=roles.owner, migrator=roles.migrator),
+        database_users={
+            user: _database_user(user, section, path) for user, section in users.items()
+        },
+        names=SchemaNames(
+            guard=require_schema_key(schema.guard, path, "guard"),
+            readers=groups.readers,
+            writers=groups.writers,
+            version_table=version_tables.structure,
+            data_version_table=version_tables.data,
+        ),
+        auditor=schema.audit.reader,
+        audit_retention_months=schema.audit.retention_months,
+    )
+    try:
+        return config.validated()
+    except ValueError as exc:
+        raise ConfigError(f"{path}.schema: {exc}") from exc
+
+
+def _database_user(user: str, section: SchemaUser, path: str) -> DatabaseUser:
+    choices: tuple[Access, ...] = get_args(Access)
+    access: Access | None = next((c for c in choices if c == section.access), None)
+    if access is None:
+        raise ConfigError(
+            f"{path}.schema.database_users.{user}.access {section.access!r} "
+            f"is not one of {', '.join(choices)}"
+        )
+    return DatabaseUser(login=section.login, access=access)
+
+
+def _scope_sources(schema: SchemaConfig, scoped: ScopedTables, path: str) -> dict[str, str]:
+    sources = require_schema_key(schema.scopes, path, "scopes")
+    for scope, binding in sorted(sources.items()):
+        if not _SCOPE_SOURCE.fullmatch(binding):
+            raise ConfigError(
+                f"{path}.schema.scopes.{scope} {binding!r} must be "
+                "identity.<attribute> or request.<name>"
+            )
+    declared = sorted(declared_scopes(scoped))
+    for scope in declared:
+        if scope not in sources:
+            raise ConfigError(f"{path}.schema.scopes.{scope} is missing")
+    return {scope: sources[scope] for scope in declared}

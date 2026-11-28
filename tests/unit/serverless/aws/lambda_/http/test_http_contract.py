@@ -13,6 +13,9 @@ import json
 
 import pytest
 
+from loom.core.log_names import LogField
+from loom.rest.event import RestEvent
+from tests.helpers.loggers import CapturedLog, install_subject_key, logged_fields, user_hash
 from tests.unit.serverless.aws.lambda_.http._clients import TRACE_ID, Client
 from tests.unit.serverless.aws.lambda_.http._contract_app import (
     MAX_BODY_BYTES,
@@ -110,9 +113,11 @@ class TestHttpContract:
 
         assert (reply.status, reply.json()) == (200, {"subject": ""})
 
-    def test_a_caller_without_the_route_role_answers_403(
-        self, served: Client, alice: dict[str, str]
+    def test_a_caller_without_the_route_role_answers_403_and_the_denial_names_them(
+        self, served: Client, alice: dict[str, str], caplog: pytest.LogCaptureFixture
     ) -> None:
+        install_subject_key()
+
         reply = served("GET", "/ops/admin", headers=alice)
 
         assert (reply.status, reply.json()) == (
@@ -125,6 +130,8 @@ class TestHttpContract:
                 }
             },
         )
+        denials = CapturedLog(caplog).named(RestEvent.AUTHORIZATION_DENIED)
+        assert [fields[LogField.USER_HASH] for fields in denials] == [user_hash("alice")]
 
     def test_a_caller_holding_the_route_role_is_served(
         self, served: Client, admin: dict[str, str]
@@ -255,15 +262,14 @@ class TestHttpContract:
         )
 
     @pytest.mark.parametrize(
-        ("path", "status", "code", "message", "secret"),
+        ("path", "status", "code", "message"),
         [
-            ("/ops/leak", 500, "foreign_session", "An unexpected error occurred", "db.internal"),
+            ("/ops/leak", 500, "foreign_session", "An unexpected error occurred"),
             (
                 "/ops/unavailable",
                 503,
                 "service_unavailable",
                 "The service is temporarily unavailable",
-                "idp.internal",
             ),
         ],
         ids=["500", "503"],
@@ -277,7 +283,6 @@ class TestHttpContract:
         status: int,
         code: str,
         message: str,
-        secret: str,
     ) -> None:
         reply = served("GET", path, headers=alice)
 
@@ -285,7 +290,8 @@ class TestHttpContract:
             status,
             {"detail": {"trace_id": TRACE_ID, "code": code, "message": message}},
         )
-        assert secret in caplog.text
+        logged_codes = {logged_fields(each).get("loom.error.code") for each in caplog.records}
+        assert code in logged_codes
 
     def test_a_cors_preflight_is_answered_without_a_token(self, served: Client) -> None:
         preflight = {"origin": ORIGIN, "access-control-request-method": "POST"}

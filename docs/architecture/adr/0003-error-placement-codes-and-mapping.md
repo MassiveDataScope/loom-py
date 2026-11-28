@@ -16,7 +16,7 @@ branch where marked.
 
 ### Run-time errors
 
-**Hierarchy.** Seven classes subclass `LoomError` directly instead of
+**Hierarchy.** Seven classes subclass `CodedError` directly instead of
 `DomainError` or `SystemError` (`src/loom/core/errors/base.py`):
 
 | Class | Location |
@@ -28,12 +28,12 @@ branch where marked.
 | `AuthenticationUnavailable` | `rest/auth/abc.py:64` |
 | `UnsupportedFormatError` | `etl/backends/_format_registry.py:18` |
 
-The 2.21.0 branch also raises a bare `LoomError(..., code=UNSUPPORTED_QUERY)` in
+The 2.21.0 branch also raises a bare `CodedError(..., code=UNSUPPORTED_QUERY)` in
 `_DeclaredQuery.decode`, because `UnsupportedQuery` requires a backend and a
 model. `SystemError.__init__` hard-codes `SYSTEM_ERROR`
 (`core/errors/base.py`).
 
-**Codes.** `LoomError.code` is a plain `str` (`core/errors/base.py`). Four raw codes
+**Codes.** `CodedError.code` is a plain `str` (`core/errors/base.py`). Four raw codes
 sit outside `ErrorCode` (`core/errors/codes.py:20-38`):
 
 - `boundary_type_unsupported` (`_loom_type.py:116`);
@@ -47,9 +47,9 @@ Those phrases differ by interpreter: 413 gives `request_entity_too_large` on
 `unprocessable_content`.
 
 **Subsystem errors outside their concept.** The `QueryCompiler` protocol says
-compilers raise `UnsupportedQuery` (`core/repository/abc/query_compiler.py:37`,
+compilers raise `UnsupportedQuery` (`core/stores/repository/query_compiler.py:37`,
 `:53`). The SQLAlchemy compiler raises `FilterPathError` and `UnsafeFilterError`
-as `ValueError` (`core/repository/sqlalchemy/query_compiler/errors.py:6`, `:22`),
+as `ValueError` (`stores/sqlalchemy/query_compiler/errors.py:6`, `:22`),
 and the router answers them with 500 (`rest/fastapi/router_runtime.py:486-499`;
 #352). One invalid query can therefore produce three codes:
 
@@ -132,7 +132,7 @@ Status: Proposed.
 
 - `ErrorCode` is decorated with `@enum.unique` and is the only catalogue of
   client-facing codes.
-- `LoomError.code` is typed as a catalogue member (`StrEnum`): `ErrorCode`
+- `CodedError.code` is typed as a catalogue member (`StrEnum`): `ErrorCode`
   for the errors core raises and maps, or an adapter's own catalogue for the
   failures only it reports (`loom.jobs.aws.errors.SQSErrorCode` holds the
   eleven `sqs_*` codes, so core carries no AWS vocabulary). A literal string
@@ -152,14 +152,14 @@ Status: Proposed.
 
 - A run-time error that a transport maps is either a `DomainError` (4xx, never
   retried) or a `SystemError(code=…)` (5xx, may be retried).
-- No class subclasses `LoomError` directly, apart from those two.
-- Nothing raises a bare `LoomError` or `DomainError`.
-- Compile and startup errors are not `LoomError`s.
+- No class subclasses `CodedError` directly, apart from those two.
+- Nothing raises a bare `CodedError` or `DomainError`.
+- Compile and startup errors are not `CodedError`s.
 
 The seven classes rebase without changing any status (done 2026-11, with
-`DomainError.retryable = False`, so Celery and the SQS consumers stop retrying
-a business error; `SQSDispatchError` and `SQSBatchFailedError` are
-`SystemError`s; `UnsupportedQuery(reason, *, backend=None, model=None)` names
+`DomainError.is_retryable = False`, so Celery and the SQS consumers stop retrying
+a business error; `SQSDispatchError` is a
+`SystemError`; `UnsupportedQuery(reason, *, backend=None, model=None)` names
 the model and the reason, never the backend):
 
 - `BoundaryValidationError` → `DomainError`, keeping `ValueError`;
@@ -171,7 +171,7 @@ the model and the reason, never the backend):
 `FilterPathError` and `UnsafeFilterError` subclass `DomainError` and keep
 `ValueError` as a second base.
 
-**R3. Where `LoomError` classes live.**
+**R3. Where `CodedError` classes live.**
 
 - A class raised or caught by more than one pillar lives in
   `loom/core/errors/<area>.py` (base, domain, auth, model, jobs, stores;
@@ -192,18 +192,17 @@ the catalogue and `__init__` re-exports every class.
 
 | Class | From | To | Why |
 |---|---|---|---|
-| `UnsupportedQuery` | `core/repository/abc/errors.py` | `core/errors` | Raised by the router, the cursor codec and every repository. `backend` and `model` are optional keywords and its message stops naming the backend |
+| `UnsupportedQuery` | `core/stores/repository/errors.py` | `core/errors` | Raised by the router, the cursor codec and every repository. `backend` and `model` are optional keywords and its message stops naming the backend |
 | `BoundaryValidationError` | `core/model/_loom_type.py` | `core/errors` | Mapped by REST and AI |
 | `UnsupportedBoundaryType` | `core/model/_loom_type.py` | `core/errors` | Raised at run time by AI grants (`ai/runtime/_grants.py:212`) |
 | `PostCommitError` | `core/engine/post_commit.py` | `core/errors` | Read by REST and Celery |
 | `JobTimeoutError`, `JobFailedError` | `core/job/handle.py` | `core/errors` | Any transport awaiting a job |
 | `SQSDispatchError` | `jobs/aws/sqs.py` | `jobs/aws/errors.py` | Raised by the SQS job service only; core keeps no AWS vocabulary |
-| `SQSBatchFailedError` | `serverless/aws/lambda_/sqs.py` | `serverless/aws/lambda_/errors.py` | Raised by the Lambda adapter only |
 | `AuthenticationUnavailable` | `rest/auth/abc.py` | `rest/auth/errors.py` | Raised by authenticators, which stay free of FastAPI; `rest/auth/abc.py` and `loom.rest.auth` re-export it |
 | `BodyTooLarge` (becomes a `DomainError` owning `PAYLOAD_TOO_LARGE`) | `rest/_body.py` | `rest/errors.py` | REST only |
 | `UnsupportedFormatError` | `etl/backends/_format_registry.py` | `etl/runner/errors.py` | ETL only; the ETL run-time errors module, new with this move. `_format_registry` and `loom.etl` keep re-exporting it |
 
-The `core/sql/abc/errors.py` module stays, for SQL subsystem errors.
+The `core/stores/sql/abc/errors.py` module stays, for SQL subsystem errors.
 Compile and startup errors do not move.
 
 **R4. One mapper per transport.**
@@ -212,7 +211,7 @@ Compile and startup errors do not move.
 |---|---|
 | REST | `HttpErrorMapper`, `rest/errors.py` |
 | AI | `_STATUS_BY_CODE`, `ai/fastapi/endpoints.py` |
-| Celery | `_is_retryable`, `celery/runner.py` |
+| Jobs | `JobRunner._decide`, `core/job/runner.py` |
 
 Nothing else builds an error status or an error body.
 
@@ -221,7 +220,7 @@ REST:
 - `HttpErrorMapper` gets one method returning `(status, headers, detail)`;
   `to_http` wraps it.
 - The ASGI middlewares send what that method returns, so they stay pure ASGI.
-- The router and the SQL endpoint raise `LoomError`s:
+- The router and the SQL endpoint raise `CodedError`s:
   - `UnsupportedQuery` for an unknown or forbidden parameter;
   - `BoundaryValidationError(code=QUERY_VALIDATION)` for a bad value.
 - An unexpected exception is answered as a `SystemError`.
@@ -243,7 +242,7 @@ A 5xx body carries a fixed text per status ("An unexpected error occurred",
 time"). It keeps `code`, `trace_id` and `committed`. The original message goes
 to the log under the same `trace_id`.
 
-An application `LoomError` may declare that answer on the class or the
+An application `CodedError` may declare that answer on the class or the
 instance, so domain code does not raise `HTTPException`. `http_status` is a
 registered 4xx or 5xx `HTTPStatus` or its int, or `None` to keep the code
 table. Each of these is a misdeclaration:
@@ -261,7 +260,7 @@ the mapper is what reads the declaration.
 
 **R5. Core never imports `http`, `fastapi` or `starlette`.** Core errors say
 what happened; the transport decides the status. The status numbers in the
-`core/sql/abc/errors.py:3-7` docstring are removed.
+`core/stores/sql/abc/errors.py:3-7` docstring are removed.
 
 ### Tests
 
@@ -276,7 +275,7 @@ R2 and R4-REST wait for the R2 rebases.
 | Check | Walks | Fails when |
 |---|---|---|
 | R1 | `code=` keywords of `__init__` calls inside error classes in `src/loom` | the value is not `<Catalogue>ErrorCode.<MEMBER>` and not the `code` parameter the class received |
-| R2 | class bases | a class other than `DomainError`/`SystemError` names `LoomError` as a base; any call to `LoomError(` or `DomainError(`; a class whose name ends in `CompilationError`, `ConfigError` or is `BootstrapError` names a `LoomError` family base |
+| R2 | class bases | a class other than `DomainError`/`SystemError` names `CodedError` as a base; any call to `CodedError(` or `DomainError(`; a class whose name ends in `CompilationError`, `ConfigError` or is `BootstrapError` names a `CodedError` family base |
 | R3 | classes whose bases name anything in `loom.core.errors.__all__` | the defining module is not under `loom/core/errors/` and is not a module named `errors.py`/`_errors.py` |
 | R4-REST (pending) | `src/loom/rest` | `HTTPException(` or a response built with a status of 400 or more, outside `rest/errors.py`. Two exceptions are named in the test because they are not error mapping: the readiness 503 (`rest/fastapi/health.py:117`) and the metrics trailing-slash 404 (`rest/fastapi/auto.py:1435`) |
 | R5 | `src/loom/core` | an import of `http`, `fastapi` or `starlette` |
@@ -331,8 +330,8 @@ code catalogues. `CompileIssue` is a plain `msgspec.Struct`. Using
 
 ```python
 class Template(NamedTuple):
-    text: str                       # str.format template; "{component}" allowed
-    field: str | None = None        # template too, e.g. "{alias}"
+    text: str  # str.format template; "{component}" allowed
+    field: str | None = None  # template too, e.g. "{alias}"
     component: str = "{component}"  # template; a constant such as "fork" also works
 
 
@@ -376,7 +375,9 @@ AI, a plain factory and one that computes:
 
 ```python
 # before (ai/errors.py, 2 of 89 factories, 25 lines)
-def spec_version_unsupported(component: str, found: int, supported: Sequence[int]) -> AgentCompilationIssue:
+def spec_version_unsupported(
+    component: str, found: int, supported: Sequence[int]
+) -> AgentCompilationIssue:
     known = ", ".join(str(version) for version in supported)
     return AgentCompilationIssue(
         code=AgentErrorCode.SPEC_VERSION_UNSUPPORTED,
@@ -384,6 +385,7 @@ def spec_version_unsupported(component: str, found: int, supported: Sequence[int
         component=component,
         field="spec_version",
     )
+
 
 def engine_not_found(name: str, available: Sequence[str]) -> AgentCompilationIssue:
     known = ", ".join(available) if available else "none"
@@ -394,13 +396,23 @@ def engine_not_found(name: str, available: Sequence[str]) -> AgentCompilationIss
         field=_FIELD_AI_ENGINE,
     )
 
+
 # after (in the enum, 6 lines)
-SPEC_VERSION_UNSUPPORTED = "SPEC_VERSION_UNSUPPORTED", Template(
-    "{component}: spec_version {found} is not supported; supported versions: {supported}",
-    field="spec_version")
-ENGINE_NOT_FOUND = "ENGINE_NOT_FOUND", Template(
-    "engine '{name}' is not installed; available engines: {available}",
-    component="{name}", field="ai.engine")
+SPEC_VERSION_UNSUPPORTED = (
+    "SPEC_VERSION_UNSUPPORTED",
+    Template(
+        "{component}: spec_version {found} is not supported; supported versions: {supported}",
+        field="spec_version",
+    ),
+)
+ENGINE_NOT_FOUND = (
+    "ENGINE_NOT_FOUND",
+    Template(
+        "engine '{name}' is not installed; available engines: {available}",
+        component="{name}",
+        field="ai.engine",
+    ),
+)
 
 # call site
 AgentErrorCode.SPEC_VERSION_UNSUPPORTED.issue(component=path, found=3, supported=(1, 2))
@@ -411,20 +423,31 @@ Streaming, a constant component and the one factory that computes:
 ```python
 # before
 def fork_not_last() -> CompilationIssue:
-    return CompilationIssue(code=StreamingErrorCode.FORK_NOT_LAST,
-                            message="fork must be the last node in a process", component="fork")
+    return CompilationIssue(
+        code=StreamingErrorCode.FORK_NOT_LAST,
+        message="fork must be the last node in a process",
+        component="fork",
+    )
+
 
 def explode_without_router(next_node: object | None) -> CompilationIssue:
     got = type(next_node).__name__ if next_node is not None else "nothing"
-    return CompilationIssue(code=StreamingErrorCode.EXPLODE_WITHOUT_ROUTER,
-                            message=f"Explode must be immediately followed by a Router; got {got}",
-                            component="Explode")
+    return CompilationIssue(
+        code=StreamingErrorCode.EXPLODE_WITHOUT_ROUTER,
+        message=f"Explode must be immediately followed by a Router; got {got}",
+        component="Explode",
+    )
+
 
 # after
-FORK_NOT_LAST = "FORK_NOT_LAST", Template(
-    "fork must be the last node in a process", component="fork")
-EXPLODE_WITHOUT_ROUTER = "EXPLODE_WITHOUT_ROUTER", Template(
-    "Explode must be immediately followed by a Router; got {got}", component="Explode")
+FORK_NOT_LAST = (
+    "FORK_NOT_LAST",
+    Template("fork must be the last node in a process", component="fork"),
+)
+EXPLODE_WITHOUT_ROUTER = (
+    "EXPLODE_WITHOUT_ROUTER",
+    Template("Explode must be immediately followed by a Router; got {got}", component="Explode"),
+)
 
 # call site: the one line that computed moves to the caller
 got = type(next_node).__name__ if next_node is not None else "nothing"
@@ -437,21 +460,36 @@ ETL, a field from a parameter and a set:
 # before
 @classmethod
 def unknown_source_table(cls, step: type, alias: str, table_ref: str) -> ETLCompilationError:
-    return cls(code=ETLErrorCode.UNKNOWN_SOURCE_TABLE, component=step.__qualname__,
-               message=f"{step.__qualname__}: source '{alias}' references unknown table '{table_ref}'",
-               field=alias)
+    return cls(
+        code=ETLErrorCode.UNKNOWN_SOURCE_TABLE,
+        component=step.__qualname__,
+        message=f"{step.__qualname__}: source '{alias}' references unknown table '{table_ref}'",
+        field=alias,
+    )
+
 
 # after
-UNKNOWN_SOURCE_TABLE = "UNKNOWN_SOURCE_TABLE", Template(
-    "{step}: source '{alias}' references unknown table '{table_ref}'",
-    field="{alias}", component="{step}")
-MISSING_SOURCE_PARAMS = "MISSING_SOURCE_PARAMS", Template(
-    "{step}.execute: source(s) {missing} declared in sources but missing as "
-    "keyword-only parameter(s) after '*'", component="{step}")
+UNKNOWN_SOURCE_TABLE = (
+    "UNKNOWN_SOURCE_TABLE",
+    Template(
+        "{step}: source '{alias}' references unknown table '{table_ref}'",
+        field="{alias}",
+        component="{step}",
+    ),
+)
+MISSING_SOURCE_PARAMS = (
+    "MISSING_SOURCE_PARAMS",
+    Template(
+        "{step}.execute: source(s) {missing} declared in sources but missing as "
+        "keyword-only parameter(s) after '*'",
+        component="{step}",
+    ),
+)
 
 # call site
 raise ETLCompilationError.from_issue(
-    ETLErrorCode.UNKNOWN_SOURCE_TABLE.issue(step=step_type, alias=alias, table_ref=ref))
+    ETLErrorCode.UNKNOWN_SOURCE_TABLE.issue(step=step_type, alias=alias, table_ref=ref)
+)
 ```
 
 These examples predate the rule the hotfix applied: where the component is a
@@ -680,3 +718,18 @@ What the hotfix did where this ADR left a choice, and what it found:
    dropped in a 2.x hotfix.
 4. **The ETL historify checks sharing `INVALID_TARGET_TYPE`.** Decided: each
    gets its own code in the 2.x hotfix.
+
+> Renamed in 12.0.0: modules rest/fastapi/router_runtime.py → rest/fastapi/router.py, ai/runtime/ → ai/execution/, etl/backends/ → etl/engines/.
+
+
+## Amendment (spec 022): the marker base
+
+`LoomError` is the empty base of loom's own errors, with no code and no transport
+meaning, as a library base is in `requests` or SQLAlchemy. The coded failure that
+transports translate (code, `http_status`, `is_retryable`, `public_*`) is
+`CodedError`; `DomainError` and `SystemError` derive from it, and REST, the job
+runner and `ErrorSummary` ask `CodedError`. A misuse of a loom API raises
+`InvalidValue(LoomError, ValueError)` or `InvalidType(LoomError, TypeError)`,
+whose message names the parameter, never the value. `ConfigError` and
+`BootstrapError` derive from `LoomError`. Packages move their plain built-in
+raises under `LoomError` one by one.

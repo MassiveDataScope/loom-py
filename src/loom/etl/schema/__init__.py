@@ -1,14 +1,14 @@
-"""Schema, contracts, and table-reference primitives for ETL."""
+"""Schema, contracts and model tables for ETL."""
 
 from __future__ import annotations
 
-from loom.etl.declarative.expr._refs import TableRef, col
-
-from ._contract import (
+from ._json_fit import JsonFit, JsonLeafUnsupported, JsonMismatch, JsonRefusal
+from ._model import (
     JsonContract,
+    LakeRefusal,
+    LakeTranslator,
+    ModelTable,
     SchemaContract,
-    annotation_to_loom_type,
-    resolve_json_type,
     resolve_schema,
 )
 from ._schema import (
@@ -19,9 +19,9 @@ from ._schema import (
     DecimalType,
     DurationType,
     EnumType,
+    FrameType,
     ListType,
     LoomDtype,
-    LoomType,
     SchemaError,
     SchemaNotFoundError,
     StructField,
@@ -29,14 +29,16 @@ from ._schema import (
 )
 
 __all__ = [
+    "JsonFit",
+    "JsonLeafUnsupported",
+    "JsonMismatch",
+    "JsonRefusal",
     "SchemaContract",
     "JsonContract",
     "resolve_schema",
-    "resolve_json_type",
-    "annotation_to_loom_type",
     "ColumnSchema",
     "LoomDtype",
-    "LoomType",
+    "FrameType",
     "SchemaNotFoundError",
     "SchemaError",
     "ListType",
@@ -48,6 +50,7 @@ __all__ = [
     "DurationType",
     "CategoricalType",
     "EnumType",
-    "TableRef",
-    "col",
+    "ModelTable",
+    "LakeRefusal",
+    "LakeTranslator",
 ]

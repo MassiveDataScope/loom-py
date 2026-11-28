@@ -9,16 +9,25 @@ from loom.core.model._loom_type import (
 from loom.core.model.audited import Audited, AuditedTable
 from loom.core.model.base import BaseModel, LoomStructMeta
 from loom.core.model.enums import Cardinality, OnDelete, OnUpdate, ServerDefault, ServerOnUpdate
-from loom.core.model.field import ColumnField, ColumnType, Field, ScopedField
+from loom.core.model.field import (
+    ColumnField,
+    CreatedAtField,
+    Field,
+    ScopedField,
+    UpdatedAtField,
+)
 from loom.core.model.introspection import (
     ColumnFieldInfo,
+    ModelKeys,
     PartialUnique,
+    business_key_of,
     declared_checks,
     declared_indexes,
     declared_partial_unique,
     declared_partition,
     declared_privileges,
     declared_unique,
+    derived_key_of,
     get_column_fields,
     get_id_attribute,
     get_id_attributes,
@@ -27,7 +36,9 @@ from loom.core.model.introspection import (
     get_table_name,
     is_row_scoped,
     scope_columns,
+    verify_keys,
 )
+from loom.core.model.keys import BusinessKey, DerivedKey, KeyHash, KeyMismatch
 from loom.core.model.partition import PartitionRange, RangePartition, range_partitions
 from loom.core.model.privilege import READ_WRITE, Privilege
 from loom.core.model.projection import (
@@ -43,23 +54,37 @@ from loom.core.model.types import (
     BigInteger,
     Boolean,
     Bytes,
+    ColumnKind,
+    ColumnType,
     Date,
     DateTime,
     Float,
     Integer,
     JsonStr,
     Numeric,
+    Postgres,
+    SmallInteger,
     String,
     Text,
     Time,
+    TinyInteger,
     Uuid,
 )
-from loom.core.model.types_postgres import Postgres
 
 __all__ = [
     "Audited",
     "AuditedTable",
     "BaseModel",
+    "BusinessKey",
+    "CreatedAtField",
+    "UpdatedAtField",
+    "DerivedKey",
+    "KeyHash",
+    "KeyMismatch",
+    "ModelKeys",
+    "business_key_of",
+    "derived_key_of",
+    "verify_keys",
     "READ_WRITE",
     "Privilege",
     "RowScoped",
@@ -86,6 +111,7 @@ __all__ = [
     "Bytes",
     "Cardinality",
     "ColumnFieldInfo",
+    "ColumnKind",
     "ColumnField",
     "ScopedField",
     "ColumnType",
@@ -97,9 +123,12 @@ __all__ = [
     "JSON",
     "JsonStr",
     "Postgres",
+    "SmallInteger",
+    "TinyInteger",
     "ProjectionField",
     "LoomStructMeta",
     "LoomType",
+    "ModelKeys",
     "Numeric",
     "OnDelete",
     "OnUpdate",

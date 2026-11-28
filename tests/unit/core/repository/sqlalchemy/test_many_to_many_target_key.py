@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from loom.core.backend.sqlalchemy import compile_all
 from loom.core.command import Command
 from loom.core.model import BaseModel, Cardinality, ColumnField, RelationField
-from loom.core.repository.abc import CursorCodec
-from loom.core.repository.sqlalchemy.repository import RepositorySQLAlchemy
-from loom.core.repository.sqlalchemy.session_manager import SessionManager
+from loom.core.stores.repository import CursorCodec
+from loom.stores.sqlalchemy.repository import SQLAlchemyRepository
+from loom.stores.sqlalchemy.schema import compile_all
+from loom.stores.sqlalchemy.session_manager import SessionManager
 from tests.unit.core.conftest import SessionManagerFactory
 
 
@@ -62,17 +62,17 @@ class TestManyToManyTargetKey:
         self,
         session_manager: SessionManager,
     ) -> None:
-        devices = RepositorySQLAlchemy(
+        devices = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Device,
             cursor_codec=CursorCodec(signing="ephemeral"),
         )
-        tags = RepositorySQLAlchemy(
+        tags = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_Tag,
             cursor_codec=CursorCodec(signing="ephemeral"),
         )
-        links = RepositorySQLAlchemy(
+        links = SQLAlchemyRepository(
             session_manager=session_manager,
             model=_TagDevice,
             cursor_codec=CursorCodec(signing="ephemeral"),

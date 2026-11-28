@@ -2,8 +2,8 @@
 
 :func:`bootstrap_worker` is the shortcut that starts a Loom Celery worker: it
 loads the configuration, composes the application with
-:class:`~loom.celery.adapter.CeleryAdapter` through the same recipe the API
-runs (:func:`loom.composition.compose_application`), and returns the Celery
+:class:`~loom.celery.runtime.CeleryRuntime` through the same recipe the API
+runs (:meth:`loom.composition.Project.compose`), and returns the Celery
 app with every job and callback task registered.
 
 Fork-safety design
@@ -12,7 +12,7 @@ Composing opens nothing: building a backend creates its engine, not a
 connection.  ``worker_init`` runs the startup checks once in the parent,
 which leave no connection open, and each prefork child opens the
 application on its own async bridge in ``worker_process_init``.  See
-:mod:`loom.celery.adapter` for the signal table.
+:mod:`loom.celery.runtime` for the signal table.
 
 Typical YAML layout (stores optional for pure in-memory jobs)::
 
@@ -36,15 +36,14 @@ Typical YAML layout (stores optional for pure in-memory jobs)::
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from celery import Celery  # type: ignore[import-untyped]
 
-from loom.celery._discovery import WorkerManifest
-from loom.celery.adapter import CeleryAdapter
-from loom.composition import CompositionSource, compose_application
+from loom.celery.runtime import CeleryRuntime
+from loom.composition import Project
 from loom.core.config import ConfigResolver
 from loom.core.di.container import LoomContainer
 from loom.core.environment import Environment
@@ -52,7 +51,7 @@ from loom.core.use_case.factory import UseCaseFactory
 
 if TYPE_CHECKING:
     from loom.core.engine.compilable import Compilable
-    from loom.core.engine.metrics import MetricsAdapter
+    from loom.core.engine.execution_observer import ExecutionObserver
     from loom.core.job.job import Job
 
 
@@ -83,9 +82,7 @@ def bootstrap_worker(
     jobs: Sequence[type[Job[Any]]] = (),
     use_cases: Sequence[type[Compilable]] = (),
     interfaces: Sequence[type[Any]] = (),
-    callbacks: Sequence[type[Any]] = (),
-    modules: Sequence[Callable[[LoomContainer], None]] = (),
-    metrics: MetricsAdapter | None = None,
+    execution_observer: ExecutionObserver | None = None,
     resolvers: Sequence[ConfigResolver] = (),
 ) -> WorkerBootstrapResult:
     """Bootstrap a Celery worker process and register all Job tasks.
@@ -93,9 +90,10 @@ def bootstrap_worker(
     Resolves the environment once (*environment*, else ``LOOM_ENV``, else
     production; see :mod:`loom.core.environment`), loads configuration from
     ``config_dir`` or ``config_paths`` and composes the worker with
-    :class:`~loom.celery.adapter.CeleryAdapter`: discovery, deploy checks
+    :class:`~loom.celery.runtime.CeleryRuntime`: discovery, deploy checks
     (except the ``loom.rest`` ones: a worker serves no HTTP), persistence,
-    kernel, ``JobService`` and ``SqlQueryService``, then the Celery tasks and
+    kernel, ``JobService`` and ``SqlQueryService``, then the Celery tasks (one
+    per job, and one per discovered ``JobCallback`` subclass and outcome) and
     the lifecycle signals. The environment is registered in the container.
 
     Persistence note: ``stores.default.backend`` selects the backend, with
@@ -110,32 +108,24 @@ def bootstrap_worker(
         config_dir: Local directory holding ``base.yaml`` and the
             per-environment overlays: ``base.yaml`` loads first, then
             ``<environment>.yaml`` when present. Either way the
-            ``LOOM__SECTION__KEY`` variables merge last.
+            ``LOOM__SECTION__KEY`` variables merge last. With no
+            *config_paths* and no *config_dir*, ``LOOM_CONFIG_DIR`` or ``./config``.
         environment: Environment of the worker; overrides ``LOOM_ENV``.
-        jobs: Concrete ``Job`` subclasses to compile/register.  When
-            omitted, jobs are discovered from ``app.discovery`` using
-            mode ``modules`` or ``manifest``.
-        use_cases: Additional ``UseCase`` subclasses to compile alongside
-            ``jobs``.  Required when callbacks invoke
-            :class:`~loom.core.use_case.invoker.ApplicationInvoker`
-            (e.g. ``app.entity(Product).get(...)``), so that the
-            corresponding use-case keys are registered in the worker
-            process.  Ignored when jobs are discovered via ``app.discovery``
-            (discovery already includes all compiled use-cases).
+        jobs: Concrete ``Job`` subclasses to compile and register. When
+            given they replace the jobs the scan of ``app.packages`` finds;
+            when omitted, those are served.
+        use_cases: ``UseCase`` subclasses to compile alongside the jobs, in
+            addition to the ones the scan of ``app.packages`` finds. Needed
+            only for use cases outside those packages that callbacks invoke
+            through :class:`~loom.core.use_case.invoker.ApplicationInvoker`
+            (e.g. ``app.entity(Product).get(...)``), so that their keys are
+            registered in the worker process.
         interfaces: ``RestInterface`` subclasses whose route use-cases
             should be compiled in the worker.  Equivalent to passing the
             same classes via ``use_cases=`` but without having to enumerate
             individual use-case types — useful when callbacks interact with
             AutoCRUD-generated use-cases that are not importable by name.
-        callbacks: Concrete ``JobCallback`` subclasses to register as
-            Celery callback (success / error) tasks.
-        modules: Callables that receive the container and register
-            infrastructure bindings (repositories, services, etc.).
-            Executed in declaration order before compilation.  A module
-            binding a framework-owned key fails with
-            :class:`~loom.composition.errors.ReservedBindingError`; see
-            :func:`loom.composition.create_app`.
-        metrics: Optional metrics adapter forwarded to the compiler and
+        execution_observer: Optional execution observer forwarded to the compiler and
             executor.
         resolvers: Resolvers for ``${name:key}`` placeholders, registered
             before the built-in ``secrets`` and ``ssm`` defaults.  A resolver
@@ -151,7 +141,7 @@ def bootstrap_worker(
             configuration section is missing or fails validation.
         DeployCheckError: When a deploy check of level error fails in
             production or staging.
-        RuntimeError: If no ``app.discovery`` config is provided and no
+        RuntimeError: If no ``app.packages`` config is provided and no
             ``jobs`` are declared.
         AgentCompilationError: When a compiled use case declares an
             ``Agent()`` or ``Mcp()`` marker.
@@ -163,11 +153,10 @@ def bootstrap_worker(
             "config/worker.yaml",
             jobs=[SendEmailJob, RecalcPricesJob],
             interfaces=[ProductInterface],
-            callbacks=[EmailSentCallback],
         )
         result.celery_app.start()
     """
-    source = CompositionSource.load(
+    project = Project.load(
         *config_paths,
         config_dir=config_dir,
         environment=environment,
@@ -175,15 +164,14 @@ def bootstrap_worker(
         resolvers=resolvers,
         caller="bootstrap_worker",
     )
-    adapter = CeleryAdapter(
+    runtime = CeleryRuntime(
         jobs=jobs,
         use_cases=use_cases,
         interfaces=interfaces,
-        callbacks=callbacks,
-        metrics=metrics,
+        execution_observer=execution_observer,
     )
-    application = compose_application(source, adapter, modules=modules)
-    celery_app = adapter.bind(application)
+    application = project.compose(runtime)
+    celery_app = runtime.mount(application)
     return WorkerBootstrapResult(
         container=application.kernel.container,
         factory=application.kernel.factory,
@@ -191,4 +179,4 @@ def bootstrap_worker(
     )
 
 
-__all__ = ["WorkerBootstrapResult", "WorkerManifest", "bootstrap_worker"]
+__all__ = ["WorkerBootstrapResult", "bootstrap_worker"]

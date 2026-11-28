@@ -20,14 +20,14 @@ from loom.core.cache.calls import CachedCalls
 from loom.core.di.container import BindingKey, LoomContainer
 from loom.core.di.scope import Scope
 from loom.core.engine.compiler import UseCaseCompiler
-from loom.core.engine.executor import RuntimeExecutor
+from loom.core.engine.executor import UseCaseExecutor
 from loom.core.environment import Environment
 from loom.core.job.service import JobService
-from loom.core.observability.runtime import ObservabilityRuntime
-from loom.core.persistence.stores import StoreCatalog
-from loom.core.repository.abc.repo_for import Creatable
-from loom.core.repository.registry import RepositoryToken
-from loom.core.sql import SqlQueryService
+from loom.core.observability.observability import Observability
+from loom.core.stores.catalog import StoreCatalog
+from loom.core.stores.repository.capabilities import Creatable
+from loom.core.stores.repository.registry import RepositoryToken
+from loom.core.stores.sql import SqlQueryService
 from loom.core.use_case.factory import UseCaseFactory
 from tests.unit.composition.phases import paths
 from tests.unit.composition.phases.components import (
@@ -49,7 +49,7 @@ class AcmeModuleService:
 _STEPS: dict[Event, str] = {
     ("bind", AppConfig): "seed",
     ("bind", Environment): "seed",
-    ("bind", ObservabilityRuntime): "seed",
+    ("bind", Observability): "seed",
     ("bind", StoreCatalog): "seed",
     ("bind", AcmeModuleService): "module",
     ("bind", RepositoryToken(AcmeRecord)): "override",
@@ -57,7 +57,7 @@ _STEPS: dict[Event, str] = {
     ("bind", CachedCalls): "framework",
     ("compile", AcmePing): "compile",
     ("bind", UseCaseFactory): "framework",
-    ("bind", RuntimeExecutor): "framework",
+    ("bind", UseCaseExecutor): "framework",
     ("bind", SqlQueryService): "framework",
     ("compile", AcmeJob): "jobs",
 }
