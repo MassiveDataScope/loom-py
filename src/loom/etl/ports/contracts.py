@@ -137,12 +137,7 @@ class StreamingSourceReader(Protocol):
 
 @runtime_checkable
 class JsonDecodeFailureRecognizer(Protocol):
-    """Optional capability protocol for recognising a failed JSON column decode.
-
-    A decode that is strict fails when the frame is consumed, in the reader that
-    declared it or in the writer that decodes model JSON text. Either exposes this
-    check so the executor can name the declared columns.
-    """
+    """Optional capability protocol for recognising a failed JSON column decode."""
 
     def is_json_decode_failure(self, error: Exception) -> bool:
         """Whether *error* came from decoding a JSON column.

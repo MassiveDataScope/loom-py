@@ -148,9 +148,6 @@ class StepResult:
     def rows(self, model: type[ModelT]) -> list[ModelT]:
         """Return the output rows as instances of *model*, cast to its lake types.
 
-        Capturing runners keep the frame the step produced, so the cast on read
-        is what makes its rows comparable to the model's.
-
         Args:
             model: A model with a table.
 
